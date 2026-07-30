@@ -1,0 +1,143 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-primary: #0d7676;
+  --color-primary-hover: #0f766e;
+  --color-primary-light: #f0fdfa;
+  --color-accent-orange: #f58220;
+  --color-accent-orange-hover: #e07214;
+  --font-family-base: 'Segoe UI Variable', 'Segoe UI', 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    font-size: 15px;
+  }
+
+  body {
+    font-family: var(--font-family-base);
+    background-color: #f8fafc;
+    color: #1e293b;
+    min-width: 320px;
+    margin: 0;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.5;
+  }
+
+  button, a, input, select, textarea {
+    outline-offset: 2px;
+    font-family: inherit;
+  }
+
+  button, a {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :focus-visible {
+    outline: 2px solid #0d7676;
+  }
+
+  input, select, textarea {
+    font-size: 13.5px;
+  }
+}
+
+@layer components {
+  .page-stack {
+    @apply w-full space-y-4 pb-8;
+  }
+
+  .surface-card {
+    @apply overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm shadow-slate-900/[0.03];
+  }
+
+  .page-toolbar {
+    @apply flex flex-col justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-900/[0.03] sm:flex-row sm:items-center;
+  }
+
+  .section-icon {
+    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-lg;
+  }
+
+  .data-table {
+    @apply w-full text-left text-xs;
+  }
+
+  .data-table thead {
+    @apply border-b border-slate-200 bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-500;
+  }
+
+  .data-table th {
+    padding: 0.75rem 1rem !important;
+  }
+
+  .data-table td {
+    padding: 0.75rem 1rem !important;
+  }
+
+  .data-table tbody {
+    @apply divide-y divide-slate-100;
+  }
+
+  .data-table tbody tr {
+    @apply transition hover:bg-slate-50/70;
+  }
+
+  .modal-backdrop {
+    @apply fixed inset-0 z-[100] flex min-h-dvh items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm;
+  }
+
+  .modal-panel {
+    @apply w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/20;
+  }
+
+  .modal-header {
+    @apply flex items-center justify-between border-b border-slate-100 bg-slate-50/70 px-4 py-3;
+  }
+
+  .modal-body {
+    @apply space-y-3 p-4;
+  }
+
+  .modal-footer {
+    @apply flex items-center justify-end gap-2 border-t border-slate-100 pt-3;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+@media (max-width: 640px) {
+  table {
+    min-width: 760px;
+  }
+}
+
+.auth-grid {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.10) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.10) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
