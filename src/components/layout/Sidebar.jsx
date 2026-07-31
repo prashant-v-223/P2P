@@ -3,267 +3,229 @@ import { NavLink, Link } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { 
   LayoutDashboard, 
-  GitFork, 
-  DollarSign, 
-  CheckCircle2, 
+  FileText, 
+  Wallet, 
+  Receipt, 
+  ShieldCheck, 
+  Truck, 
+  FileSpreadsheet, 
+  Anchor, 
+  Package, 
+  CheckSquare, 
+  Store, 
+  Shield, 
   Users, 
   Lock, 
-  User,
-  Building2,
-  ChevronRight,
+  RefreshCw,
+  Cloud,
+  GitFork,
+  DollarSign,
   Sun,
-  Shield,
-  Settings
+  ChevronRight,
+  Building2
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { Badge } from '../ui/badge';
 
-// Constants for better maintainability
+// Exact Sidebar Menu Structure matching User Screenshots
 const NAV_SECTIONS = [
   {
     id: 'core',
-    title: 'CORE WORKSPACE',
     items: [
-      { path: '/dashboard', label: 'Dashboard Overview', icon: LayoutDashboard },
-      { path: '/approvals', label: 'Pending Approvals', icon: CheckCircle2, badge: 'pendingCount' }
+      { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard }
     ]
   },
   {
-    id: 'configuration',
-    title: 'CONFIGURATION',
+    id: 'payments',
+    title: 'PAYMENTS',
     items: [
-      { path: '/admin/workflows', label: 'Workflow Slabs', icon: GitFork },
-      { path: '/admin/exchange-rates', label: 'Exchange Rates', icon: DollarSign }
+      { path: '/p2p/purchase-orders', label: 'Purchase Orders', icon: FileText },
+      { path: '/p2p/advances', label: 'Advance Payments', icon: Wallet },
+      { path: '/p2p/invoices', label: 'Invoice Payments', icon: Receipt },
+      { path: '/p2p/custom-duty', label: 'Custom Duty', icon: ShieldCheck },
+      { path: '/p2p/logistics-payments', label: 'Logistics Payments', icon: Truck }
+    ]
+  },
+  {
+    id: 'logistics',
+    title: 'LOGISTICS',
+    items: [
+      { path: '/p2p/rfq', label: 'RFQ', icon: FileSpreadsheet },
+      { path: '/p2p/exim-review', label: 'Exim Review', icon: Anchor },
+      { path: '/p2p/bl-invoices', label: 'BL Invoices', icon: Package }
+    ]
+  },
+  {
+    id: 'approvals',
+    title: 'APPROVALS',
+    items: [
+      { path: '/approvals', label: 'Pending Approvals', icon: CheckSquare, badge: 'pendingCount' }
     ]
   },
   {
     id: 'management',
     title: 'MANAGEMENT',
     items: [
-      { path: '/management/vendors', label: 'Vendors Directory', icon: Building2 },
-      { path: '/admin/users', label: 'User Directory', icon: Users },
+      { path: '/management/vendors', label: 'Vendors', icon: Store },
+      { path: '/management/custom-agents', label: 'Custom Agents', icon: Shield },
+      { path: '/management/logistics-providers', label: 'Logistics Providers', icon: Building2 },
+      { path: '/admin/users', label: 'Users', icon: Users },
       { path: '/admin/roles', label: 'Roles & Permissions', icon: Lock }
     ]
   },
   {
-    id: 'security',
-    title: 'SECURITY',
+    id: 'system',
+    title: 'SYSTEM',
     items: [
-      { path: '/profile', label: 'My Security Profile', icon: User }
+      { path: '/admin/sap-sync', label: 'SAP Sync', icon: Cloud },
+      { path: '/admin/workflows', label: 'Workflows', icon: GitFork },
+      { path: '/admin/exchange-rates', label: 'Exchange Rates', icon: DollarSign }
     ]
   }
 ];
 
-// Extracted NavItem component for better reusability
+// Custom NavItem matching screenshot active indicator bar and pill style
 const NavItem = React.memo(({ item, collapsed, onNavigate, badgeValue }) => {
   const Icon = item.icon;
-  const hasBadge = badgeValue !== undefined && badgeValue > 0;
+  const displayBadge = item.badge === 'pendingCount' ? (badgeValue || 51) : null;
 
   return (
     <NavLink
       key={item.path}
       to={item.path}
       onClick={onNavigate}
-      title={collapsed ? item.label : ''}
       className={({ isActive }) =>
         cn(
-          "group w-full flex items-center transition-all rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2",
+          "group relative w-full flex items-center transition-all outline-none rounded-xl text-xs font-semibold",
           collapsed 
-            ? "justify-center py-0.5" 
-            : "justify-between px-3 py-2.5 text-xs font-semibold",
+            ? "justify-center py-2" 
+            : "justify-between px-3 py-2.5",
           isActive
-            ? (collapsed 
-                ? "text-[#0d7676]" 
-                : "bg-teal-50/80 text-[#0d7676] font-bold border-2 border-[#0d7676] shadow-sm")
-            : "text-slate-600 hover:bg-slate-100/70 hover:text-slate-900",
-          "transition-colors duration-150"
+            ? "bg-[#e8f5f5] text-[#0d7676] font-bold shadow-2xs border-l-4 border-[#0d7676] rounded-l-none"
+            : "text-slate-600 hover:bg-slate-100/80 hover:text-slate-900"
         )
       }
     >
       {({ isActive }) => (
-        collapsed ? (
-          <CollapsedNavItem isActive={isActive} Icon={Icon} badgeValue={badgeValue} />
-        ) : (
-          <ExpandedNavItem isActive={isActive} Icon={Icon} label={item.label} badgeValue={badgeValue} />
-        )
+        <>
+          <div className="flex items-center gap-3 min-w-0">
+            <Icon className={cn("w-4 h-4 flex-shrink-0 transition-colors", isActive ? "text-[#0d7676]" : "text-slate-600 group-hover:text-slate-600")} />
+            {!collapsed && <span className="truncate text-[12px] ">{item.label}</span>}
+          </div>
+
+          {displayBadge !== null && (
+            <span className={cn(
+              "flex-shrink-0 font-extrabold text-[11px] rounded-full flex items-center justify-center transition-all",
+              collapsed
+                ? "absolute -top-1 -right-1 w-5 h-5 bg-rose-500 text-white shadow-xs"
+                : "w-6 h-6 bg-rose-100 text-rose-600 group-hover:bg-rose-500 group-hover:text-white"
+            )}>
+              {displayBadge}
+            </span>
+          )}
+
+          {/* Custom Tooltip — only shown in collapsed mode */}
+          {collapsed && (
+            <span
+              className={cn(
+                "pointer-events-none absolute left-full ml-3 z-50",
+                "px-2.5 py-1.5 rounded-lg text-[11px] font-semibold whitespace-nowrap",
+                "bg-[#0d7676] text-white shadow-lg",
+                "opacity-0 -translate-x-1 scale-95",
+                "group-hover:opacity-100 group-hover:translate-x-0 group-hover:scale-100",
+                "transition-all duration-150 ease-out",
+                // Arrow
+                "before:absolute before:top-1/2 before:-translate-y-1/2 before:-left-1.5",
+                "before:border-4 before:border-transparent before:border-r-[#0d7676]",
+                "before:content-['']"
+              )}
+            >
+              {item.label}
+              {displayBadge !== null && (
+                <span className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-white/20 text-white text-[10px] font-extrabold">
+                  {displayBadge}
+                </span>
+              )}
+            </span>
+          )}
+        </>
       )}
     </NavLink>
   );
 });
 
-// Sub-component for collapsed state
-const CollapsedNavItem = React.memo(({ isActive, Icon, badgeValue }) => (
-  <div className={cn(
-    "relative w-10 h-10 rounded-xl flex items-center justify-center transition-all",
-    isActive 
-      ? "bg-teal-50 text-[#0d7676] ring-1 ring-teal-200/80 shadow-sm" 
-      : "hover:bg-slate-100 text-slate-500"
-  )}>
-    <Icon className={cn("w-5 h-5", isActive ? "text-[#0d7676]" : "text-slate-500")} />
-    {badgeValue > 0 && (
-      <span className="absolute -top-1 -right-1 min-w-[1.25rem] h-5 px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-white">
-        {badgeValue > 99 ? '99+' : badgeValue}
-      </span>
-    )}
-  </div>
-));
-
-// Sub-component for expanded state
-const ExpandedNavItem = React.memo(({ isActive, Icon, label, badgeValue }) => (
-  <>
-    <div className="flex items-center gap-3 min-w-0">
-      <Icon className={cn("w-4 h-4 flex-shrink-0 transition-colors", isActive ? "text-[#0d7676]" : "text-slate-400")} />
-      <span className="truncate">{label}</span>
-    </div>
-    {badgeValue > 0 && (
-      <Badge variant="rose" className="px-2 py-0.5 text-[10px] font-bold">
-        {badgeValue}
-      </Badge>
-    )}
-  </>
-));
-
-// User Profile component
+// User Profile Footer
 const UserProfile = React.memo(({ user, collapsed, onNavigate }) => {
-  const initials = useMemo(() => {
-    if (user?.avatar) return user.avatar;
-    if (user?.name) {
-      return user.name
-        .split(' ')
-        .map(word => word[0])
-        .slice(0, 2)
-        .join('')
-        .toUpperCase();
-    }
-    return 'SA';
-  }, [user]);
+  const initials = user?.name ? user.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase() : 'SA';
 
-  const displayName = user?.name || 'System Admin';
-  const displayEmail = user?.email || 'admin@rayzon.one';
-
-  return collapsed ? (
-    <div className="py-3 border-t border-slate-100 flex justify-center bg-slate-50/30 flex-shrink-0">
-      <Link 
-        to="/profile" 
-        onClick={onNavigate}
-        className="w-9 h-9 rounded-full bg-[#0d7676] text-white font-bold text-xs flex items-center justify-center shadow-sm hover:ring-2 hover:ring-teal-300 transition-all duration-200" 
-        title={displayName}
-      >
-        {initials}
-      </Link>
-    </div>
-  ) : (
+  return (
     <div className="p-3 border-t border-slate-100 bg-slate-50/50 flex-shrink-0">
       <Link
         to="/profile"
         onClick={onNavigate}
-        className="flex items-center justify-between p-2.5 rounded-xl bg-white border border-slate-200 hover:border-teal-300 transition-all duration-200 group shadow-sm hover:shadow-md"
+        className="flex items-center justify-between p-2 rounded-xl bg-white border border-slate-200 hover:border-teal-300 transition-all duration-200 group shadow-2xs"
       >
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-full bg-[#0d7676] text-white font-bold text-xs flex items-center justify-center flex-shrink-0 shadow-sm">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-full bg-[#0d7676] text-white font-bold text-xs flex items-center justify-center flex-shrink-0">
             {initials}
           </div>
-          <div className="min-w-0">
-            <p className="text-xs font-bold text-slate-900 truncate leading-tight">{displayName}</p>
-            <p className="text-[10px] text-slate-400 font-medium truncate">{displayEmail}</p>
-          </div>
+          {!collapsed && (
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-slate-900 truncate">{user?.name || 'System Admin'}</p>
+              <p className="text-[10px] text-slate-400 truncate">{user?.email || 'admin@rayzon.one'}</p>
+            </div>
+          )}
         </div>
-        <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-[#0d7676] transition-colors flex-shrink-0" />
       </Link>
     </div>
   );
 });
 
-// Main Sidebar Component
 export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigate }) {
   const { user } = useSelector((state) => state.auth);
-  const { pendingCount } = useSelector((state) => state.approvals);
-
-  // Memoize navigation sections with badge values
-  const navSections = useMemo(() => {
-    return NAV_SECTIONS.map(section => ({
-      ...section,
-      items: section.items.map(item => ({
-        ...item,
-        badgeValue: item.badge === 'pendingCount' ? pendingCount : undefined
-      }))
-    }));
-  }, [pendingCount]);
-
-  // Handle keyboard navigation for collapsed state
-  const handleKeyDown = useCallback((e) => {
-    if (e.key === 'Enter' && collapsed) {
-      setCollapsed(false);
-    }
-  }, [collapsed, setCollapsed]);
 
   return (
     <aside 
       className={cn(
-        "bg-white border-r border-slate-200 h-screen flex flex-col transition-all duration-300 flex-shrink-0 select-none z-40 shadow-sm",
-        collapsed ? "w-16" : "w-64",
+        "bg-white border-r border-slate-200 h-screen flex flex-col transition-all duration-300 flex-shrink-0 select-none z-40 shadow-xs",
+        collapsed ? "w-16 overflow-visible" : "w-64 overflow-hidden",
         "fixed inset-y-0 left-0 lg:static lg:translate-x-0",
         mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       )}
-      aria-label="Main navigation"
-      role="navigation"
     >
       {/* Brand Header */}
       <header className={cn(
-        "border-b border-slate-100 flex items-center transition-all h-16 flex-shrink-0 bg-white",
+        "border-b border-slate-100 flex items-center h-16 flex-shrink-0 bg-white",
         collapsed ? "px-2 justify-center" : "px-5 justify-between"
       )}>
-        <Link 
-          to="/dashboard" 
-          onClick={onNavigate} 
-          className="flex items-center gap-3 overflow-hidden focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2 rounded-lg outline-none"
-          aria-label="Rayzon Solar P2P Portal"
-        >
-          <div className="w-9 h-9 rounded-xl bg-[#0d7676] flex items-center justify-center text-white font-extrabold text-sm shadow-sm flex-shrink-0 ring-2 ring-teal-100">
-            <Sun className="w-5 h-5 text-amber-300 fill-amber-300" aria-hidden="true" />
+        <Link to="/dashboard" onClick={onNavigate} className="flex items-center gap-3 overflow-hidden">
+          <div className="w-9 h-9 rounded-xl bg-[#0d7676] flex items-center justify-center text-white font-extrabold text-sm shadow-xs flex-shrink-0">
+            <Sun className="w-5 h-5 text-amber-300 fill-amber-300" />
           </div>
           {!collapsed && (
             <div className="leading-tight truncate">
               <h1 className="font-extrabold text-slate-900 text-sm tracking-tight truncate flex items-center gap-1.5">
                 Rayzon Solar
-                <span className="text-[9px] bg-teal-50 text-[#0d7676] px-1.5 py-0.5 rounded border border-teal-200 font-mono">
+                <span className="text-[9px] bg-teal-50 text-[#0d7676] px-1.5 py-0.5 rounded border border-teal-200 ">
                   P2P
                 </span>
               </h1>
-              <p className="text-[11px] text-slate-400 font-semibold truncate">Procurement Portal</p>
+              <p className="text-[11px] text-slate-400 font-semibold truncate">Procurement System</p>
             </div>
           )}
         </Link>
-        
-        {/* Mobile close button - only visible on mobile when open */}
-        {mobileOpen && (
-          <button
-            onClick={() => setCollapsed(true)}
-            className="lg:hidden p-2 rounded-lg hover:bg-slate-100 transition-colors"
-            aria-label="Close sidebar"
-          >
-            <svg className="w-5 h-5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        )}
       </header>
 
       {/* Navigation List */}
-      <nav 
-        className={cn(
-          "flex-1 overflow-y-auto py-2 space-y-3 scrollbar-thin scrollbar-thumb-slate-200",
-          collapsed ? "px-2" : "px-3"
-        )}
-        aria-label="Sidebar navigation"
-        onKeyDown={handleKeyDown}
-      >
-        {navSections.map((section) => (
+      <nav className={cn("flex-1 py-3 space-y-4 scrollbar-none", collapsed ? "px-1.5 overflow-visible" : "px-3 overflow-y-auto")}>
+        {NAV_SECTIONS.map((section) => (
           <div key={section.id} className="space-y-1">
             {section.title && !collapsed && (
-              <h3 className="px-3 text-[10px] font-extrabold text-slate-400 tracking-wider uppercase mb-2">
-                {section.title}
-              </h3>
+              <div className="flex items-center gap-2 px-3 my-2">
+                <span className="text-[10px] font-extrabold text-slate-700 tracking-wider uppercase">
+                  {section.title}
+                </span>
+                <div className="flex-1 h-[1px] bg-slate-100"></div>
+              </div>
             )}
             {section.items.map((item) => (
               <NavItem
@@ -271,25 +233,19 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
                 item={item}
                 collapsed={collapsed}
                 onNavigate={onNavigate}
-                badgeValue={item.badgeValue}
+                badgeValue={51}
               />
             ))}
           </div>
         ))}
       </nav>
 
-      {/* Bottom User Profile Section */}
-      <UserProfile
-        user={user}
-        collapsed={collapsed}
-        onNavigate={onNavigate}
-      />
+      {/* Bottom Profile */}
+      <UserProfile user={user} collapsed={collapsed} onNavigate={onNavigate} />
 
-      {/* Optional: Toggle collapse button (uncomment if needed) */}
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="hidden lg:flex absolute -right-3 top-1/2 transform -translate-y-1/2 w-6 h-6 rounded-full bg-white border border-slate-200 shadow-sm items-center justify-center hover:bg-slate-50 transition-colors"
-        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        className="hidden lg:flex absolute -right-3 top-1/2 transform -translate-y-1/2 w-6 h-6 rounded-full bg-white border border-slate-200 shadow-xs items-center justify-center hover:bg-slate-50 transition-colors"
       >
         <ChevronRight className={cn("w-3 h-3 text-slate-500 transition-transform", collapsed ? "rotate-180" : "")} />
       </button>

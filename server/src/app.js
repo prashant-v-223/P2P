@@ -8,6 +8,8 @@ import exchangeRatesRouter from './modules/exchangeRates/exchangeRates.router.js
 import approvalsRouter from './modules/approvals/approvals.router.js';
 import vendorsRouter from './modules/vendors/vendors.router.js';
 import suppliersRouter from './modules/suppliers/suppliers.router.js';
+import p2pRouter from './modules/p2p/p2pRoutes.js';
+import eventsRouter from './modules/events/events.router.js';
 
 const app = express();
 
@@ -27,6 +29,8 @@ app.use('/api/exchange-rates', exchangeRatesRouter);
 app.use('/api/approvals', approvalsRouter);
 app.use('/api/vendors', vendorsRouter);
 app.use('/api/suppliers', suppliersRouter);
+app.use('/api/p2p', p2pRouter);
+app.use('/api/events', eventsRouter);
 
 // Fallback 200 OK Handler for any unhandled /api path
 app.all('/api/*', (req, res) => {

@@ -18,7 +18,7 @@ export default function MainLayout() {
         />
       )}
 
-      {/* Fixed Sidebar (Stays fixed on left desktop viewport, never scrolls with page) */}
+      {/* Fixed Sidebar */}
       <Sidebar
         collapsed={collapsed}
         setCollapsed={setCollapsed}
@@ -26,9 +26,8 @@ export default function MainLayout() {
         onNavigate={() => setMobileOpen(false)}
       />
 
-      {/* Right Column: Fixed Header + Independent Scrollable Page Container */}
+      {/* Right Main Area */}
       <div className="flex flex-1 flex-col h-screen min-w-0 overflow-hidden">
-        
         {/* Fixed Header */}
         <Header
           collapsed={collapsed}
@@ -36,13 +35,12 @@ export default function MainLayout() {
           onOpenMobile={() => setMobileOpen(true)}
         />
 
-        {/* Independent Scrollable Content Viewport */}
-        <main className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:px-4 lg:py-4 scroll-smooth">
-          <div className="mx-auto w-full space-y-6">
+        {/* Full-width scrollable viewport */}
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-6 scroll-smooth">
+          <div className="w-full space-y-6">
             <Outlet />
           </div>
         </main>
-
       </div>
     </div>
   );

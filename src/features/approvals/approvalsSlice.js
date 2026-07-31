@@ -3,9 +3,18 @@ import { apiFetch } from '../../services/api';
 
 export const fetchPendingApprovals = createAsyncThunk(
   'approvals/fetchPendingApprovals',
-  async (_, { rejectWithValue }) => {
+  async (roleArg, { getState, rejectWithValue }) => {
     try {
-      const res = await apiFetch('/api/approvals/pending');
+      const state = getState();
+      const role  = roleArg || state.auth.user?.role || 'Finance Lead';
+      const me    = state.auth.user?.name  || '';
+      const meEmail = state.auth.user?.email || '';
+
+      const params = new URLSearchParams({ role });
+      if (me)      params.set('me',      me);
+      if (meEmail) params.set('meEmail', meEmail);
+
+      const res  = await apiFetch(`/api/approvals/pending?${params.toString()}`);
       const data = await res.json();
       if (!res.ok) return rejectWithValue(data.error);
       return data;
@@ -21,6 +30,7 @@ export const processApprovalAction = createAsyncThunk(
     try {
       const res = await apiFetch(`/api/approvals/${id}/action`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action })
       });
       const data = await res.json();

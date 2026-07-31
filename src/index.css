@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -8,7 +10,7 @@
   --color-primary-light: #f0fdfa;
   --color-accent-orange: #f58220;
   --color-accent-orange-hover: #e07214;
-  --font-family-base: 'Segoe UI Variable', 'Segoe UI', 'Inter', system-ui, -apple-system, sans-serif;
+  --font-family-base: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 @layer base {
@@ -22,15 +24,40 @@
   }
 
   body {
-    font-family: var(--font-family-base);
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
     background-color: #f8fafc;
-    color: #1e293b;
+    color: #0f172a;
     min-width: 320px;
     margin: 0;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     line-height: 1.5;
+  }
+
+  h1, h2, h3, h4, h5, h6,nav,span,div {
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
+    letter-spacing: -0.02em;
+    font-weight: 700;
+  }
+
+  table {
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif !important;
+  }
+
+  th {
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif !important;
+    font-size: 10px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.05em !important;
+    text-transform: uppercase !important;
+    color: #94a3b8 !important;
+  }
+
+  td {
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif !important;
+    font-size: 12px !important;
+    color: #0f172a !important;
   }
 
   button, a, input, select, textarea {
@@ -73,15 +100,15 @@
   }
 
   .data-table thead {
-    @apply border-b border-slate-200 bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-500;
+    @apply border-b border-slate-200 bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-400;
   }
 
   .data-table th {
-    padding: 0.75rem 1rem !important;
+    padding: 0.875rem 1rem !important;
   }
 
   .data-table td {
-    padding: 0.75rem 1rem !important;
+    padding: 0.875rem 1rem !important;
   }
 
   .data-table tbody {

@@ -5,6 +5,7 @@ import exchangeRatesReducer from '../features/exchangeRates/exchangeRatesSlice';
 import usersReducer from '../features/users/usersSlice';
 import rolesReducer from '../features/roles/rolesSlice';
 import approvalsReducer from '../features/approvals/approvalsSlice';
+import notificationsReducer from '../features/notifications/notificationsSlice';
 
 export const store = configureStore({
   reducer: {
@@ -14,5 +15,7 @@ export const store = configureStore({
     users: usersReducer,
     roles: rolesReducer,
     approvals: approvalsReducer,
+    notifications: notificationsReducer,
   },
 });
+

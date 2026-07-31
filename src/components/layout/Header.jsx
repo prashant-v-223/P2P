@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useLocation, Link, useNavigate } from 'react-router-dom';
 import { logout } from '../../features/auth/authSlice';
-import { Menu, ChevronsLeft, ChevronsRight, Bell, ChevronDown, User, LogOut } from 'lucide-react';
+import { fetchPendingApprovals } from '../../features/approvals/approvalsSlice';
+import { Menu, ChevronsLeft, ChevronsRight, ChevronDown, User, LogOut } from 'lucide-react';
 import { routeMeta } from '../../config/navigation';
+import NotificationPanel from './NotificationPanel';
 
 export default function Header({ collapsed, setCollapsed, onOpenMobile }) {
   const dispatch = useDispatch();
@@ -11,12 +13,18 @@ export default function Header({ collapsed, setCollapsed, onOpenMobile }) {
   const navigate = useNavigate();
 
   const { user } = useSelector((state) => state.auth);
-  const { pendingCount } = useSelector((state) => state.approvals);
 
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
+  useEffect(() => {
+    dispatch(fetchPendingApprovals(user?.role || 'Finance Lead'));
+  }, [dispatch, user?.role]);
+
+  // Exact match first, then try progressive prefix stripping for dynamic routes like /p2p/advance-payments/:id
   const meta = routeMeta[location.pathname]
-    || (location.pathname.startsWith('/admin/vendors') ? routeMeta['/admin/vendors'] : null)
+    || routeMeta[location.pathname.split('/').slice(0, -1).join('/')] // strip last segment e.g. /ADV-xxx
+    || routeMeta[location.pathname.split('/').slice(0, -2).join('/')] // strip last 2 e.g. /ADV-xxx/edit
+    || (location.pathname.startsWith('/admin/vendors') ? routeMeta['/management/vendors'] : null)
     || routeMeta['/dashboard'];
   const PageIcon = meta.icon;
 
@@ -49,10 +57,7 @@ export default function Header({ collapsed, setCollapsed, onOpenMobile }) {
       </div>
 
       <div className="flex items-center gap-2 sm:gap-3">
-        <Link to="/approvals" className="relative rounded-xl border border-slate-200 p-2.5 text-slate-600 transition hover:bg-slate-50">
-          <Bell className="h-[18px] w-[18px]" />
-          {!!pendingCount && <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white ring-2 ring-white">{pendingCount > 99 ? '99+' : pendingCount}</span>}
-        </Link>
+        <NotificationPanel />
 
         {/* User Profile */}
         <div className="relative">

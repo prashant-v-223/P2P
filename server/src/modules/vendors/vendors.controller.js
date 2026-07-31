@@ -1,13 +1,27 @@
 import { Vendor } from '../../models/Vendor.js';
 
-// Zero static demo vendors - 100% dynamic MongoDB persistence
 export const initialVendorsStore = [];
+
+function buildVendorFilter(id) {
+  const isObjectId = /^[0-9a-fA-F]{24}$/.test(id);
+  const filter = {
+    $or: [
+      { id },
+      { sapVendorCode: id },
+      { supplierId: id }
+    ]
+  };
+  if (isObjectId) {
+    filter.$or.push({ _id: id });
+  }
+  return filter;
+}
 
 export const getVendors = async (req, res) => {
   try {
     const vendors = await Vendor.find().sort({ createdAt: -1 }).lean().catch(() => []);
 
-    // Deduplicate by sapVendorCode, supplierId, or id to guarantee zero duplicate items
+    // Deduplicate by sapVendorCode, supplierId, id, or _id
     const seenKeys = new Set();
     const uniqueVendors = [];
     for (const v of vendors) {
@@ -27,7 +41,8 @@ export const getVendors = async (req, res) => {
 export const getVendorById = async (req, res) => {
   try {
     const { id } = req.params;
-    const vendor = await Vendor.findOne({ $or: [{ id }, { sapVendorCode: id }, { supplierId: id }] }).lean();
+    const filter = buildVendorFilter(id);
+    const vendor = await Vendor.findOne(filter).lean();
     if (!vendor) {
       return res.status(404).json({ success: false, error: 'Vendor account not found.' });
     }
@@ -106,7 +121,8 @@ export const createVendor = async (req, res) => {
 export const updateVendor = async (req, res) => {
   try {
     const { id } = req.params;
-    const updatedVendor = await Vendor.findOneAndUpdate({ $or: [{ id }, { sapVendorCode: id }, { supplierId: id }] }, req.body, { new: true });
+    const filter = buildVendorFilter(id);
+    const updatedVendor = await Vendor.findOneAndUpdate(filter, req.body, { new: true });
     
     return res.json({
       success: true,
@@ -121,7 +137,8 @@ export const updateVendor = async (req, res) => {
 export const deleteVendor = async (req, res) => {
   try {
     const { id } = req.params;
-    await Vendor.findOneAndDelete({ $or: [{ id }, { sapVendorCode: id }, { supplierId: id }] });
+    const filter = buildVendorFilter(id);
+    await Vendor.findOneAndDelete(filter);
     return res.json({
       success: true,
       message: 'Vendor deleted',
@@ -135,8 +152,9 @@ export const deleteVendor = async (req, res) => {
 export const generateVendorPassword = async (req, res) => {
   try {
     const { id } = req.params;
+    const filter = buildVendorFilter(id);
     const tempPass = `RyznP2P@${Math.floor(1000 + Math.random() * 9000)}`;
-    const updated = await Vendor.findOneAndUpdate({ $or: [{ id }, { sapVendorCode: id }, { supplierId: id }] }, { temporaryPassword: tempPass }, { new: true }).catch(() => {});
+    const updated = await Vendor.findOneAndUpdate(filter, { temporaryPassword: tempPass }, { new: true }).catch(() => {});
     
     return res.json({
       success: true,
