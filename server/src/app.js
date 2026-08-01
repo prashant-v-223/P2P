@@ -28,6 +28,7 @@ app.use('/api/workflows', workflowsRouter);
 app.use('/api/exchange-rates', exchangeRatesRouter);
 app.use('/api/approvals', approvalsRouter);
 app.use('/api/vendors', vendorsRouter);
+app.use('/api/vendor', vendorsRouter);
 app.use('/api/suppliers', suppliersRouter);
 app.use('/api/p2p', p2pRouter);
 app.use('/api/events', eventsRouter);

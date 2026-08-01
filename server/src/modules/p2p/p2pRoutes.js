@@ -204,6 +204,18 @@ async function seedMasterData() {
         supplierId: 'VEND-10088', supplierName: 'LONGi Solar Technology Co. Ltd',
         companyCode: '1000', currency: 'INR', totalAmount: 24500000,
         advancePaid: 4900000, advanceCommitted: 4900000, amountLocked: true, status: 'open'
+      },
+      {
+        poNumber: 'PO-4200001889', sapPoNumber: '4200001889',
+        supplierId: '30000111', supplierName: 'CUBIK LOGISTICS COMPANY LIMITED',
+        companyCode: '1000', currency: 'INR', totalAmount: 6500000,
+        advancePaid: 0, advanceCommitted: 0, amountLocked: false, status: 'open'
+      },
+      {
+        poNumber: 'PO-4200001990', sapPoNumber: '4200001990',
+        supplierId: '30000111', supplierName: 'CUBIK LOGISTICS COMPANY LIMITED',
+        companyCode: '1000', currency: 'INR', totalAmount: 8900000,
+        advancePaid: 1780000, advanceCommitted: 1780000, amountLocked: false, status: 'open'
       }
     ]);
   }
@@ -552,13 +564,13 @@ router.post('/invoices/create', async (req, res) => {
     const {
       poNumber, invoiceNumber, grossAmount, gstAmount, tdsAmount, tdsPercentage,
       advanceAdjusted, advanceIdAdjusted, poQuantity, grnQuantity, invoiceQuantity,
-      grnNumber, remarks, approvalTo, requestedBy
+      grnNumber, remarks, approvalTo, requestedBy, vendorId, vendorName
     } = req.body;
 
     const po = await PurchaseOrder.findOne({ $or: [{ poNumber }, { sapPoNumber: poNumber }] }).lean();
 
-    const vendorNameFinal = po?.supplierName || 'Jinko Solar (Vietnam) Industries Co., Ltd';
-    const vendorIdFinal   = po?.supplierId   || 'VEND-10029';
+    const vendorNameFinal = vendorName || requestedBy || po?.supplierName || 'Jinko Solar (Vietnam) Industries Co., Ltd';
+    const vendorIdFinal   = vendorId || po?.supplierId || 'VEND-10029';
     const poRef           = po?.sapPoNumber  || poNumber || '4300001510';
 
     const numGross   = Number(grossAmount)   || 0;

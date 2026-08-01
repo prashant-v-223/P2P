@@ -4,7 +4,7 @@ import { useVendor } from './vendorContext';
 import { FileText, Plus, Search, Filter, Eye, Download, CheckCircle, Clock, XCircle } from 'lucide-react';
 
 export default function VendorInvoicesListPage() {
-  const { invoices } = useVendor();
+  const { invoices, vendorProfile } = useVendor();
   const navigate = useNavigate();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -25,7 +25,7 @@ export default function VendorInvoicesListPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Invoices</h1>
           <p className="text-xs text-slate-500 font-medium mt-0.5">
-            Manage and track all your submitted invoices against Purchase Orders
+            Manage and track all submitted invoices for {vendorProfile?.companyName || 'your vendor account'}
           </p>
         </div>
 
@@ -73,9 +73,9 @@ export default function VendorInvoicesListPage() {
             <div className="w-14 h-14 rounded-full bg-slate-50 text-slate-300 flex items-center justify-center border border-slate-100 mb-1">
               <FileText className="w-7 h-7 stroke-[1.5]" />
             </div>
-            <h3 className="text-xs font-bold text-slate-700">No invoices found</h3>
+            <h3 className="text-xs font-bold text-slate-700">No invoices submitted yet</h3>
             <p className="text-[11px] text-slate-400 font-medium">
-              Invoices you upload will appear here with detailed payment status
+              Invoices submitted by {vendorProfile?.companyName || 'your company'} will appear here with live status
             </p>
             <Link
               to="/vendor/invoices/upload"
@@ -100,12 +100,14 @@ export default function VendorInvoicesListPage() {
               <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                 {filteredInvoices.map((inv) => (
                   <tr key={inv.id} className="hover:bg-slate-50/70 transition">
-                    <td className="p-4 font-bold text-slate-900">{inv.invoiceNumber}</td>
-                    <td className="p-4 text-slate-800 font-mono">{inv.poNumber}</td>
-                    <td className="p-4 text-slate-500">{inv.invoiceDate}</td>
-                    <td className="p-4 text-slate-500">{inv.paymentDueDate}</td>
-                    <td className="p-4 font-bold text-slate-900">
-                      {inv.currency || '₹'} {Number(inv.invoiceAmount || 0).toLocaleString()}
+                    <td className="p-4 font-bold text-slate-900 font-mono">{inv.invoiceNumber || inv.id}</td>
+                    <td className="p-4 text-slate-800 font-mono font-bold">{inv.poNumber}</td>
+                    <td className="p-4 text-slate-500">{inv.invoiceDate || inv.createdAt || 'Today'}</td>
+                    <td className="p-4 text-slate-500">{inv.paymentDueDate || '30 Days'}</td>
+                    <td className="p-4 font-bold text-slate-900 font-mono">
+                      {typeof inv.invoiceAmount === 'string' && (inv.invoiceAmount.includes('₹') || inv.invoiceAmount.includes('USD'))
+                        ? inv.invoiceAmount
+                        : `${inv.currency || '₹'} ${Number(inv.invoiceAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}
                     </td>
                     <td className="p-4">
                       <span

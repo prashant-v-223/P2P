@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useVendor } from './vendorContext';
-import { Eye, EyeOff, Sun, ArrowRight } from 'lucide-react';
+import { Eye, EyeOff, Sun, ArrowRight, AlertCircle, X } from 'lucide-react';
 import { Input } from '../../components/ui/input';
 import { Button } from '../../components/ui/button';
 
@@ -10,19 +10,24 @@ export default function VendorLoginPage() {
   const navigate = useNavigate();
 
   const [email, setEmail] = useState('kaiming.sun@jinkosolar.com');
-  const [password, setPassword] = useState('••••••••••••');
+  const [password, setPassword] = useState('Rayzon@2026');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
-    setTimeout(() => {
-      loginVendor(email, password);
+    setErrorMsg('');
+    try {
+      await loginVendor(email, password);
       setIsLoading(false);
       navigate('/vendor/dashboard');
-    }, 300);
+    } catch (err) {
+      setIsLoading(false);
+      setErrorMsg(err.message || 'Vendor login failed. Please verify credentials.');
+    }
   };
 
   return (
@@ -42,18 +47,31 @@ export default function VendorLoginPage() {
           </div>
         </div>
 
+        {/* Error alert */}
+        {errorMsg && (
+          <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-semibold flex items-center justify-between shadow-2xs">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+            <button type="button" onClick={() => setErrorMsg('')} className="text-rose-400 hover:text-rose-600">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         {/* Login Form Surface Card */}
         <div className="bg-white rounded-2xl p-7 shadow-sm border border-slate-200">
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Email Address */}
             <div className="space-y-1.5">
-              <label className="block text-sm font-semibold text-slate-700">Email Address</label>
+              <label className="block text-sm font-semibold text-slate-700">Email Address or Vendor Code</label>
               <Input
-                type="email"
+                type="text"
                 required
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="vendor@company.com"
+                onChange={(e) => { setEmail(e.target.value); setErrorMsg(''); }}
+                placeholder="vendor@company.com or 20000201"
               />
             </div>
 
@@ -65,7 +83,7 @@ export default function VendorLoginPage() {
                   type={showPassword ? 'text' : 'password'}
                   required
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => { setPassword(e.target.value); setErrorMsg(''); }}
                   className="pr-11"
                   placeholder="••••••••"
                 />

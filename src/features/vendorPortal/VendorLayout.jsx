@@ -110,7 +110,7 @@ export default function VendorLayout() {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2.5 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-xs">
               <div className="w-7 h-7 rounded-lg bg-teal-50 text-[#0d7676] font-bold flex items-center justify-center text-xs border border-teal-200">
-                JC
+                {(vendorProfile.companyName || 'Vendor').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
               </div>
               <div className="hidden sm:block text-left">
                 <span className="font-bold text-slate-900 max-w-[180px] truncate block text-xs leading-tight">
