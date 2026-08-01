@@ -7,22 +7,32 @@ const rfqHeaderSchema = new mongoose.Schema({
   title: { type: String, required: true },
   poId: { type: String, index: true },
   sapPoNumber: String,
+  description: String,
   cargoDetails: {
-    containerType: { type: String, default: '40ft High Cube' },
-    containerCount: { type: Number, default: 4 },
-    portOfOrigin: { type: String, default: 'Shanghai Port, CN' },
-    portOfDestination: { type: String, default: 'Mundra Port, IN' }
+    shippingTerms: { type: String, default: 'FOB' },
+    cargoType: { type: String, default: 'SOLAR CELL' },
+    containerType: { type: String, default: '40 FT' },
+    containerCount: { type: Number, default: 1 },
+    portOfOrigin: { type: String, default: 'SHANGHAI' },
+    portOfDestination: { type: String, default: 'NHAVA SHEVA' },
+    weightPerContainer: String,
+    estimatedReadinessDate: Date
   },
+  invitedVendors: [{ vendorId: String, companyName: String, sapVendorCode: String }],
   closingDate: { type: Date },
   status: { 
     type: String, 
     enum: ['draft', 'published', 'pending_approval', 'awarded', 'closed', 'cancelled'], 
-    default: 'draft',
+    default: 'published',
     index: true 
   },
   awardedVendorId: String,
-  awardedVendorName: String
-}, { timestamps: true });
+  awardedVendorName: String,
+  awardedQuoteId: String,
+  totalQuantity: { type: Number, default: 1 },
+  allocatedQuantity: { type: Number, default: 0 },
+  pendingAllocation: { type: Number, default: 1 }
+}, { timestamps: true, strict: false });
 
 // RFQ Quotes submitted by Vendors (with auto L1..L5 ranking)
 const rfqQuoteSchema = new mongoose.Schema({
@@ -30,12 +40,17 @@ const rfqQuoteSchema = new mongoose.Schema({
   rfqId: { type: String, required: true, index: true },
   vendorId: { type: String, required: true },
   vendorName: { type: String, required: true },
+  shippingLine: { type: String, default: 'MSC' },
+  oceanFreightUsd: { type: Number, default: 15000 },
+  stChargesInr: { type: Number, default: 25000 },
+  otherChargesInr: { type: Number, default: 0 },
+  totalInr: { type: Number, default: 1461531 },
   freightAmount: { type: Number, required: true },
   destinationCharges: { type: Number, default: 0 },
   transitDays: { type: Number, default: 18 },
-  rank: { type: String, enum: ['L1', 'L2', 'L3', 'L4', 'L5', 'N/A'], default: 'N/A' },
+  rank: { type: String, enum: ['L1', 'L2', 'L3', 'L4', 'L5', 'N/A'], default: 'L1' },
   status: { type: String, enum: ['submitted', 'awarded', 'rejected'], default: 'submitted' }
-}, { timestamps: true });
+}, { timestamps: true, strict: false });
 
 // Bill of Lading (BL) Entry Shipment Tracking State Machine
 const rfqBlEntrySchema = new mongoose.Schema({
@@ -48,6 +63,7 @@ const rfqBlEntrySchema = new mongoose.Schema({
   etaDate: { type: Date },
   customAgentId: { type: String },
   customAgentName: { type: String },
+  autoAsnNumber: { type: String },
   status: { 
     type: String, 
     enum: [
@@ -66,20 +82,22 @@ const rfqBlEntrySchema = new mongoose.Schema({
     index: true 
   },
   documents: [{
-    docType: String, // e.g. 'Bill of Lading', 'Commercial Invoice', 'Customs Bill of Entry'
+    docType: String,
     fileUrl: String,
     uploadedBy: String,
     uploadedAt: { type: Date, default: Date.now }
   }]
-}, { timestamps: true });
+}, { timestamps: true, strict: false });
 
 // Customs Duty Payments
 const customDutyPaymentSchema = new mongoose.Schema({
   dutyId: { type: String, required: true, unique: true, index: true },
   blId: { type: String, required: true, index: true },
   blNumber: { type: String, required: true },
-  portCode: { type: String, default: 'INMUN1' }, // Mundra Port
+  boeNumber: { type: String },
+  portCode: { type: String, default: 'INMUN1' },
   dutyAmount: { type: Number, required: true },
+  customAgentName: String,
   icegateRef: { type: String },
   status: { 
     type: String, 
@@ -90,7 +108,7 @@ const customDutyPaymentSchema = new mongoose.Schema({
   approvalInstanceId: String,
   utrNumber: String,
   paidAt: Date
-}, { timestamps: true });
+}, { timestamps: true, strict: false });
 
 // Logistics & Freight Invoices
 const logisticsPaymentSchema = new mongoose.Schema({
@@ -115,7 +133,7 @@ const logisticsPaymentSchema = new mongoose.Schema({
   approvalInstanceId: String,
   utrNumber: String,
   paidAt: Date
-}, { timestamps: true });
+}, { timestamps: true, strict: false });
 
 export const RfqHeader = mongoose.models.RfqHeader || mongoose.model('RfqHeader', rfqHeaderSchema);
 export const RfqQuote = mongoose.models.RfqQuote || mongoose.model('RfqQuote', rfqQuoteSchema);

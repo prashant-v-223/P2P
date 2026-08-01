@@ -34,6 +34,9 @@ import CustomDutyView from './features/p2p/CustomDutyView';
 import LogisticsPaymentsView from './features/p2p/LogisticsPaymentsView';
 
 import RfqSourcingView from './features/p2p/RfqSourcingView';
+import RfqFormView from './features/p2p/RfqFormView';
+import RfqDetailView from './features/p2p/RfqDetailView';
+import CustomsBrokerPortalPage from './features/p2p/CustomsBrokerPortalPage';
 import EximReviewView from './features/p2p/EximReviewView';
 import BlInvoicesView from './features/p2p/BlInvoicesView';
 
@@ -93,7 +96,7 @@ export default function App() {
           <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
           <Route path="/register" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <RegisterPage />} />
 
-          {/* Dedicated Vendor Portal Routes */}
+          {/* Dedicated Vendor & Customs Portal Routes */}
           <Route path="/vendor/login" element={<VendorLoginPage />} />
           <Route path="/vendor" element={<Navigate to="/vendor/dashboard" replace />} />
           <Route path="/vendor" element={<VendorLayout />}>
@@ -103,6 +106,9 @@ export default function App() {
             <Route path="advances" element={<VendorAdvancesPage />} />
             <Route path="profile" element={<VendorProfilePage />} />
           </Route>
+
+          <Route path="/customs/dashboard" element={<CustomsBrokerPortalPage />} />
+          <Route path="/customs-agent/dashboard" element={<CustomsBrokerPortalPage />} />
 
           {/* Protected Main Admin/User Portal Routes */}
           <Route
@@ -147,6 +153,11 @@ export default function App() {
             {/* LOGISTICS Group Routes */}
             <Route path="p2p/rfq" element={<RfqSourcingView />} />
             <Route path="p2p/rfq-logistics" element={<RfqSourcingView />} />
+            <Route path="admin/rfqs" element={<RfqSourcingView />} />
+            <Route path="admin/rfqs/create" element={<RfqFormView />} />
+            <Route path="p2p/rfqs/create" element={<RfqFormView />} />
+            <Route path="admin/rfqs/:id" element={<RfqDetailView />} />
+            <Route path="admin/rfqs/:id/edit" element={<RfqFormView />} />
             <Route path="p2p/exim-review" element={<EximReviewView />} />
             <Route path="p2p/bl-invoices" element={<BlInvoicesView />} />
 

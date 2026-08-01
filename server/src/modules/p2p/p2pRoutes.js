@@ -6,6 +6,8 @@ import { AdvancePayment } from '../../models/AdvancePayment.js';
 import { PaymentLedger } from '../../models/PaymentLedger.js';
 import { Approval } from '../../models/Approval.js';
 import { Workflow } from '../../models/Workflow.js';
+import { RfqHeader, RfqQuote, RfqBlEntry, CustomDutyPayment, LogisticsPayment } from '../../models/RfqLogistics.js';
+import { Vendor } from '../../models/Vendor.js';
 import { broadcastEvent } from '../../services/sse.service.js';
 import { sendApprovalCreatedEmails } from '../../services/notification.service.js';
 
@@ -772,6 +774,435 @@ router.delete('/invoices/:id', async (req, res) => {
     res.json({ success: true, message: 'Invoice payment deleted' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── RFQ & CUSTOMS SEED & MANAGEMENT ──────────────────────────────────────────
+export async function seedRfqMasterData() {
+  try {
+    const count = await RfqHeader.countDocuments();
+    if (count > 0) return;
+
+    await RfqHeader.insertMany([
+      {
+        rfqId: 'RFQ-2026-0086', rfqNumber: 'RFQ-2026-0086',
+        title: 'DUMMY ENTRY FROM IT TEAM', poId: '4700000251', sapPoNumber: '4700000251',
+        cargoDetails: { containerType: '40 FT', containerCount: 1, portOfOrigin: 'SHANGHAI', portOfDestination: 'NHAVA SHEVA', cargoType: 'SOLAR CELL' },
+        closingDate: new Date('2026-08-08T11:24:00Z'), status: 'published'
+      },
+      {
+        rfqId: 'RFQ-2026-0085', rfqNumber: 'RFQ-2026-0085',
+        title: 'IMPORT SEA FREIGHT - 1 X 40 FT - SILICONE SEALANT', poId: '4300001510', sapPoNumber: '4300001510',
+        cargoDetails: { containerType: '40 FT', containerCount: 1, portOfOrigin: 'SHANGHAI', portOfDestination: 'NHAVA SHEVA', cargoType: 'SILICONE SEALANT' },
+        closingDate: new Date('2026-07-31T23:59:00Z'), status: 'published'
+      },
+      {
+        rfqId: 'RFQ-2026-0084', rfqNumber: 'RFQ-2026-0084',
+        title: 'IMPORT SEA FREIGHT - 100 X 40 FT - SOLAR CELLS', poId: '4300001411', sapPoNumber: '4300001411',
+        cargoDetails: { containerType: '40 FT', containerCount: 100, portOfOrigin: 'NINGBO', portOfDestination: 'MUNDRA', cargoType: 'SOLAR CELL' },
+        closingDate: new Date('2026-07-31T23:59:00Z'), status: 'published'
+      },
+      {
+        rfqId: 'RFQ-2026-0083', rfqNumber: 'RFQ-2026-0083',
+        title: 'IMPORT SEA FREIGHT - 2 X 40 FT - SILICONE SEALANT', poId: '4300001512', sapPoNumber: '4300001512',
+        cargoDetails: { containerType: '40 FT', containerCount: 2, portOfOrigin: 'SHANGHAI', portOfDestination: 'MUNDRA', cargoType: 'SILICONE SEALANT' },
+        closingDate: new Date('2026-07-31T23:59:00Z'), status: 'published'
+      },
+      {
+        rfqId: 'RFQ-2026-0077', rfqNumber: 'RFQ-2026-0077',
+        title: 'IMPORT SEA FREIGHT - 20 X 40 FT - SOLAR CELLS', poId: '4300001515', sapPoNumber: '4300001515',
+        cargoDetails: { containerType: '40 FT', containerCount: 20, portOfOrigin: 'SHANGHAI', portOfDestination: 'NHAVA SHEVA', cargoType: 'SOLAR CELL' },
+        closingDate: new Date('2026-07-31T23:59:00Z'), status: 'pending_approval'
+      },
+      {
+        rfqId: 'RFQ-2026-0075', rfqNumber: 'RFQ-2026-0075',
+        title: 'IMPORT SEA FREIGHT - 300 X 40 FT - SOLAR GLASS', poId: '4300001599', sapPoNumber: '4300001599',
+        cargoDetails: { containerType: '40 FT', containerCount: 300, portOfOrigin: 'NINGBO', portOfDestination: 'MUNDRA', cargoType: 'SOLAR GLASS' },
+        closingDate: new Date('2026-07-28T23:59:00Z'), status: 'awarded', awardedVendorId: 'VEND-10029', awardedVendorName: 'Dummy FF'
+      }
+    ]);
+
+    await RfqQuote.insertMany([
+      {
+        quoteId: 'Q-001', rfqId: 'RFQ-2026-0086', vendorId: 'VEND-10029', vendorName: 'Dummy FF',
+        freightAmount: 15000, destinationCharges: 25000, transitDays: 14, rank: 'L1', status: 'awarded'
+      }
+    ]);
+
+    await RfqBlEntry.insertMany([
+      {
+        blId: 'BL-9021', rfqId: 'RFQ-2026-0086', blNumber: 'MSK-908124501', vesselName: 'EVER GIVEN V-104E',
+        shippingLine: 'MSC', containerCount: 1, customAgentId: 'CA-101', customAgentName: 'Magnesh - Fast Forward Logistics India',
+        status: 'assigned_to_agent'
+      },
+      {
+        blId: 'BL-9022', rfqId: 'RFQ-2026-0075', blNumber: 'MAEU-8812904', vesselName: 'MAERSK SEALAND V-201',
+        shippingLine: 'Maersk Line', containerCount: 4, customAgentId: 'CA-101', customAgentName: 'Magnesh - Fast Forward Logistics India',
+        status: 'custom_cleared'
+      }
+    ]);
+  } catch (err) {
+    console.warn('[RFQ SEED WARN]', err.message);
+  }
+}
+
+// ─── GET /api/p2p/rfqs ────────────────────────────────────────────────────────
+router.get('/rfqs', async (req, res) => {
+  try {
+    await seedRfqMasterData();
+    const search = String(req.query.q || req.query.search || '').trim();
+    const statusFilter = String(req.query.status || '').trim();
+
+    const filter = {};
+    if (search) {
+      const rx = new RegExp(escapeRegex(search), 'i');
+      filter.$or = [{ rfqNumber: rx }, { title: rx }, { poId: rx }, { sapPoNumber: rx }];
+    }
+    if (statusFilter && statusFilter !== 'All Status' && statusFilter !== 'All') {
+      filter.status = statusFilter.toLowerCase().replace(' ', '_');
+    }
+
+    const rfqs = await RfqHeader.find(filter).sort({ createdAt: -1 }).lean();
+
+    const enriched = await Promise.all(
+      rfqs.map(async (r) => {
+        const quoteCount = await RfqQuote.countDocuments({ rfqId: r.rfqId });
+        return {
+          ...r,
+          closingDateFormatted: r.closingDate ? new Date(r.closingDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Expired',
+          invitedVendorsCount: 12,
+          quotesCount: quoteCount || (r.rfqId === 'RFQ-2026-0086' ? 1 : r.rfqId === 'RFQ-2026-0085' ? 8 : r.rfqId === 'RFQ-2026-0084' ? 3 : r.rfqId === 'RFQ-2026-0083' ? 6 : r.rfqId === 'RFQ-2026-0082' ? 10 : 8)
+        };
+      })
+    );
+
+    return res.json({ success: true, data: enriched });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── GET Freight Forwarders / Shipping Lines Vendor List ──────────────────────
+router.get('/rfqs/logistics-vendors', async (req, res) => {
+  try {
+    const defaultLogistics = [
+      { id: 'v-ff-1', sapVendorCode: '20000215', companyName: 'Aquair International Freight Forwarders' },
+      { id: 'v-ff-2', sapVendorCode: '10002355', companyName: 'Babaji Shivram Clearing & Carriers' },
+      { id: 'v-ff-3', sapVendorCode: '0000235', companyName: 'Dummy FF' },
+      { id: 'v-ff-4', sapVendorCode: '11001450', companyName: 'Fairwinds Shipping Private Limited' },
+      { id: 'v-ff-5', sapVendorCode: '11001810', companyName: 'Fast Forward Logistics India' },
+      { id: 'v-ff-6', sapVendorCode: '11001148', companyName: 'Gef Global Logistics Pvt Ltd' },
+      { id: 'v-ff-7', sapVendorCode: '50000131', companyName: 'Globiiz Synergy Private Limited' },
+      { id: 'v-ff-8', sapVendorCode: '11001810', companyName: 'Isgfl India Pvt. Ltd.' },
+      { id: 'v-ff-9', sapVendorCode: '11001776', companyName: 'Kgl Network Pvt. Ltd.' }
+    ];
+    return res.json({ success: true, data: defaultLogistics });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── POST Create RFQ ─────────────────────────────────────────────────────────
+router.post('/rfqs', async (req, res) => {
+  try {
+    const {
+      title, linkedPoId, closingDate, description,
+      shippingTerms, cargoType, portOfLoading, portOfDischarge,
+      containerType, containerCount, weightPerContainer, estimatedReadinessDate,
+      invitedVendors
+    } = req.body;
+
+    if (!title || !cargoType || !portOfLoading || !portOfDischarge) {
+      return res.status(400).json({
+        success: false,
+        error: 'Title, Cargo Type, Port of Loading, and Port of Discharge are required fields.'
+      });
+    }
+
+    const nextIdNum = Math.floor(10 + Math.random() * 90);
+    const rfqNumber = `RFQ-2026-00${nextIdNum}`;
+
+    const newRfq = await RfqHeader.create({
+      rfqId: rfqNumber,
+      rfqNumber,
+      title: title.trim(),
+      poId: linkedPoId || '4700000251',
+      sapPoNumber: linkedPoId || '4700000251',
+      cargoDetails: {
+        containerType: containerType || '40 FT',
+        containerCount: Number(containerCount) || 1,
+        portOfOrigin: portOfLoading,
+        portOfDestination: portOfDischarge,
+        cargoType: cargoType,
+        shippingTerms: shippingTerms || 'FOB',
+        weightPerContainer: Number(weightPerContainer) || 0,
+        estimatedReadinessDate: estimatedReadinessDate || new Date()
+      },
+      closingDate: closingDate ? new Date(closingDate) : new Date(Date.now() + 7*24*60*60*1000),
+      status: 'published'
+    });
+
+    const wf = await Workflow.findOne({ module: 'RfqHeader', isActive: true }).lean().catch(() => null);
+    if (wf) {
+      await Approval.create({
+        id: rfqNumber,
+        module: 'RfqHeader',
+        requestedBy: 'System Admin',
+        roleRequired: 'Procurement Head',
+        status: 'Pending Procurement Head Approval',
+        details: `${title} (${cargoType} from ${portOfLoading} to ${portOfDischarge})`,
+        amount: 0,
+        currency: 'INR',
+        requestedAt: new Date()
+      }).catch(() => {});
+    }
+
+    return res.status(201).json({ success: true, data: newRfq });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── GET Single RFQ Details ──────────────────────────────────────────────────
+router.get('/rfqs/:id', async (req, res) => {
+  try {
+    await seedRfqMasterData();
+    const { id } = req.params;
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] }).lean();
+    if (!rfq) {
+      return res.status(404).json({ success: false, error: 'RFQ not found' });
+    }
+
+    const quotes = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 }).lean();
+    const blEntries = await RfqBlEntry.find({ rfqId: rfq.rfqId }).lean();
+
+    return res.json({
+      success: true,
+      data: {
+        ...rfq,
+        quotes,
+        blEntries
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── PUT Update RFQ ──────────────────────────────────────────────────────────
+router.put('/rfqs/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      title, linkedPoId, closingDate, description,
+      shippingTerms, cargoType, portOfLoading, portOfDischarge,
+      containerType, containerCount, weightPerContainer, estimatedReadinessDate,
+      invitedVendors, status
+    } = req.body;
+
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
+    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
+
+    if (title) rfq.title = title.trim();
+    if (linkedPoId) {
+      rfq.poId = linkedPoId;
+      rfq.sapPoNumber = linkedPoId;
+    }
+    if (description !== undefined) rfq.description = description;
+    if (closingDate) rfq.closingDate = new Date(closingDate);
+    if (status) rfq.status = status;
+
+    if (!rfq.cargoDetails) rfq.cargoDetails = {};
+    if (shippingTerms) rfq.cargoDetails.shippingTerms = shippingTerms;
+    if (cargoType) rfq.cargoDetails.cargoType = cargoType;
+    if (portOfLoading) rfq.cargoDetails.portOfOrigin = portOfLoading;
+    if (portOfDischarge) rfq.cargoDetails.portOfDestination = portOfDischarge;
+    if (containerType) rfq.cargoDetails.containerType = containerType;
+    if (containerCount !== undefined) rfq.cargoDetails.containerCount = Number(containerCount);
+    if (weightPerContainer !== undefined) rfq.cargoDetails.weightPerContainer = weightPerContainer;
+    if (estimatedReadinessDate) rfq.cargoDetails.estimatedReadinessDate = new Date(estimatedReadinessDate);
+
+    if (invitedVendors && Array.isArray(invitedVendors)) {
+      rfq.invitedVendors = invitedVendors;
+    }
+
+    await rfq.save();
+    return res.json({ success: true, message: 'RFQ updated successfully in MongoDB.', data: rfq });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── DELETE RFQ ──────────────────────────────────────────────────────────────
+router.delete('/rfqs/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
+    if (rfq) {
+      await RfqHeader.deleteOne({ _id: rfq._id });
+      await RfqQuote.deleteMany({ rfqId: rfq.rfqId }).catch(() => {});
+    }
+    return res.json({ success: true, message: 'RFQ deleted from MongoDB.' });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── POST Copy/Duplicate RFQ ──────────────────────────────────────────────────
+router.post('/rfqs/:id/copy', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const sourceRfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] }).lean();
+    if (!sourceRfq) return res.status(404).json({ success: false, error: 'Source RFQ not found' });
+
+    const nextIdNum = Math.floor(10 + Math.random() * 90);
+    const newRfqNumber = `RFQ-2026-00${nextIdNum}`;
+
+    const newRfq = await RfqHeader.create({
+      ...sourceRfq,
+      _id: undefined,
+      rfqId: newRfqNumber,
+      rfqNumber: newRfqNumber,
+      title: `COPY - ${sourceRfq.title}`,
+      status: 'published',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+
+    return res.status(201).json({ success: true, message: 'RFQ copied successfully.', data: newRfq });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── POST Submit Vendor Quote with Auto L1..L5 Ranking ────────────────────────
+router.post('/rfqs/:id/quote', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { vendorId, vendorName, shippingLine, oceanFreightUsd, stChargesInr, otherChargesInr, transitDays } = req.body;
+
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
+    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
+
+    const oceanUsd = Number(oceanFreightUsd) || 15000;
+    const stInr = Number(stChargesInr) || 25000;
+    const othInr = Number(otherChargesInr) || 0;
+    const usdRate = 92.5; // Exchange rate calculation
+    const totalInr = Math.round(oceanUsd * usdRate + stInr + othInr);
+
+    const quoteId = `Q-${Date.now().toString().slice(-6)}`;
+    await RfqQuote.create({
+      quoteId,
+      rfqId: rfq.rfqId,
+      vendorId: vendorId || 'VEND-10029',
+      vendorName: vendorName || 'Dummy FF',
+      shippingLine: shippingLine || 'MSC',
+      oceanFreightUsd: oceanUsd,
+      stChargesInr: stInr,
+      otherChargesInr: othInr,
+      totalInr,
+      freightAmount: oceanUsd,
+      destinationCharges: stInr,
+      transitDays: Number(transitDays) || 14,
+      status: 'submitted'
+    });
+
+    // Re-rank all quotes for this RFQ by totalInr ascending
+    const allQuotes = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 });
+    for (let i = 0; i < allQuotes.length; i++) {
+      const rankLabel = `L${i + 1}`;
+      allQuotes[i].rank = rankLabel;
+      await allQuotes[i].save();
+    }
+
+    return res.json({ success: true, message: 'Vendor quote submitted and ranked in MongoDB.', quoteId });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── POST Award RFQ Quote ─────────────────────────────────────────────────────
+router.post('/rfqs/:id/award', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { quoteId, vendorId, vendorName } = req.body;
+
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
+    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
+
+    rfq.status = 'awarded';
+    rfq.awardedVendorId = vendorId;
+    rfq.awardedVendorName = vendorName;
+    rfq.awardedQuoteId = quoteId;
+    rfq.allocatedQuantity = rfq.cargoDetails?.containerCount || 1;
+    rfq.pendingAllocation = 0;
+    await rfq.save();
+
+    if (quoteId) {
+      await RfqQuote.updateOne({ quoteId }, { status: 'awarded' });
+    }
+
+    broadcastEvent('rfq_awarded', { rfqId: rfq.rfqId, vendorName, awardedAt: new Date() });
+
+    return res.json({ success: true, message: 'RFQ awarded successfully in MongoDB.', data: rfq });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── CUSTOMS BROKER & BL ASSIGNMENT ROUTES ──────────────────────────────────
+router.get('/customs-agent/assigned', async (req, res) => {
+  try {
+    await seedRfqMasterData();
+    const bls = await RfqBlEntry.find().sort({ createdAt: -1 }).lean();
+    return res.json({
+      success: true,
+      agentName: 'Magnesh',
+      agentCompany: 'Fast Forward Logistics India',
+      totalAssigned: bls.length,
+      pendingClearance: bls.filter(b => b.status !== 'custom_cleared').length,
+      customCleared: bls.filter(b => b.status === 'custom_cleared').length,
+      assignments: bls
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/customs-agent/upload-boe', async (req, res) => {
+  try {
+    const { blId, boeNumber, dutyAmount, fileName } = req.body;
+    const bl = await RfqBlEntry.findOne({ $or: [{ blId }, { blNumber: blId }] });
+    if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+
+    bl.documents.push({
+      docType: 'Customs Bill of Entry',
+      fileUrl: fileName || 'BOE-Doc.pdf',
+      uploadedBy: 'Magnesh (Customs Agent)',
+      uploadedAt: new Date()
+    });
+    await bl.save();
+
+    return res.json({ success: true, message: 'Bill of Entry uploaded successfully.', bl });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/customs-agent/clear', async (req, res) => {
+  try {
+    const { blId } = req.body;
+    const bl = await RfqBlEntry.findOne({ $or: [{ blId }, { blNumber: blId }] });
+    if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+
+    bl.status = 'custom_cleared';
+    await bl.save();
+
+    broadcastEvent('customs_cleared', { blId: bl.blId, blNumber: bl.blNumber, clearedAt: new Date() });
+
+    return res.json({ success: true, message: 'Marked as Customs Cleared! Invoicing options enabled.', bl });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
