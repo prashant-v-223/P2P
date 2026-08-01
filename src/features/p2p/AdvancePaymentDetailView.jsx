@@ -74,10 +74,7 @@ export default function AdvancePaymentDetailView() {
   const [advance, setAdvance]         = useState(null);
   const [approval, setApproval]       = useState(null);
   const [steps, setSteps]             = useState([]);
-  const [remarksText, setRemarksText] = useState('');
-  const [docs, setDocs]               = useState([
-    { name: 'condition 3 .png', type: 'advance_request', version: 'v1', uploadedBy: 'Finance Team' }
-  ]);
+  const [docs, setDocs]               = useState([]);
 
   useEffect(() => { fetchData(); }, [id]);
 
@@ -93,6 +90,7 @@ export default function AdvancePaymentDetailView() {
           setAdvance(d);
           setApproval(approvalDoc);
           setSteps(deriveSteps(approvalDoc));
+          if (Array.isArray(d.documents)) setDocs(d.documents);
           return;
         }
       }

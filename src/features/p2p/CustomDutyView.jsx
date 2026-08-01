@@ -7,34 +7,23 @@ import { ShieldCheck, CheckCircle2, Plus, FileCheck2, Loader2, X } from 'lucide-
 export default function CustomDutyView() {
   const { showToast } = useToast();
 
-  const [duties, setDuties] = useState([
-    {
-      dutyId: 'DUTY-880291',
-      blNumber: 'MSK-908124501',
-      boeNumber: 'BOE-8902145',
-      vesselName: 'EVER GIVEN V-104E',
-      portCode: 'INMUN1 (Mundra Port)',
-      dutyAmount: 1450000,
-      customAgentName: 'Magnesh - Fast Forward Logistics India',
-      icegateRef: 'ICEGATE-9028471',
-      status: 'paid',
-      utrNumber: 'ICEGATE-UTR-89104',
-      paidAt: '2026-07-29'
-    },
-    {
-      dutyId: 'DUTY-880299',
-      blNumber: 'MAEU-8812904',
-      boeNumber: 'BOE-9901824',
-      vesselName: 'MAERSK SEALAND V-201',
-      portCode: 'INNHAV (Nhava Sheva)',
-      dutyAmount: 2180000,
-      customAgentName: 'Magnesh - Fast Forward Logistics India',
-      icegateRef: 'ICEGATE-9029102',
-      status: 'pending',
-      utrNumber: null,
-      paidAt: null
+  const [duties, setDuties] = useState([]);
+  const [loadingDuties, setLoadingDuties] = useState(true);
+
+  const fetchDuties = async () => {
+    try {
+      setLoadingDuties(true);
+      const res = await apiFetch('/api/p2p/custom-duties');
+      if (res.ok) {
+        const json = await res.json();
+        setDuties(json.duties || []);
+      }
+    } catch (e) {
+      console.error('Error fetching custom duties:', e);
+    } finally {
+      setLoadingDuties(false);
     }
-  ]);
+  };
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [clearedBls, setClearedBls] = useState([]);
@@ -48,6 +37,7 @@ export default function CustomDutyView() {
   const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
+    fetchDuties();
     async function loadClearedBls() {
       try {
         const res = await apiFetch('/api/p2p/customs-agent/assigned');

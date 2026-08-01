@@ -64,13 +64,6 @@ export default function VendorFormView() {
   const [accountNumber, setAccountNumber] = useState('');
   const [ifscCode, setIfscCode] = useState('');
 
-  // Fallback SAP Records for instant search resilience
-  const fallbackSapRecords = [
-    { sapVendorCode: '10000071', supplierId: '10000071', companyName: 'Genx Pv India Pvt. Ltd.', contactPerson: 'Mr. Saumil', phone: '+91 9021120049', email: 'saumil@genxpv.com', gstin: '29AAJCG4134F1ZM', pan: 'AAJCG4134F', bankName: 'ICICI Bank', branch: 'Indiranagar', accountNumber: '**** 8031', ifscCode: 'ICIC0001174', vendorType: 'DOMESTIC', paymentTerms: '30 Days', city: 'Bengaluru', country: 'IN', accountGroup: 'Z006' },
-    { sapVendorCode: '10000085', supplierId: '10000085', companyName: 'Ramanbhai Ashabhai C Chaudhari', contactPerson: 'Ramesh Patel', phone: '+91 98000 00000', email: 'ramesh@rayzonsolar.one', gstin: '24AAAAA0000A1Z5', pan: 'AAAAA0000A', bankName: 'State Bank of India', branch: 'Mumbai Main', accountNumber: '**** 4490', ifscCode: 'SBIN0000300', vendorType: 'DOMESTIC', paymentTerms: '30 Days', city: 'Mumbai', country: 'IN', accountGroup: 'Z006' },
-    { sapVendorCode: '10000120', supplierId: '10000120', companyName: 'Waaree Energies Ltd.', contactPerson: 'Hitesh Doshi', phone: '+91 98201 11223', email: 'info@waaree.com', gstin: '27AABCW1234F1Z9', pan: 'AABCW1234F', bankName: 'HDFC Bank', branch: 'Surat Main', accountNumber: '**** 1120', ifscCode: 'HDFC0000055', vendorType: 'DOMESTIC', paymentTerms: '60 Days', city: 'Surat', country: 'IN', accountGroup: 'Z006' },
-    { sapVendorCode: '30000112', supplierId: '30000112', companyName: 'WIZ LOGTEC SOLUTIONS MALASIYA SDN BHD.', contactPerson: 'Logistics Desk', phone: '+60 38000 9999', email: 'wizlogtec@rayzonsolar.one', gstin: '', pan: '', bankName: 'Standard Chartered Bank', branch: 'Kuala Lumpur', accountNumber: '**** 9999', ifscCode: 'SCBL0000101', vendorType: 'IMPORT', paymentTerms: '60 Days', city: 'Kuala Lumpur', country: 'MY', accountGroup: 'Z009' }
-  ];
 
   // Trigger search loader immediately upon typing
   const handleSearchChange = (e) => {
@@ -174,32 +167,20 @@ export default function VendorFormView() {
             email: cleanEmail,
             contactPerson: s.contactPerson || nameStr,
             phone: s.phone || '+91 9800000000',
-            bankName: s.bankName || 'State Bank of India',
-            branch: s.branch || (cityStr ? `${cityStr} Branch` : 'Main Branch'),
-            accountNumber: s.accountNumber || `**** ${code.slice(-4) || '1000'}`,
-            ifscCode: s.ifscCode || 'SBIN0000300',
+            bankName: s.bankName || '',
+            branch: s.branch || '',
+            accountNumber: s.accountNumber || '',
+            ifscCode: s.ifscCode || '',
             vendorType: countryStr && countryStr !== 'IN' ? 'IMPORT' : 'DOMESTIC',
             paymentTerms: s.paymentTerms || '30 Days',
             accountGroup: acctGrp
           };
         });
 
-        if (normalizedList.length > 0) {
-          setSapSuggestions(normalizedList);
-        } else {
-          const localFiltered = fallbackSapRecords.filter(s =>
-            s.companyName.toLowerCase().includes(searchLower) ||
-            s.sapVendorCode.toLowerCase().includes(searchLower)
-          );
-          setSapSuggestions(localFiltered);
-        }
+        setSapSuggestions(normalizedList);
       })
       .catch(() => {
-        const localFiltered = fallbackSapRecords.filter(s =>
-          s.companyName.toLowerCase().includes(searchLower) ||
-          s.sapVendorCode.toLowerCase().includes(searchLower)
-        );
-        setSapSuggestions(localFiltered);
+        setSapSuggestions([]);
       })
       .finally(() => setSearchingSap(false));
   }, [debouncedSearch]);

@@ -15,45 +15,6 @@ import {
   Plus
 } from 'lucide-react';
 
-const MOCK_RFQS = [
-  {
-    rfqId: 'RFQ-2026-0089',
-    rfqNumber: 'RFQ-2026-0089',
-    title: 'Ocean Freight Sourcing - Vietnam to Mundra Port',
-    poId: 'PO-4300001510',
-    sapPoNumber: '4300001510',
-    cargoDetails: { containerType: '40ft High Cube Solar Glass', containerCount: 6, portOfOrigin: 'Haiphong Port, VN', portOfDestination: 'Mundra Port, IN' },
-    closingDate: new Date(Date.now() + 86400000 * 7).toISOString(),
-    status: 'awarded',
-    awardedVendorId: 'LOG-90012',
-    awardedVendorName: 'Kuehne + Nagel Logistics India Pvt Ltd'
-  }
-];
-
-const MOCK_QUOTES = [
-  { quoteId: 'Q-01', rfqId: 'RFQ-2026-0089', vendorId: 'LOG-90012', vendorName: 'Kuehne + Nagel Logistics', freightAmount: 480000, destinationCharges: 45000, transitDays: 14, rank: 'L1', status: 'awarded' },
-  { quoteId: 'Q-02', rfqId: 'RFQ-2026-0089', vendorId: 'LOG-90044', vendorName: 'DHL Global Forwarding', freightAmount: 520000, destinationCharges: 40000, transitDays: 12, rank: 'L2', status: 'submitted' },
-  { quoteId: 'Q-03', rfqId: 'RFQ-2026-0089', vendorId: 'LOG-90088', vendorName: 'Maersk Logistics India', freightAmount: 560000, destinationCharges: 38000, transitDays: 10, rank: 'L3', status: 'submitted' }
-];
-
-const MOCK_BL_ENTRIES = [
-  {
-    blId: 'BL-MAEU987456',
-    rfqId: 'RFQ-2026-0089',
-    blNumber: 'MAEU987456320',
-    vesselName: 'MAERSK SEOUL V-204W',
-    shippingLine: 'Maersk Line',
-    containerCount: 6,
-    etaDate: new Date(Date.now() + 86400000 * 4).toISOString(),
-    customAgentName: 'Oceanic Customs Clearance Agency',
-    status: 'material_received',
-    documents: [
-      { docType: 'Original Bill of Lading', fileUrl: '/docs/bl.pdf', uploadedBy: 'Logistics Vendor' },
-      { docType: 'Customs Bill of Entry (BOE)', fileUrl: '/docs/boe.pdf', uploadedBy: 'Customs Agent' }
-    ]
-  }
-];
-
 const BL_STEPS = [
   { key: 'submitted', label: '1. Vendor BL Submitted' },
   { key: 'exim_review', label: '2. EXIM Review' },
@@ -67,14 +28,14 @@ const BL_STEPS = [
 
 export default function RfqLogisticsView() {
   const [activeTab, setActiveTab] = useState('rfqs'); // 'rfqs' | 'bl_tracking'
-  const [rfqs, setRfqs] = useState(MOCK_RFQS);
-  const [quotes, setQuotes] = useState(MOCK_QUOTES);
-  const [blEntries, setBlEntries] = useState(MOCK_BL_ENTRIES);
-  const [selectedBl, setSelectedBl] = useState(MOCK_BL_ENTRIES[0]);
+  const [rfqs, setRfqs] = useState([]);
+  const [quotes, setQuotes] = useState([]);
+  const [blEntries, setBlEntries] = useState([]);
+  const [selectedBl, setSelectedBl] = useState(null);
 
   const [showDutyModal, setShowDutyModal] = useState(false);
-  const [dutyAmount, setDutyAmount] = useState('1450000');
-  const [icegateRef, setIcegateRef] = useState('ICEGATE-9028471');
+  const [dutyAmount, setDutyAmount] = useState('');
+  const [icegateRef, setIcegateRef] = useState('');
 
   useEffect(() => {
     fetchRfqData();
@@ -85,19 +46,18 @@ export default function RfqLogisticsView() {
       const res1 = await fetch('/api/p2p/rfqs');
       if (res1.ok) {
         const json1 = await res1.json();
-        if (json1.rfqs?.length) setRfqs(json1.rfqs);
-        if (json1.quotes?.length) setQuotes(json1.quotes);
+        setRfqs(json1.rfqs || []);
+        setQuotes(json1.quotes || []);
       }
       const res2 = await fetch('/api/p2p/bl-entries');
       if (res2.ok) {
         const json2 = await res2.json();
-        if (json2.blEntries?.length) {
-          setBlEntries(json2.blEntries);
-          setSelectedBl(json2.blEntries[0]);
-        }
+        const entries = json2.blEntries || [];
+        setBlEntries(entries);
+        if (entries.length > 0) setSelectedBl(entries[0]);
       }
     } catch (e) {
-      console.log('Using mock RFQ & BL data');
+      console.error('Error fetching RFQ & BL data:', e);
     }
   };
 

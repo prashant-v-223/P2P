@@ -1,29 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Shield, Plus, Building2, Phone, Mail, MapPin, Search } from 'lucide-react';
+import { apiFetch } from '../../services/api';
 
 export default function CustomAgentsView() {
-  const [agents] = useState([
-    {
-      agentId: 'CHA-1002',
-      agencyName: 'Oceanic Customs Clearance Agency',
-      licenceNumber: 'CHA-MUM-8820',
-      portLocation: 'Mundra Port & Nhava Sheva',
-      contactPerson: 'Vikram Sharma',
-      phone: '+91 98250 12345',
-      email: 'clearance@oceaniccustoms.com',
-      status: 'Active'
-    },
-    {
-      agentId: 'CHA-1009',
-      agencyName: 'Apex EXIM Clearing & Forwarding Services',
-      licenceNumber: 'CHA-GUJ-9012',
-      portLocation: 'Kandla Port',
-      contactPerson: 'Anand Patel',
-      phone: '+91 99099 87654',
-      email: 'anand@apexexim.in',
-      status: 'Active'
+  const [agents, setAgents] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchAgents() {
+      try {
+        setLoading(true);
+        const res = await apiFetch('/api/p2p/custom-agents');
+        if (res.ok) {
+          const data = await res.json();
+          setAgents(data.agents || []);
+        }
+      } catch (e) {
+        console.error('Error fetching custom agents:', e);
+      } finally {
+        setLoading(false);
+      }
     }
-  ]);
+    fetchAgents();
+  }, []);
 
   return (
     <div className="w-full space-y-4 font-sans">

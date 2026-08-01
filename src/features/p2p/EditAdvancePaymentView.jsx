@@ -24,13 +24,11 @@ export default function EditAdvancePaymentView() {
   const [vendorCode, setVendorCode] = useState('10000955');
   const [poValue, setPoValue] = useState(43164.40);
 
-  const [amount, setAmount] = useState('12949.32');
+  const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState('INR — Indian Rupee');
-  const [reason, setReason] = useState('Test adva');
+  const [reason, setReason] = useState('');
   const [withGst, setWithGst] = useState(false);
-  const [documents, setDocuments] = useState([
-    { name: 'condition 3 .png', type: 'advance_request' }
-  ]);
+  const [documents, setDocuments] = useState([]);
 
   useEffect(() => {
     fetchAdvanceForEdit();
@@ -45,11 +43,12 @@ export default function EditAdvancePaymentView() {
         if (json.data) {
           const found = json.data.find(a => a.advanceId === id || a.reference === id);
           if (found) {
-            setPoNumber(found.sapPoNumber || found.poId || '4100005459');
-            setVendorCode(found.vendorId || '10000955');
-            setAmount(found.amount?.toString() || '12949.32');
-            setReason(found.remarks || 'Test adva');
+            setPoNumber(found.sapPoNumber || found.poId || '');
+            setVendorCode(found.vendorId || '');
+            setAmount(found.amount?.toString() || '');
+            setReason(found.remarks || '');
             setWithGst(found.gstBreakup?.totalGst > 0);
+            if (Array.isArray(found.documents)) setDocuments(found.documents);
           }
         }
       }

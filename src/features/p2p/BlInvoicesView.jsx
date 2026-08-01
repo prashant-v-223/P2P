@@ -1,18 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Package, CheckCircle2, DollarSign, FileText } from 'lucide-react';
+import { apiFetch } from '../../services/api';
 
 export default function BlInvoicesView() {
-  const [invoices] = useState([
-    {
-      invoiceId: 'BLINV-9021',
-      blNumber: 'MAEU987456320',
-      shippingLine: 'Maersk Line',
-      amount: 480000,
-      detentionCharges: 12000,
-      status: 'approved',
-      utrNumber: 'UTRIBK902847'
+  const [invoices, setInvoices] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchInvoices() {
+      try {
+        setLoading(true);
+        const res = await apiFetch('/api/p2p/bl-invoices');
+        if (res.ok) {
+          const data = await res.json();
+          setInvoices(data.invoices || []);
+        }
+      } catch (e) {
+        console.error('Error fetching BL invoices:', e);
+      } finally {
+        setLoading(false);
+      }
     }
-  ]);
+    fetchInvoices();
+  }, []);
 
   return (
     <div className="w-full space-y-4 font-sans">

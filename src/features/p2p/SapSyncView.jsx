@@ -22,12 +22,8 @@ export default function SapSyncView() {
   const [poInput, setPoInput] = useState('');
   const [poList, setPoList] = useState([]);
 
-  // Sync History state matching reference screenshot 1:1
-  const [history, setHistory] = useState([
-    { id: 1, type: 'Purchase Orders', fetched: '12103', created: '+1', updated: '~12101', locked: 1, failed: 0, status: 'completed', duration: '~29s' },
-    { id: 2, type: 'Purchase Orders', fetched: '12102', created: '+0', updated: '~12101', locked: 1, failed: 0, status: 'completed', duration: '~27s' },
-    { id: 3, type: 'Purchase Orders', fetched: '12102', created: '+0', updated: '~12101', locked: 1, failed: 0, status: 'completed', duration: '~27s' }
-  ]);
+  const [history, setHistory] = useState([]);
+
 
   const handleSyncNow = async () => {
     setPoSyncing(true);

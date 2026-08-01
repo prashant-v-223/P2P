@@ -1,25 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Building2, Plus, Phone, Mail, MapPin, Truck } from 'lucide-react';
+import { apiFetch } from '../../services/api';
 
 export default function LogisticsProvidersView() {
-  const [providers] = useState([
-    {
-      providerId: 'LOG-90012',
-      name: 'Kuehne + Nagel Logistics India Pvt Ltd',
-      code: 'KN-IND-01',
-      serviceType: 'Ocean Freight & Multimodal Sourcing',
-      city: 'Mumbai / Mundra',
-      status: 'Approved'
-    },
-    {
-      providerId: 'LOG-90044',
-      name: 'DHL Global Forwarding',
-      code: 'DHL-GF-88',
-      serviceType: 'Air & Express Ocean Freight',
-      city: 'Delhi / Ahmedabad',
-      status: 'Approved'
+  const [providers, setProviders] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchProviders() {
+      try {
+        setLoading(true);
+        const res = await apiFetch('/api/p2p/logistics-providers');
+        if (res.ok) {
+          const data = await res.json();
+          setProviders(data.providers || []);
+        }
+      } catch (e) {
+        console.error('Error fetching logistics providers:', e);
+      } finally {
+        setLoading(false);
+      }
     }
-  ]);
+    fetchProviders();
+  }, []);
 
   return (
     <div className="w-full space-y-4 font-sans">

@@ -1,27 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Truck, DollarSign, CheckCircle2, FileText, Building2 } from 'lucide-react';
+import { apiFetch } from '../../services/api';
 
 export default function LogisticsPaymentsView() {
-  const [payments, setPayments] = useState([
-    {
-      logisticsPaymentId: 'LOGPAY-901',
-      providerName: 'Kuehne + Nagel Logistics India Pvt Ltd',
-      blNumber: 'MAEU987456320',
-      category: 'Freight & Ocean Transport',
-      amount: 480000,
-      status: 'paid',
-      utrNumber: 'UTRKNBK9081726'
-    },
-    {
-      logisticsPaymentId: 'LOGPAY-904',
-      providerName: 'DHL Global Forwarding',
-      blNumber: 'COSU630291823',
-      category: 'Destination Port Charges & Storage',
-      amount: 145000,
-      status: 'approved',
-      utrNumber: null
+  const [payments, setPayments] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchPayments() {
+      try {
+        setLoading(true);
+        const res = await apiFetch('/api/p2p/logistics-payments');
+        if (res.ok) {
+          const data = await res.json();
+          setPayments(data.payments || []);
+        }
+      } catch (e) {
+        console.error('Error fetching logistics payments:', e);
+      } finally {
+        setLoading(false);
+      }
     }
-  ]);
+    fetchPayments();
+  }, []);
 
   return (
     <div className="w-full space-y-4 font-sans">

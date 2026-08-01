@@ -45,6 +45,9 @@ const approvalInstanceSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
+approvalInstanceSchema.index({ approvableType: 1, approvableId: 1 });
+
+
 // Audit log action schema
 const approvalActionSchema = new mongoose.Schema({
   actionId: { type: String, required: true, unique: true },
