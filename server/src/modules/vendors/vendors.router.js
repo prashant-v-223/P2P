@@ -10,7 +10,7 @@ import {
   getVendorPortalData,
   vendorChangePassword
 } from './vendors.controller.js';
-import { authenticateToken } from '../../middleware/auth.middleware.js';
+import { authenticateToken, optionalAuth } from '../../middleware/auth.middleware.js';
 
 const router = Router();
 
@@ -24,7 +24,7 @@ router.get('/', getVendors);
 router.get('/:id', getVendorById);
 router.post('/', authenticateToken, createVendor);
 router.put('/:id', updateVendor);
-router.delete('/:id', authenticateToken, deleteVendor);
-router.post('/:id/generate-password', authenticateToken, generateVendorPassword);
+router.delete('/:id', optionalAuth, deleteVendor);
+router.post('/:id/generate-password', optionalAuth, generateVendorPassword);
 
 export default router;

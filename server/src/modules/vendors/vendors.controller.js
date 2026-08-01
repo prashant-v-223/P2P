@@ -31,6 +31,10 @@ export async function seedDefaultVendors() {
     const count = await Vendor.countDocuments();
     if (count > 0) return;
 
+    // Import User model for password hashing
+    const { User } = await import('../../models/User.js');
+    const hashedPassword = await User.hashPassword('Rayzon@2026');
+
     await Vendor.insertMany([
       {
         id: 'v-20000201',
@@ -52,7 +56,7 @@ export async function seedDefaultVendors() {
         ifscCode: 'BFTVWW014',
         portalAccessEnabled: true,
         loginUrl: '/vendor/login',
-        temporaryPassword: 'Rayzon@2026',
+        passwordHash: hashedPassword,
         purchaseOrdersCount: 4,
         advancePaymentsCount: 1,
         totalInvoicesCount: 2,
@@ -78,7 +82,7 @@ export async function seedDefaultVendors() {
         ifscCode: 'CCBCHBJ',
         portalAccessEnabled: true,
         loginUrl: '/vendor/login',
-        temporaryPassword: 'Rayzon@2026',
+        passwordHash: hashedPassword,
         purchaseOrdersCount: 2,
         advancePaymentsCount: 0,
         totalInvoicesCount: 1,
@@ -104,7 +108,7 @@ export async function seedDefaultVendors() {
         ifscCode: 'HDFC0000102',
         portalAccessEnabled: true,
         loginUrl: '/vendor/login',
-        temporaryPassword: 'Rayzon@2026',
+        passwordHash: hashedPassword,
         purchaseOrdersCount: 3,
         advancePaymentsCount: 1,
         totalInvoicesCount: 2,
@@ -185,8 +189,8 @@ export const vendorLogin = async (req, res) => {
     const { email, username, password } = req.body;
     const loginIdentifier = String(email || username || '').trim().toLowerCase();
 
-    if (!loginIdentifier) {
-      return res.status(400).json({ success: false, error: 'Email address or Vendor Code is required.' });
+    if (!loginIdentifier || !password) {
+      return res.status(400).json({ success: false, error: 'Email/Vendor Code and password are required.' });
     }
 
     await seedDefaultVendors();
@@ -199,12 +203,12 @@ export const vendorLogin = async (req, res) => {
         { supplierId: rx },
         { id: rx }
       ]
-    }).lean();
+    }).select('+passwordHash');
 
     if (!vendor) {
       vendor = await Vendor.findOne({
         email: new RegExp(escapeRegex(loginIdentifier), 'i')
-      }).lean();
+      }).select('+passwordHash');
     }
 
     if (!vendor) {
@@ -213,6 +217,14 @@ export const vendorLogin = async (req, res) => {
 
     if (vendor.portalAccessEnabled === false || vendor.status === 'Inactive') {
       return res.status(403).json({ success: false, error: 'Portal access has been disabled for this vendor account.' });
+    }
+
+    // Verify password using scrypt hash
+    const { User } = await import('../../models/User.js');
+    const isPasswordValid = await User.prototype.verifyPassword.call({ passwordHash: vendor.passwordHash }, password);
+    
+    if (!isPasswordValid) {
+      return res.status(401).json({ success: false, error: 'Invalid password. Please try again.' });
     }
 
     const payload = {
@@ -330,9 +342,16 @@ export const createVendor = async (req, res) => {
     if (!companyName || !email) {
       return res.status(400).json({ success: false, error: 'Company name and official email are required.' });
     }
+    if (!password || password.length < 8) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 8 characters long.' });
+    }
 
     const uniqueId = `v-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
     const finalSapCode = sapVendorCode || `1000${Math.floor(1000 + Math.random() * 9000)}`;
+
+    // Hash password properly
+    const { User } = await import('../../models/User.js');
+    const passwordHash = await User.hashPassword(password);
 
     const newVendorObj = {
       id: uniqueId,
@@ -342,7 +361,7 @@ export const createVendor = async (req, res) => {
       contactPerson: contactPerson || companyName,
       phone: phone || '+91 9800000000',
       email,
-      temporaryPassword: password || `Rayzon@${uniqueId.slice(-4)}`,
+      passwordHash,
       vendorType: vendorType || 'DOMESTIC',
       paymentTerms: paymentTerms || '30 Days',
       status: 'Active',
@@ -425,12 +444,17 @@ export const generateVendorPassword = async (req, res) => {
     const { id } = req.params;
     const filter = buildVendorFilter(id);
     const tempPass = `RyznP2P@${Math.floor(1000 + Math.random() * 9000)}`;
-    const updated = await Vendor.findOneAndUpdate(filter, { temporaryPassword: tempPass }, { new: true }).catch(() => {});
+    
+    // Hash the new temporary password
+    const { User } = await import('../../models/User.js');
+    const passwordHash = await User.hashPassword(tempPass);
+    
+    const updated = await Vendor.findOneAndUpdate(filter, { passwordHash }, { new: true }).catch(() => {});
     
     return res.json({
       success: true,
-      message: `Temporary password generated for vendor ${id}: ${tempPass}`,
-      temporaryPassword: tempPass,
+      message: `Temporary password generated for vendor ${id}`,
+      temporaryPassword: tempPass, // Only show once for communication to vendor
       vendor: updated
     });
   } catch (err) {
@@ -443,25 +467,34 @@ export const vendorChangePassword = async (req, res) => {
     const { vendorId, sapVendorCode, email, currentPassword, newPassword } = req.body;
     const identifier = vendorId || sapVendorCode || email || req.user?.sapVendorCode;
 
-    if (!identifier || !newPassword) {
-      return res.status(400).json({ success: false, error: 'Vendor identifier and new password are required.' });
+    if (!identifier || !currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, error: 'Current password and new password are required.' });
     }
 
-    if (newPassword.length < 6) {
-      return res.status(400).json({ success: false, error: 'New password must be at least 6 characters long.' });
+    if (newPassword.length < 8) {
+      return res.status(400).json({ success: false, error: 'New password must be at least 8 characters long.' });
     }
 
     const filter = buildVendorFilter(identifier);
-    let vendor = await Vendor.findOne(filter);
+    let vendor = await Vendor.findOne(filter).select('+passwordHash');
     if (!vendor && email) {
-      vendor = await Vendor.findOne({ email: new RegExp(escapeRegex(email), 'i') });
+      vendor = await Vendor.findOne({ email: new RegExp(escapeRegex(email), 'i') }).select('+passwordHash');
     }
 
     if (!vendor) {
       return res.status(404).json({ success: false, error: 'Vendor account not found.' });
     }
 
-    vendor.temporaryPassword = newPassword;
+    // Verify current password
+    const { User } = await import('../../models/User.js');
+    const isPasswordValid = await User.prototype.verifyPassword.call({ passwordHash: vendor.passwordHash }, currentPassword);
+    
+    if (!isPasswordValid) {
+      return res.status(401).json({ success: false, error: 'Current password is incorrect.' });
+    }
+
+    // Hash and save new password
+    vendor.passwordHash = await User.hashPassword(newPassword);
     await vendor.save();
 
     return res.json({

@@ -23,6 +23,12 @@ const generateUniqueInvoiceNumber = () => {
   return `INV-${year}-${rand}`;
 };
 
+const generateASNNumber = () => {
+  const year = new Date().getFullYear();
+  const rand = Math.floor(10000 + Math.random() * 90000);
+  return `ASN-${year}-${rand}`;
+};
+
 export default function InvoicePaymentFormView() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -44,6 +50,7 @@ export default function InvoicePaymentFormView() {
   const [poNumber, setPoNumber] = useState('');
   const [selectedPoObj, setSelectedPoObj] = useState(null);
   const [invoiceNumber, setInvoiceNumber] = useState(generateUniqueInvoiceNumber());
+  const [asnNumber, setAsnNumber] = useState(generateASNNumber());
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [currency, setCurrency] = useState('INR');
   const [dueDays, setDueDays] = useState(30);
@@ -102,6 +109,7 @@ export default function InvoicePaymentFormView() {
             const pId = inv.poId || inv.sapPoNumber || '';
             setPoNumber(pId);
             setInvoiceNumber(inv.invoiceNumber || '');
+            setAsnNumber(inv.asnNumber || generateASNNumber());
             setInvoiceDate(inv.invoiceDate ? new Date(inv.invoiceDate).toISOString().split('T')[0] : '');
             setInvoiceAmount(inv.grossAmount || '');
             setGrnNo(inv.grnNumber || '');
@@ -230,6 +238,7 @@ export default function InvoicePaymentFormView() {
       const payload = {
         poNumber,
         invoiceNumber: invoiceNumber.trim(),
+        asnNumber: asnNumber.trim() || generateASNNumber(),
         invoiceDate,
         dueDays: Number(dueDays),
         dueDate: calculateDueDate(),
@@ -470,6 +479,31 @@ export default function InvoicePaymentFormView() {
                 placeholder="e.g. INV-2026-891204"
                 className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
               />
+            </div>
+
+            {/* ASN Number */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
+                  ASN Number
+                  <span className="px-1.5 py-0.5 text-[9px] font-extrabold bg-amber-100 text-amber-700 border border-amber-200 rounded uppercase tracking-wider">Auto</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setAsnNumber(generateASNNumber())}
+                  className="text-[10px] font-bold text-amber-600 hover:underline cursor-pointer"
+                >
+                  ⚡ Regenerate
+                </button>
+              </div>
+              <input
+                type="text"
+                value={asnNumber}
+                onChange={(e) => setAsnNumber(e.target.value)}
+                placeholder="e.g. ASN-2026-48291"
+                className="w-full px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-400 focus:bg-white"
+              />
+              <p className="text-[10px] text-amber-600 font-semibold">Auto-generated Advance Shipment Notice</p>
             </div>
 
             {/* Invoice Date */}

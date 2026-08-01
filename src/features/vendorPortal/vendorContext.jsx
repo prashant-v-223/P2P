@@ -4,19 +4,19 @@ import { apiFetch } from '../../services/api';
 const VendorContext = createContext();
 
 const initialVendorProfile = {
-  sapVendorCode: '20000201',
-  companyName: 'Jinko Solar (Vietnam) Industries Co., Ltd',
-  contactPerson: 'Kai Sun',
-  email: 'kaiming.sun@jinkosolar.com',
-  phone: '+86 13019807370',
-  vendorType: 'Domestic Vendor',
+  sapVendorCode: '',
+  companyName: '',
+  contactPerson: '',
+  email: '',
+  phone: '',
+  vendorType: '',
   status: 'Active',
-  gstin: '24AAACJ1234F1Z5',
-  pan: 'AAACJ1234F',
-  bankName: 'JOINT STOCK COMMERCIAL BANK FOR FOREIGN TRADE OF VIETNAM',
-  branch: 'QUANG NINH BRANCH',
-  accountNumber: '**** 8888',
-  ifscCode: 'BFTVWW014'
+  gstin: '',
+  pan: '',
+  bankName: '',
+  branch: '',
+  accountNumber: '',
+  ifscCode: ''
 };
 
 const initialPurchaseOrders = [];
@@ -24,7 +24,7 @@ const initialPurchaseOrders = [];
 export const VendorProvider = ({ children }) => {
   const [vendorUser, setVendorUser] = useState(() => {
     const saved = localStorage.getItem('rayzon_vendor_user');
-    return saved ? JSON.parse(saved) : { ...initialVendorProfile, isLoggedIn: true };
+    return saved ? JSON.parse(saved) : null;
   });
 
   const [vendorProfile, setVendorProfile] = useState(() => {
@@ -156,6 +156,7 @@ export const VendorProvider = ({ children }) => {
     const payload = {
       poNumber: newInvoice.poNumber,
       invoiceNumber: newInvoice.invoiceNumber,
+      asnNumber: newInvoice.asnNumber || '',
       vendorId: vendorProfile.sapVendorCode || vendorUser.sapVendorCode || '30000111',
       vendorName: vendorProfile.companyName || vendorUser.companyName || 'Vendor',
       requestedBy: vendorProfile.companyName || vendorUser.companyName || 'Vendor',

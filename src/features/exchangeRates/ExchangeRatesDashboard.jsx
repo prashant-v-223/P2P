@@ -26,7 +26,7 @@ export default function ExchangeRatesDashboard() {
   };
 
   const handleSaveAll = () => {
-    dispatch(saveAllRates({ rates, updatedBy: user?.name || 'Nikunj Bhagat' }));
+    dispatch(saveAllRates({ rates, updatedBy: user?.name || 'Admin' }));
     setTimeout(() => {
       dispatch(clearRatesToast());
     }, 4000);

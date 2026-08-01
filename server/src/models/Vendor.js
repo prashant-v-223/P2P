@@ -26,7 +26,7 @@ const vendorSchema = new mongoose.Schema({
   // Portal Credentials & Status
   portalAccessEnabled: { type: Boolean, default: true },
   loginUrl: { type: String, default: '/vendor/login' },
-  temporaryPassword: { type: String },
+  passwordHash: { type: String, select: false }, // Properly hashed password
 
   // Summary Metrics
   purchaseOrdersCount: { type: Number, default: 30 },

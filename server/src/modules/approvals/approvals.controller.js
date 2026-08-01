@@ -133,15 +133,18 @@ export const getPendingApprovals = async (req, res) => {
     if (type && type !== 'All') filter.type = type;
     if (query) {
       const matcher = new RegExp(escapeRegex(query), 'i');
-      filter.$or = [
+      const orConditions = [
         { id:          matcher },
         { type:        matcher },
         { vendorName:  matcher },
         { requestedBy: matcher },
         { currentSlab: matcher },
-        { amountINR:   matcher },
         { poReference: matcher }
       ];
+      if (!isNaN(Number(query))) {
+        orConditions.push({ amountINR: Number(query) });
+      }
+      filter.$or = orConditions;
     }
 
     const sort = req.query.sort === 'oldest'

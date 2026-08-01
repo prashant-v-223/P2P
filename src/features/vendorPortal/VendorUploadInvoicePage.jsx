@@ -11,6 +11,12 @@ const generateUniqueInvoiceNumber = () => {
   return `INV-${year}-${rand}`;
 };
 
+const generateASNNumber = () => {
+  const year = new Date().getFullYear();
+  const rand = Math.floor(10000 + Math.random() * 90000);
+  return `ASN-${year}-${rand}`;
+};
+
 export default function VendorUploadInvoicePage() {
   const { purchaseOrders, addInvoice } = useVendor();
   const { showToast } = useToast();
@@ -27,6 +33,7 @@ export default function VendorUploadInvoicePage() {
   const [apiSearchResults, setApiSearchResults] = useState([]);
 
   const [invoiceNumber, setInvoiceNumber] = useState(generateUniqueInvoiceNumber());
+  const [asnNumber, setAsnNumber] = useState(generateASNNumber());
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [currency, setCurrency] = useState('INR');
   const [dueDays, setDueDays] = useState(30);
@@ -200,9 +207,14 @@ export default function VendorUploadInvoicePage() {
 
     setIsSubmitting(true);
     try {
+      // Auto-generate ASN if somehow empty
+      const finalAsn = asnNumber.trim() || generateASNNumber();
+      if (!asnNumber.trim()) setAsnNumber(finalAsn);
+
       await addInvoice({
         poNumber,
         invoiceNumber: invoiceNumber.trim(),
+        asnNumber: finalAsn,
         invoiceDate,
         currency,
         dueDays,
@@ -440,6 +452,31 @@ export default function VendorUploadInvoicePage() {
                 placeholder="e.g. INV-2026-891204"
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
               />
+            </div>
+
+            {/* ASN Number */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-semibold text-slate-700">
+                  ASN Number
+                  <span className="ml-1.5 px-1.5 py-0.5 text-[9px] font-extrabold bg-amber-100 text-amber-700 border border-amber-200 rounded uppercase tracking-wider">Auto</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setAsnNumber(generateASNNumber())}
+                  className="text-[11px] font-bold text-amber-600 hover:underline cursor-pointer"
+                >
+                  ⚡ Regenerate
+                </button>
+              </div>
+              <input
+                type="text"
+                value={asnNumber}
+                onChange={(e) => setAsnNumber(e.target.value)}
+                placeholder="e.g. ASN-2026-48291"
+                className="w-full px-3.5 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-400 focus:bg-white"
+              />
+              <p className="text-[10px] text-amber-600 font-semibold">Auto-generated Advance Shipment Notice number</p>
             </div>
 
             {/* Invoice Date */}
@@ -745,6 +782,11 @@ export default function VendorUploadInvoicePage() {
                 <span className="text-slate-500 font-semibold">Invoice Number</span>
                 <span className="font-mono font-bold text-slate-900">{invoiceNumber}</span>
               </div>
+              {/* ASN Number highlight */}
+              <div className="flex items-center justify-between border-b border-amber-200/60 pb-2 bg-amber-50/60 -mx-4 px-4 py-2">
+                <span className="text-amber-700 font-extrabold flex items-center gap-1">📦 ASN Number</span>
+                <span className="font-mono font-bold text-amber-800 text-sm">{asnNumber}</span>
+              </div>
               <div className="flex items-center justify-between border-b border-slate-200/60 pb-2">
                 <span className="text-slate-500 font-semibold">Purchase Order</span>
                 <span className="font-mono font-bold text-[#0d7676]">{poNumber || 'PO-4100005580'}</span>
@@ -779,6 +821,7 @@ export default function VendorUploadInvoicePage() {
                 onClick={() => {
                   setShowSuccessModal(false);
                   setInvoiceNumber(generateUniqueInvoiceNumber());
+                  setAsnNumber(generateASNNumber());
                   setInvoiceAmount('');
                   setGrnNo('');
                   setRemarks('');

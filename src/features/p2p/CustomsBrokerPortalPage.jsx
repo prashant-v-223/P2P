@@ -1,18 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { apiFetch } from '../../services/api';
+import { useCustomAgent } from '../customAgentPortal/customAgentContext';
 import { useToast } from '../../components/ui/toast';
 import { 
   Ship, 
   Clock, 
   CheckCircle2, 
   Upload, 
-  FileText, 
   ShieldCheck, 
-  Plus, 
   LogOut, 
   Loader2, 
-  Building2, 
   X,
   FileCheck2
 } from 'lucide-react';
@@ -20,41 +17,29 @@ import {
 export default function CustomsBrokerPortalPage() {
   const navigate = useNavigate();
   const { showToast } = useToast();
+  const { agentUser, assignedBls, fetchAssignedBls, uploadBoe, markAsCleared, logoutAgent } = useCustomAgent();
 
   const [loading, setLoading] = useState(true);
-  const [data, setData] = useState({
-    agentName: 'Magnesh',
-    agentCompany: 'Fast Forward Logistics India',
-    totalAssigned: 2,
-    pendingClearance: 1,
-    customCleared: 1,
-    assignments: []
-  });
-
   const [selectedBl, setSelectedBl] = useState(null);
   const [showBoeModal, setShowBoeModal] = useState(false);
   const [boeNumber, setBoeNumber] = useState('');
   const [dutyAmount, setDutyAmount] = useState('');
   const [submittingBoe, setSubmittingBoe] = useState(false);
 
-  const fetchAssignments = async () => {
-    try {
-      setLoading(true);
-      const res = await apiFetch('/api/p2p/customs-agent/assigned');
-      const json = await res.json();
-      if (res.ok && json.success) {
-        setData(json);
-      }
-    } catch (e) {
-      console.error('Fetch customs assignments error:', e);
-    } finally {
-      setLoading(false);
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!agentUser || !agentUser.isLoggedIn) {
+      navigate('/customs-agent/login');
     }
-  };
+  }, [agentUser, navigate]);
 
   useEffect(() => {
-    fetchAssignments();
-  }, []);
+    if (agentUser?.isLoggedIn) {
+      setLoading(true);
+      fetchAssignedBls(agentUser.agentId)
+        .finally(() => setLoading(false));
+    }
+  }, [agentUser?.isLoggedIn, agentUser?.agentId, fetchAssignedBls]);
 
   const handleUploadBoeSubmit = async (e) => {
     e.preventDefault();
@@ -64,54 +49,55 @@ export default function CustomsBrokerPortalPage() {
     }
     setSubmittingBoe(true);
     try {
-      const res = await apiFetch('/api/p2p/customs-agent/upload-boe', {
-        method: 'POST',
-        body: JSON.stringify({
-          blId: selectedBl.blId,
-          boeNumber,
-          dutyAmount: Number(dutyAmount) || 0,
-          fileName: `BOE-${boeNumber.trim()}.pdf`
-        })
+      await uploadBoe(selectedBl.blId, {
+        boeNumber,
+        dutyAmount: Number(dutyAmount) || 0,
+        fileName: `BOE-${boeNumber.trim()}.pdf`
       });
-      const json = await res.json();
-      setSubmittingBoe(false);
-      if (res.ok && json.success) {
-        showToast({
-          title: 'BOE Uploaded',
-          description: `Bill of Entry ${boeNumber} uploaded successfully.`,
-          type: 'success'
-        });
-        setShowBoeModal(false);
-        setBoeNumber('');
-        setDutyAmount('');
-        fetchAssignments();
-      }
+      
+      showToast({
+        title: 'BOE Uploaded',
+        description: `Bill of Entry ${boeNumber} uploaded successfully.`,
+        type: 'success'
+      });
+      setShowBoeModal(false);
+      setBoeNumber('');
+      setDutyAmount('');
     } catch (err) {
-      setSubmittingBoe(false);
       showToast({ title: 'Error', description: err.message, type: 'error' });
+    } finally {
+      setSubmittingBoe(false);
     }
   };
 
   const handleMarkAsCleared = async (bl) => {
     if (!window.confirm(`Confirm marking BL ${bl.blNumber} as Customs Cleared?`)) return;
     try {
-      const res = await apiFetch('/api/p2p/customs-agent/clear', {
-        method: 'POST',
-        body: JSON.stringify({ blId: bl.blId })
+      await markAsCleared(bl.blId);
+      showToast({
+        title: 'Customs Cleared!',
+        description: 'BL marked as cleared. Invoicing options enabled for Agent & Vendors.',
+        type: 'success'
       });
-      const json = await res.json();
-      if (res.ok && json.success) {
-        showToast({
-          title: 'Customs Cleared!',
-          description: 'BL marked as cleared. Invoicing options enabled for Agent & Vendors.',
-          type: 'success'
-        });
-        fetchAssignments();
-      }
     } catch (err) {
       showToast({ title: 'Error', description: err.message, type: 'error' });
     }
   };
+
+  const handleLogout = () => {
+    logoutAgent();
+    navigate('/customs-agent/login');
+  };
+
+  // Calculate metrics from assignedBls
+  const totalAssigned = assignedBls.length;
+  const pendingClearance = assignedBls.filter(bl => bl.status !== 'custom_cleared').length;
+  const customCleared = assignedBls.filter(bl => bl.status === 'custom_cleared').length;
+
+  // If not logged in, return null (redirect will handle navigation)
+  if (!agentUser || !agentUser.isLoggedIn) {
+    return null;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800 antialiased pb-16 text-left">
@@ -143,10 +129,10 @@ export default function CustomsBrokerPortalPage() {
 
           <div className="flex items-center gap-3">
             <span className="text-xs font-bold text-slate-700 hidden sm:inline-block">
-              {data.agentName}
+              {agentUser?.contactPerson || agentUser?.email || 'Agent'}
             </span>
             <button
-              onClick={() => navigate('/login')}
+              onClick={handleLogout}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -165,10 +151,10 @@ export default function CustomsBrokerPortalPage() {
               Customs Broker Portal
             </span>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              {data.agentName}
+              {agentUser?.contactPerson || 'Agent'}
             </h1>
             <p className="text-xs font-medium text-teal-100">
-              {data.agentCompany}
+              {agentUser?.agencyName || agentUser?.email || 'Custom Agent Portal'}
             </p>
           </div>
           <div className="absolute -right-8 -bottom-10 opacity-15 pointer-events-none">
@@ -183,7 +169,7 @@ export default function CustomsBrokerPortalPage() {
               <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
                 TOTAL ASSIGNED
               </span>
-              <p className="text-2xl font-black text-slate-900">{data.totalAssigned}</p>
+              <p className="text-2xl font-black text-slate-900">{totalAssigned}</p>
               <p className="text-[11px] text-slate-400 font-medium">BL entries assigned to you</p>
             </div>
             <div className="w-10 h-10 rounded-2xl bg-sky-50 text-sky-600 flex items-center justify-center border border-sky-100 shrink-0">
@@ -196,7 +182,7 @@ export default function CustomsBrokerPortalPage() {
               <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-700">
                 PENDING CLEARANCE
               </span>
-              <p className="text-2xl font-black text-amber-700">{data.pendingClearance}</p>
+              <p className="text-2xl font-black text-amber-700">{pendingClearance}</p>
               <p className="text-[11px] text-amber-600 font-medium">Awaiting your action</p>
             </div>
             <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center border border-amber-200 shrink-0">
@@ -209,7 +195,7 @@ export default function CustomsBrokerPortalPage() {
               <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-700">
                 CUSTOM CLEARED
               </span>
-              <p className="text-2xl font-black text-emerald-700">{data.customCleared}</p>
+              <p className="text-2xl font-black text-emerald-700">{customCleared}</p>
               <p className="text-[11px] text-emerald-600 font-medium">Successfully cleared</p>
             </div>
             <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center border border-emerald-200 shrink-0">
@@ -228,10 +214,10 @@ export default function CustomsBrokerPortalPage() {
               </p>
             </div>
             <button
-              onClick={fetchAssignments}
+              onClick={() => fetchAssignedBls(agentUser?.agentId)}
               className="px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition"
             >
-              View All →
+              Refresh →
             </button>
           </div>
 
@@ -240,13 +226,13 @@ export default function CustomsBrokerPortalPage() {
               <Loader2 className="w-7 h-7 animate-spin text-[#0d7676]" />
               <p className="text-xs font-semibold text-slate-600">Loading assignments...</p>
             </div>
-          ) : data.assignments.length === 0 ? (
+          ) : assignedBls.length === 0 ? (
             <div className="py-16 text-center text-xs font-medium text-slate-400">
               No BL clearance assignments assigned to your agent account.
             </div>
           ) : (
             <div className="divide-y divide-slate-100">
-              {data.assignments.map((bl) => {
+              {assignedBls.map((bl) => {
                 const isCleared = bl.status === 'custom_cleared';
                 return (
                   <div key={bl.blId} className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50/70 transition">

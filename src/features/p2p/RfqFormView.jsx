@@ -28,24 +28,24 @@ export default function RfqFormView() {
   const [saving, setSaving] = useState(false);
 
   // Form State
-  const [title, setTitle] = useState(copyFrom?.title || 'IMPORT SEA FREIGHT - 1 X 40 FT - SOLAR CELL');
-  const [linkedPoId, setLinkedPoId] = useState(copyFrom?.poId || '4700000251');
-  const [closingDate, setClosingDate] = useState('2026-08-08T11:24');
+  const [title, setTitle] = useState(copyFrom?.title || '');
+  const [linkedPoId, setLinkedPoId] = useState(copyFrom?.poId || '');
+  const [closingDate, setClosingDate] = useState('');
   const [description, setDescription] = useState('');
 
   // Shipment Requirements
-  const [shippingTerms, setShippingTerms] = useState('FOB');
-  const [cargoType, setCargoType] = useState('SOLAR CELL');
-  const [portOfLoading, setPortOfLoading] = useState('SHANGHAI');
-  const [portOfDischarge, setPortOfDischarge] = useState('NHAVA SHEVA');
-  const [containerType, setContainerType] = useState('40 FT');
+  const [shippingTerms, setShippingTerms] = useState('');
+  const [cargoType, setCargoType] = useState('');
+  const [portOfLoading, setPortOfLoading] = useState('');
+  const [portOfDischarge, setPortOfDischarge] = useState('');
+  const [containerType, setContainerType] = useState('');
   const [containerCount, setContainerCount] = useState('1');
   const [weightPerContainer, setWeightPerContainer] = useState('');
   const [estimatedReadinessDate, setEstimatedReadinessDate] = useState('');
 
   // Logistics / Freight Forwarder Vendors (Rule: RFQ only show Freight Forwarder user)
   const [logisticsVendors, setLogisticsVendors] = useState([]);
-  const [selectedVendors, setSelectedVendors] = useState(['v-ff-3']);
+  const [selectedVendors, setSelectedVendors] = useState([]);
   const [vendorSearch, setVendorSearch] = useState('');
 
   // Fetch logistics vendors (filtered to Freight Forwarders only) & load existing RFQ for edit
@@ -208,16 +208,17 @@ export default function RfqFormView() {
               <label className="block text-xs font-bold text-slate-700">
                 Linked Purchase Order <span className="text-rose-500">*</span>
               </label>
-              <select
+              <input
+                type="text"
+                required
                 value={linkedPoId}
                 onChange={(e) => setLinkedPoId(e.target.value)}
-                className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-[#0d7676] cursor-pointer"
-              >
-                <option value="4700000251">4700000251 - Rayzon Solar PV Module PO</option>
-                <option value="4300001510">4300001510 - Silicone Sealant PO</option>
-                <option value="4300001411">4300001411 - Solar Cells Import PO</option>
-                <option value="4300001599">4300001599 - Solar Glass Import PO</option>
-              </select>
+                placeholder="Enter PO Number (e.g. 4700000251)"
+                className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
+              />
+              <p className="text-[10px] text-slate-400 mt-1">
+                Enter the SAP PO number to link with this RFQ
+              </p>
             </div>
 
             <div className="space-y-1.5">
@@ -387,9 +388,15 @@ export default function RfqFormView() {
 
           {/* Vendors Selection Grid matching Screenshot 3 */}
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-            {filteredLogisticsVendors.map((vendor) => {
+            {filteredLogisticsVendors.length === 0 && (
+            <div className="col-span-3 py-8 text-center text-xs text-slate-400 font-medium">
+              No freight forwarders found. Try a different search.
+            </div>
+          )}
+          {filteredLogisticsVendors.map((vendor) => {
               const isSelected = selectedVendors.includes(vendor.id);
               const initial = (vendor.companyName || 'F')[0].toUpperCase();
+              const isShippingLine = (vendor.vendorType || '').toLowerCase().includes('shipping');
 
               return (
                 <div
@@ -410,12 +417,22 @@ export default function RfqFormView() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-bold text-slate-900 truncate">{vendor.companyName}</p>
-                    <p className="text-[10px] font-mono text-slate-400">{vendor.sapVendorCode}</p>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <p className="text-[10px] font-mono text-slate-400">{vendor.sapVendorCode}</p>
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                        isShippingLine 
+                          ? 'bg-blue-50 text-blue-600' 
+                          : 'bg-teal-50 text-teal-600'
+                      }`}>
+                        {isShippingLine ? 'Shipping Line' : 'Freight Forwarder'}
+                      </span>
+                    </div>
                   </div>
                   {isSelected && <Check className="w-4 h-4 text-amber-600 shrink-0" />}
                 </div>
               );
             })}
+
           </div>
         </div>
 

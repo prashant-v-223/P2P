@@ -7,6 +7,7 @@ const invoicePaymentSchema = new mongoose.Schema({
   vendorId:         { type: String, required: true },
   vendorName:       { type: String, required: true },
   invoiceNumber:    { type: String, required: true },
+  asnNumber:        { type: String, default: '' },
   invoiceDate:      { type: Date, default: Date.now },
   grossAmount:      { type: Number, required: true },
   gstAmount:        { type: Number, default: 0 },

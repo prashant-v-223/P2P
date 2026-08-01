@@ -8,6 +8,7 @@ import exchangeRatesRouter from './modules/exchangeRates/exchangeRates.router.js
 import approvalsRouter from './modules/approvals/approvals.router.js';
 import vendorsRouter from './modules/vendors/vendors.router.js';
 import suppliersRouter from './modules/suppliers/suppliers.router.js';
+import customAgentsRouter from './modules/customAgents/customAgents.router.js';
 import p2pRouter from './modules/p2p/p2pRoutes.js';
 import eventsRouter from './modules/events/events.router.js';
 
@@ -30,6 +31,7 @@ app.use('/api/approvals', approvalsRouter);
 app.use('/api/vendors', vendorsRouter);
 app.use('/api/vendor', vendorsRouter);
 app.use('/api/suppliers', suppliersRouter);
+app.use('/api/custom-agents', customAgentsRouter);
 app.use('/api/p2p', p2pRouter);
 app.use('/api/events', eventsRouter);
 

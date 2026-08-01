@@ -102,6 +102,8 @@ import { InvoicePayment } from '../models/InvoicePayment.js';
 import { CustomDutyPayment } from '../models/CustomDutyPayment.js';
 import { LogisticsPayment } from '../models/LogisticsPayment.js';
 import { Document } from '../models/Document.js';
+import { User } from '../models/User.js';
+import { Vendor } from '../models/Vendor.js';
 
 export const seedDatabase = async () => {
   try {
@@ -127,9 +129,170 @@ export const seedDatabase = async () => {
       }
     }
 
+    // --- Seed System Users ---
+    const userCount = await User.countDocuments();
+    if (userCount === 0) {
+      console.log('[DB] Seeding default system users...');
+      const defaultPassHash = await User.hashPassword('Rayzon@2026');
+      await User.insertMany([
+        {
+          id: 'usr-001',
+          name: 'Prashant Vadhvana',
+          email: 'prashantvadhvana@gmail.com',
+          passwordHash: defaultPassHash,
+          role: 'System Admin',
+          department: 'Executive Administration',
+          status: 'Active',
+          avatar: 'PV'
+        },
+        {
+          id: 'usr-002',
+          name: 'Procurement Head User',
+          email: 'procurement@rayzon.com',
+          passwordHash: defaultPassHash,
+          role: 'Procurement Head',
+          department: 'Procurement',
+          status: 'Active',
+          avatar: 'PH'
+        },
+        {
+          id: 'usr-003',
+          name: 'Finance Manager',
+          email: 'finance@rayzon.com',
+          passwordHash: defaultPassHash,
+          role: 'Finance Lead',
+          department: 'Finance & Treasury',
+          status: 'Active',
+          avatar: 'FM'
+        },
+        {
+          id: 'usr-004',
+          name: 'Managing Director',
+          email: 'md@rayzon.com',
+          passwordHash: defaultPassHash,
+          role: 'MD',
+          department: 'Executive Board',
+          status: 'Active',
+          avatar: 'MD'
+        },
+        {
+          id: 'usr-005',
+          name: 'Logistics Manager',
+          email: 'logistics@rayzon.com',
+          passwordHash: defaultPassHash,
+          role: 'Logistics Lead',
+          department: 'Logistics & EXIM',
+          status: 'Active',
+          avatar: 'LM'
+        }
+      ]);
+    }
+
+    // --- Seed Freight Forwarder / Logistics Vendors ---
+    const ffVendorCount = await Vendor.countDocuments({ 
+      vendorType: { $in: ['Freight Forwarder', 'Shipping Line', 'Logistics Provider'] } 
+    });
+    if (ffVendorCount === 0) {
+      console.log('[DB] Seeding Freight Forwarder / Shipping Line vendors...');
+      const ffPassHash = await User.hashPassword('Rayzon@2026');
+      await Vendor.insertMany([
+        {
+          id: 'v-ff-1', supplierId: 'FF-20000215', sapVendorCode: '20000215',
+          companyName: 'Aquair International Freight Forwarders',
+          contactPerson: 'Customs Manager', phone: '+91 22 2345 6789',
+          email: 'customs@aquairintl.com', vendorType: 'Freight Forwarder',
+          category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days',
+          gstin: '27AAACA9081F1Z1', pan: 'AAACA9081F',
+          bankName: 'HDFC Bank', branch: 'Mumbai', accountNumber: '**** 0011', ifscCode: 'HDFC0000101',
+          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
+        },
+        {
+          id: 'v-ff-2', supplierId: 'FF-10002355', sapVendorCode: '10002355',
+          companyName: 'Babaji Shivram Clearing & Carriers',
+          contactPerson: 'Clearing Manager', phone: '+91 99 8877 6655',
+          email: 'clearing@babajishivram.in', vendorType: 'Freight Forwarder',
+          category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days',
+          gstin: '24AAACB0001B1Z1', pan: 'AAACB0001B',
+          bankName: 'SBI Bank', branch: 'Gandhidham', accountNumber: '**** 1122', ifscCode: 'SBIN0001234',
+          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
+        },
+        {
+          id: 'v-ff-3', supplierId: 'FF-11001450', sapVendorCode: '11001450',
+          companyName: 'Fairwinds Shipping Private Limited',
+          contactPerson: 'Shipping Manager', phone: '+91 22 4455 6677',
+          email: 'ops@fairwindsshipping.com', vendorType: 'Shipping Line',
+          category: 'Shipping Line', status: 'Active', paymentTerms: '45 Days',
+          gstin: '27AAACF0002F1Z1', pan: 'AAACF0002F',
+          bankName: 'ICICI Bank', branch: 'Mumbai', accountNumber: '**** 2233', ifscCode: 'ICIC0000456',
+          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
+        },
+        {
+          id: 'v-ff-4', supplierId: 'FF-11001810', sapVendorCode: '11001810',
+          companyName: 'Fast Forward Logistics India',
+          contactPerson: 'Magnesh Phapale', phone: '+91 98765 43210',
+          email: 'magnesh@fflindia.com', vendorType: 'Freight Forwarder',
+          category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days',
+          gstin: '27AAACF0003F1Z1', pan: 'AAACF0003F',
+          bankName: 'Axis Bank', branch: 'Mumbai', accountNumber: '**** 3344', ifscCode: 'UTIB0000789',
+          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
+        },
+        {
+          id: 'v-ff-5', supplierId: 'FF-11001148', sapVendorCode: '11001148',
+          companyName: 'Gef Global Logistics Pvt Ltd',
+          contactPerson: 'Operations Head', phone: '+91 22 3344 5566',
+          email: 'ops@gefglobal.com', vendorType: 'Freight Forwarder',
+          category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days',
+          gstin: '27AAACG0004G1Z1', pan: 'AAACG0004G',
+          bankName: 'Kotak Bank', branch: 'Mumbai', accountNumber: '**** 4455', ifscCode: 'KKBK0000012',
+          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
+        },
+        {
+          id: 'v-ff-6', supplierId: 'FF-50000131', sapVendorCode: '50000131',
+          companyName: 'Globiiz Synergy Private Limited',
+          contactPerson: 'Freight Manager', phone: '+91 22 5566 7788',
+          email: 'freight@globiiz.com', vendorType: 'Freight Forwarder',
+          category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days',
+          gstin: '27AAACG0005G1Z1', pan: 'AAACG0005G',
+          bankName: 'PNB', branch: 'Mumbai', accountNumber: '**** 5566', ifscCode: 'PUNB0001234',
+          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
+        },
+        {
+          id: 'v-ff-7', supplierId: 'FF-11001776', sapVendorCode: '11001776',
+          companyName: 'Kgl Network Pvt. Ltd.',
+          contactPerson: 'Network Manager', phone: '+91 22 6677 8899',
+          email: 'ops@kglnetwork.com', vendorType: 'Freight Forwarder',
+          category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days',
+          gstin: '27AAACK0006K1Z1', pan: 'AAACK0006K',
+          bankName: 'HDFC Bank', branch: 'Navi Mumbai', accountNumber: '**** 6677', ifscCode: 'HDFC0001001',
+          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
+        },
+        {
+          id: 'v-ff-8', supplierId: 'FF-11001920', sapVendorCode: '11001920',
+          companyName: 'Isgfl India Pvt. Ltd.',
+          contactPerson: 'Shipping Head', phone: '+91 22 7788 9900',
+          email: 'shipping@isgfl.com', vendorType: 'Shipping Line',
+          category: 'Shipping Line', status: 'Active', paymentTerms: '45 Days',
+          gstin: '27AAACI0007I1Z1', pan: 'AAACI0007I',
+          bankName: 'Citibank', branch: 'Mumbai', accountNumber: '**** 7788', ifscCode: 'CITI0000001',
+          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
+        },
+        {
+          id: 'v-ff-9', supplierId: 'FF-11002010', sapVendorCode: '11002010',
+          companyName: 'Seaways Shipping & Logistics Ltd',
+          contactPerson: 'Logistics Head', phone: '+91 22 8899 0011',
+          email: 'ops@seawaysshipping.com', vendorType: 'Freight Forwarder',
+          category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days',
+          gstin: '27AAACS0008S1Z1', pan: 'AAACS0008S',
+          bankName: 'HDFC Bank', branch: 'Nhava Sheva', accountNumber: '**** 8899', ifscCode: 'HDFC0002001',
+          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
+        }
+      ]);
+    }
+
     // --- Seed Approval Workflows ---
     const workflowCount = await ApprovalWorkflow.countDocuments();
     if (workflowCount === 0) {
+
       console.log('[DB] Seeding P2P Approval Workflows...');
       await ApprovalWorkflow.insertMany([
         {

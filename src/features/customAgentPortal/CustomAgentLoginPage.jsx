@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useVendor } from './vendorContext';
-import { Eye, EyeOff, Sun, ArrowRight, AlertCircle, X } from 'lucide-react';
+import { useCustomAgent } from './customAgentContext';
+import { Eye, EyeOff, Shield, ArrowRight, AlertCircle, X } from 'lucide-react';
 import { Input } from '../../components/ui/input';
 import { Button } from '../../components/ui/button';
 
-export default function VendorLoginPage() {
-  const { loginVendor } = useVendor();
+export default function CustomAgentLoginPage() {
+  const { loginAgent } = useCustomAgent();
   const navigate = useNavigate();
 
   const [email, setEmail] = useState('');
@@ -21,12 +21,12 @@ export default function VendorLoginPage() {
     setIsLoading(true);
     setErrorMsg('');
     try {
-      await loginVendor(email, password);
+      await loginAgent(email, password);
       setIsLoading(false);
-      navigate('/vendor/dashboard');
+      navigate('/customs/dashboard');
     } catch (err) {
       setIsLoading(false);
-      setErrorMsg(err.message || 'Vendor login failed. Please verify credentials.');
+      setErrorMsg(err.message || 'Login failed. Please verify your credentials.');
     }
   };
 
@@ -36,13 +36,13 @@ export default function VendorLoginPage() {
         {/* Top Brand Logo Header */}
         <div className="text-center space-y-3">
           <div className="mx-auto w-12 h-12 bg-[#0d7676] rounded-2xl flex items-center justify-center shadow-sm">
-            <Sun className="w-6 h-6 text-amber-300 fill-amber-300" />
+            <Shield className="w-6 h-6 text-white" />
           </div>
 
           <div className="space-y-1">
-            <h1 className="text-2xl font-extrabold text-slate-950 tracking-tight">Vendor Portal</h1>
+            <h1 className="text-2xl font-extrabold text-slate-950 tracking-tight">Customs Agent Portal</h1>
             <p className="text-xs text-slate-500 font-medium">
-              Sign in to access your RFQs, Invoices & payment status
+              Sign in to access BL clearance assignments and manage customs documentation
             </p>
           </div>
         </div>
@@ -65,13 +65,13 @@ export default function VendorLoginPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Email Address */}
             <div className="space-y-1.5">
-              <label className="block text-sm font-semibold text-slate-700">Email Address or Vendor Code</label>
+              <label className="block text-sm font-semibold text-slate-700">Email Address</label>
               <Input
-                type="text"
+                type="email"
                 required
                 value={email}
                 onChange={(e) => { setEmail(e.target.value); setErrorMsg(''); }}
-                placeholder="vendor@company.com or 20000201"
+                placeholder="agent@customshouse.com"
               />
             </div>
 
@@ -130,6 +130,13 @@ export default function VendorLoginPage() {
               crm@rayzonenergies.com
             </a>
           </p>
+        </div>
+
+        {/* Demo Credentials */}
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs">
+          <p className="font-bold text-amber-900 mb-2">Demo Credentials:</p>
+          <p className="text-amber-800 font-mono">Email: magnesh@fflindia.com</p>
+          <p className="text-amber-800 font-mono">Password: Agent@2026</p>
         </div>
       </div>
     </div>

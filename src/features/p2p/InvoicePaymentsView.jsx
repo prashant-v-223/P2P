@@ -48,15 +48,15 @@ export default function InvoicePaymentsView() {
   const [availablePOs, setAvailablePOs] = useState([]);
 
   // Form State
-  const [formPo, setFormPo] = useState('PO-4300001510');
+  const [formPo, setFormPo] = useState('');
   const [formInvNum, setFormInvNum] = useState('');
-  const [formGross, setFormGross] = useState('9250000');
-  const [formGst, setFormGst] = useState('1665000');
-  const [formTds, setFormTds] = useState('185000');
-  const [formAdvAdj, setFormAdvAdj] = useState('1850000');
-  const [formPoQty, setFormPoQty] = useState('1000');
-  const [formGrnQty, setFormGrnQty] = useState('1000');
-  const [formInvQty, setFormInvQty] = useState('1000');
+  const [formGross, setFormGross] = useState('');
+  const [formGst, setFormGst] = useState('');
+  const [formTds, setFormTds] = useState('');
+  const [formAdvAdj, setFormAdvAdj] = useState('');
+  const [formPoQty, setFormPoQty] = useState('');
+  const [formGrnQty, setFormGrnQty] = useState('');
+  const [formInvQty, setFormInvQty] = useState('');
 
   useEffect(() => {
     fetchInvoices();

@@ -1,6 +1,11 @@
 // Centralized API Client Service with Automatic JWT Bearer Headers, Multi-Port Fallback & Silent Token Refresh
 
-const getAccessToken = () => localStorage.getItem('rayzon_access_token') || sessionStorage.getItem('rayzon_access_token') || localStorage.getItem('rayzon_token');
+const getAccessToken = () => 
+  localStorage.getItem('rayzon_access_token') || 
+  sessionStorage.getItem('rayzon_access_token') || 
+  localStorage.getItem('rayzon_token') ||
+  localStorage.getItem('rayzon_vendor_token') ||
+  localStorage.getItem('rayzon_agent_token');
 const getRefreshToken = () => localStorage.getItem('rayzon_refresh_token') || sessionStorage.getItem('rayzon_refresh_token');
 
 export const apiFetch = async (url, options = {}) => {

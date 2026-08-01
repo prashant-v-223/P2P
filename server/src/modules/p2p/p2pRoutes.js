@@ -8,6 +8,7 @@ import { Approval } from '../../models/Approval.js';
 import { Workflow } from '../../models/Workflow.js';
 import { RfqHeader, RfqQuote, RfqBlEntry, CustomDutyPayment, LogisticsPayment } from '../../models/RfqLogistics.js';
 import { Vendor } from '../../models/Vendor.js';
+import { LogisticsProvider } from '../../models/LogisticsProvider.js';
 import { broadcastEvent } from '../../services/sse.service.js';
 import { sendApprovalCreatedEmails } from '../../services/notification.service.js';
 
@@ -777,79 +778,9 @@ router.delete('/invoices/:id', async (req, res) => {
   }
 });
 
-// ─── RFQ & CUSTOMS SEED & MANAGEMENT ──────────────────────────────────────────
-export async function seedRfqMasterData() {
-  try {
-    const count = await RfqHeader.countDocuments();
-    if (count > 0) return;
-
-    await RfqHeader.insertMany([
-      {
-        rfqId: 'RFQ-2026-0086', rfqNumber: 'RFQ-2026-0086',
-        title: 'DUMMY ENTRY FROM IT TEAM', poId: '4700000251', sapPoNumber: '4700000251',
-        cargoDetails: { containerType: '40 FT', containerCount: 1, portOfOrigin: 'SHANGHAI', portOfDestination: 'NHAVA SHEVA', cargoType: 'SOLAR CELL' },
-        closingDate: new Date('2026-08-08T11:24:00Z'), status: 'published'
-      },
-      {
-        rfqId: 'RFQ-2026-0085', rfqNumber: 'RFQ-2026-0085',
-        title: 'IMPORT SEA FREIGHT - 1 X 40 FT - SILICONE SEALANT', poId: '4300001510', sapPoNumber: '4300001510',
-        cargoDetails: { containerType: '40 FT', containerCount: 1, portOfOrigin: 'SHANGHAI', portOfDestination: 'NHAVA SHEVA', cargoType: 'SILICONE SEALANT' },
-        closingDate: new Date('2026-07-31T23:59:00Z'), status: 'published'
-      },
-      {
-        rfqId: 'RFQ-2026-0084', rfqNumber: 'RFQ-2026-0084',
-        title: 'IMPORT SEA FREIGHT - 100 X 40 FT - SOLAR CELLS', poId: '4300001411', sapPoNumber: '4300001411',
-        cargoDetails: { containerType: '40 FT', containerCount: 100, portOfOrigin: 'NINGBO', portOfDestination: 'MUNDRA', cargoType: 'SOLAR CELL' },
-        closingDate: new Date('2026-07-31T23:59:00Z'), status: 'published'
-      },
-      {
-        rfqId: 'RFQ-2026-0083', rfqNumber: 'RFQ-2026-0083',
-        title: 'IMPORT SEA FREIGHT - 2 X 40 FT - SILICONE SEALANT', poId: '4300001512', sapPoNumber: '4300001512',
-        cargoDetails: { containerType: '40 FT', containerCount: 2, portOfOrigin: 'SHANGHAI', portOfDestination: 'MUNDRA', cargoType: 'SILICONE SEALANT' },
-        closingDate: new Date('2026-07-31T23:59:00Z'), status: 'published'
-      },
-      {
-        rfqId: 'RFQ-2026-0077', rfqNumber: 'RFQ-2026-0077',
-        title: 'IMPORT SEA FREIGHT - 20 X 40 FT - SOLAR CELLS', poId: '4300001515', sapPoNumber: '4300001515',
-        cargoDetails: { containerType: '40 FT', containerCount: 20, portOfOrigin: 'SHANGHAI', portOfDestination: 'NHAVA SHEVA', cargoType: 'SOLAR CELL' },
-        closingDate: new Date('2026-07-31T23:59:00Z'), status: 'pending_approval'
-      },
-      {
-        rfqId: 'RFQ-2026-0075', rfqNumber: 'RFQ-2026-0075',
-        title: 'IMPORT SEA FREIGHT - 300 X 40 FT - SOLAR GLASS', poId: '4300001599', sapPoNumber: '4300001599',
-        cargoDetails: { containerType: '40 FT', containerCount: 300, portOfOrigin: 'NINGBO', portOfDestination: 'MUNDRA', cargoType: 'SOLAR GLASS' },
-        closingDate: new Date('2026-07-28T23:59:00Z'), status: 'awarded', awardedVendorId: 'VEND-10029', awardedVendorName: 'Dummy FF'
-      }
-    ]);
-
-    await RfqQuote.insertMany([
-      {
-        quoteId: 'Q-001', rfqId: 'RFQ-2026-0086', vendorId: 'VEND-10029', vendorName: 'Dummy FF',
-        freightAmount: 15000, destinationCharges: 25000, transitDays: 14, rank: 'L1', status: 'awarded'
-      }
-    ]);
-
-    await RfqBlEntry.insertMany([
-      {
-        blId: 'BL-9021', rfqId: 'RFQ-2026-0086', blNumber: 'MSK-908124501', vesselName: 'EVER GIVEN V-104E',
-        shippingLine: 'MSC', containerCount: 1, customAgentId: 'CA-101', customAgentName: 'Magnesh - Fast Forward Logistics India',
-        status: 'assigned_to_agent'
-      },
-      {
-        blId: 'BL-9022', rfqId: 'RFQ-2026-0075', blNumber: 'MAEU-8812904', vesselName: 'MAERSK SEALAND V-201',
-        shippingLine: 'Maersk Line', containerCount: 4, customAgentId: 'CA-101', customAgentName: 'Magnesh - Fast Forward Logistics India',
-        status: 'custom_cleared'
-      }
-    ]);
-  } catch (err) {
-    console.warn('[RFQ SEED WARN]', err.message);
-  }
-}
-
 // ─── GET /api/p2p/rfqs ────────────────────────────────────────────────────────
 router.get('/rfqs', async (req, res) => {
   try {
-    await seedRfqMasterData();
     const search = String(req.query.q || req.query.search || '').trim();
     const statusFilter = String(req.query.status || '').trim();
 
@@ -867,11 +798,12 @@ router.get('/rfqs', async (req, res) => {
     const enriched = await Promise.all(
       rfqs.map(async (r) => {
         const quoteCount = await RfqQuote.countDocuments({ rfqId: r.rfqId });
+        const invitedCount = (r.invitedVendors && Array.isArray(r.invitedVendors)) ? r.invitedVendors.length : 0;
         return {
           ...r,
           closingDateFormatted: r.closingDate ? new Date(r.closingDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Expired',
-          invitedVendorsCount: 12,
-          quotesCount: quoteCount || (r.rfqId === 'RFQ-2026-0086' ? 1 : r.rfqId === 'RFQ-2026-0085' ? 8 : r.rfqId === 'RFQ-2026-0084' ? 3 : r.rfqId === 'RFQ-2026-0083' ? 6 : r.rfqId === 'RFQ-2026-0082' ? 10 : 8)
+          invitedVendorsCount: invitedCount || 5,
+          quotesCount: quoteCount
         };
       })
     );
@@ -882,25 +814,212 @@ router.get('/rfqs', async (req, res) => {
   }
 });
 
+// ─── LOGISTICS PROVIDERS CRUD API ───────────────────────────────────────────
+
+// GET all logistics providers
+router.get('/logistics-providers', async (req, res) => {
+  try {
+    let providers = await LogisticsProvider.find().sort({ createdAt: -1 }).lean().catch(() => []);
+    
+    // Fallback/sync from Vendor collection if empty
+    if (providers.length === 0) {
+      const dbVendors = await Vendor.find({
+        $or: [
+          { category: { $in: ['Logistics', 'Freight Forwarder', 'Shipping Line'] } },
+          { vendorType: { $in: ['Freight Forwarder', 'Shipping Line', 'Logistics Provider'] } }
+        ]
+      }).lean().catch(() => []);
+
+      if (dbVendors.length > 0) {
+        providers = dbVendors.map(v => ({
+          providerId: v.sapVendorCode || v.supplierId || v.id,
+          name: v.companyName,
+          serviceType: v.vendorType || 'Freight Forwarder',
+          contactPerson: v.contactPerson || '—',
+          phone: v.phone || '—',
+          email: v.email || '—',
+          status: v.status || 'Active',
+          gstin: v.gstin || '',
+          pan: v.pan || '',
+          bankName: v.bankName || '',
+          bankBranch: v.branch || '',
+          accountNumber: v.accountNumber || '',
+          ifscCode: v.ifscCode || '',
+          paymentsCount: 0
+        }));
+      } else {
+        providers = [
+          { providerId: '20000215', name: 'Aquair International Freight Forwarders', serviceType: 'Freight Forwarder', contactPerson: 'Customs Manager', email: 'customs@aquairintl.com', phone: '+91 22 2345 6789', status: 'Active', paymentsCount: 0 },
+          { providerId: '10002355', name: 'Babaji Shivram Clearing & Carriers', serviceType: 'Freight Forwarder', contactPerson: 'Clearing Manager', email: 'clearing@babajishivram.in', phone: '+91 99 8877 6655', status: 'Active', paymentsCount: 0 },
+          { providerId: '11001450', name: 'Fairwinds Shipping Private Limited', serviceType: 'Shipping Line', contactPerson: 'Shipping Manager', email: 'ops@fairwindsshipping.com', phone: '+91 22 4455 6677', status: 'Active', paymentsCount: 0 },
+          { providerId: '11001810', name: 'Fast Forward Logistics India', serviceType: 'Freight Forwarder', contactPerson: 'Magnesh Phapale', email: 'magnesh@fflindia.com', phone: '+91 98765 43210', status: 'Active', paymentsCount: 0 },
+          { providerId: '11001148', name: 'Gef Global Logistics Pvt Ltd', serviceType: 'Freight Forwarder', contactPerson: 'Operations Head', email: 'ops@gefglobal.com', phone: '+91 22 3344 5566', status: 'Active', paymentsCount: 0 },
+          { providerId: '50000131', name: 'Globiiz Synergy Private Limited', serviceType: 'Freight Forwarder', contactPerson: 'Freight Manager', email: 'freight@globiiz.com', phone: '+91 22 5566 7788', status: 'Active', paymentsCount: 0 }
+        ];
+      }
+    }
+
+    return res.json({ success: true, count: providers.length, providers });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET single logistics provider
+router.get('/logistics-providers/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    let provider = await LogisticsProvider.findOne({
+      $or: [{ providerId: id }, { _id: mongoose.Types.ObjectId.isValid(id) ? id : null }]
+    }).lean();
+
+    if (!provider) {
+      const v = await Vendor.findOne({
+        $or: [{ sapVendorCode: id }, { supplierId: id }, { id }]
+      }).lean();
+      if (v) {
+        provider = {
+          providerId: v.sapVendorCode || v.supplierId || v.id,
+          name: v.companyName,
+          serviceType: v.vendorType || 'Freight Forwarder',
+          contactPerson: v.contactPerson || '',
+          phone: v.phone || '',
+          email: v.email || '',
+          status: v.status || 'Active',
+          gstin: v.gstin || '',
+          pan: v.pan || '',
+          bankName: v.bankName || '',
+          bankBranch: v.branch || '',
+          accountNumber: v.accountNumber || '',
+          ifscCode: v.ifscCode || ''
+        };
+      }
+    }
+
+    if (!provider) {
+      return res.status(404).json({ success: false, error: 'Provider not found.' });
+    }
+
+    return res.json({ success: true, provider });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST create logistics provider
+router.post('/logistics-providers', async (req, res) => {
+  try {
+    const {
+      name, companyName, contactPerson, phone, email, status,
+      gstin, pan, bankName, bankBranch, accountNumber, ifscCode, serviceType
+    } = req.body;
+
+    const finalName = name || companyName;
+    if (!finalName) {
+      return res.status(400).json({ success: false, error: 'Company Name is required.' });
+    }
+
+    const providerId = `LP-${Date.now().toString().slice(-6)}`;
+    const newProvider = await LogisticsProvider.create({
+      providerId,
+      name: finalName,
+      contactPerson: contactPerson || '',
+      phone: phone || '',
+      email: email || '',
+      status: status || 'Active',
+      serviceType: serviceType || 'Freight Forwarder',
+      gstin: gstin || '',
+      pan: pan || '',
+      bankName: bankName || '',
+      bankBranch: bankBranch || '',
+      accountNumber: accountNumber || '',
+      ifscCode: ifscCode || '',
+      paymentsCount: 0
+    });
+
+    return res.status(201).json({ success: true, message: 'Provider created successfully', provider: newProvider });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PUT update logistics provider
+router.put('/logistics-providers/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    delete updates.providerId;
+
+    const updated = await LogisticsProvider.findOneAndUpdate(
+      { $or: [{ providerId: id }, { _id: mongoose.Types.ObjectId.isValid(id) ? id : null }] },
+      updates,
+      { new: true, upsert: true }
+    );
+
+    return res.json({ success: true, message: 'Provider updated successfully', provider: updated });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE logistics provider
+router.delete('/logistics-providers/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await LogisticsProvider.findOneAndDelete({
+      $or: [{ providerId: id }, { _id: mongoose.Types.ObjectId.isValid(id) ? id : null }]
+    });
+
+    return res.json({ success: true, message: 'Provider deleted successfully' });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
 // ─── GET Freight Forwarders / Shipping Lines Vendor List ──────────────────────
 router.get('/rfqs/logistics-vendors', async (req, res) => {
   try {
+    // Strictly query only vendors explicitly marked as Freight Forwarder or Logistics category
+    const realVendors = await Vendor.find({
+      $or: [
+        { category: { $in: ['Logistics', 'Freight Forwarder', 'Shipping Line'] } },
+        { vendorType: { $in: ['Freight Forwarder', 'Shipping Line', 'Logistics Provider'] } }
+      ],
+      status: 'Active'
+    }).lean().catch(() => []);
+
+    if (realVendors.length > 0) {
+      return res.json({
+        success: true,
+        data: realVendors.map(v => ({
+          id: v.id || v._id,
+          sapVendorCode: v.sapVendorCode || v.supplierId,
+          companyName: v.companyName,
+          vendorType: v.vendorType || 'Freight Forwarder',
+          category: v.category || 'Logistics'
+        }))
+      });
+    }
+
+    // Default curated list of known freight forwarders / shipping lines
     const defaultLogistics = [
-      { id: 'v-ff-1', sapVendorCode: '20000215', companyName: 'Aquair International Freight Forwarders' },
-      { id: 'v-ff-2', sapVendorCode: '10002355', companyName: 'Babaji Shivram Clearing & Carriers' },
-      { id: 'v-ff-3', sapVendorCode: '0000235', companyName: 'Dummy FF' },
-      { id: 'v-ff-4', sapVendorCode: '11001450', companyName: 'Fairwinds Shipping Private Limited' },
-      { id: 'v-ff-5', sapVendorCode: '11001810', companyName: 'Fast Forward Logistics India' },
-      { id: 'v-ff-6', sapVendorCode: '11001148', companyName: 'Gef Global Logistics Pvt Ltd' },
-      { id: 'v-ff-7', sapVendorCode: '50000131', companyName: 'Globiiz Synergy Private Limited' },
-      { id: 'v-ff-8', sapVendorCode: '11001810', companyName: 'Isgfl India Pvt. Ltd.' },
-      { id: 'v-ff-9', sapVendorCode: '11001776', companyName: 'Kgl Network Pvt. Ltd.' }
+      { id: 'v-ff-1', sapVendorCode: '20000215', companyName: 'Aquair International Freight Forwarders', vendorType: 'Freight Forwarder' },
+      { id: 'v-ff-2', sapVendorCode: '10002355', companyName: 'Babaji Shivram Clearing & Carriers', vendorType: 'Freight Forwarder' },
+      { id: 'v-ff-3', sapVendorCode: '11001450', companyName: 'Fairwinds Shipping Private Limited', vendorType: 'Shipping Line' },
+      { id: 'v-ff-4', sapVendorCode: '11001810', companyName: 'Fast Forward Logistics India', vendorType: 'Freight Forwarder' },
+      { id: 'v-ff-5', sapVendorCode: '11001148', companyName: 'Gef Global Logistics Pvt Ltd', vendorType: 'Freight Forwarder' },
+      { id: 'v-ff-6', sapVendorCode: '50000131', companyName: 'Globiiz Synergy Private Limited', vendorType: 'Freight Forwarder' },
+      { id: 'v-ff-7', sapVendorCode: '11001776', companyName: 'Kgl Network Pvt. Ltd.', vendorType: 'Freight Forwarder' },
+      { id: 'v-ff-8', sapVendorCode: '11001920', companyName: 'Isgfl India Pvt. Ltd.', vendorType: 'Shipping Line' },
+      { id: 'v-ff-9', sapVendorCode: '11002010', companyName: 'Seaways Shipping & Logistics Ltd', vendorType: 'Freight Forwarder' }
     ];
     return res.json({ success: true, data: defaultLogistics });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 // ─── POST Create RFQ ─────────────────────────────────────────────────────────
 router.post('/rfqs', async (req, res) => {
@@ -966,7 +1085,6 @@ router.post('/rfqs', async (req, res) => {
 // ─── GET Single RFQ Details ──────────────────────────────────────────────────
 router.get('/rfqs/:id', async (req, res) => {
   try {
-    await seedRfqMasterData();
     const { id } = req.params;
     const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] }).lean();
     if (!rfq) {

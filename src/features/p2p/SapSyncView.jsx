@@ -101,23 +101,6 @@ export default function SapSyncView() {
   return (
     <div className="w-full space-y-5 font-sans text-slate-800 pb-12 text-left">
 
-      {/* 1. SAP Connection Status Card (1:1 matching user reference screenshot) */}
-      <div className="bg-emerald-50/80 p-4.5 rounded-2xl border border-emerald-200 shadow-2xs flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5">
-          <div className="w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold shrink-0">
-            <CheckCircle2 className="w-5 h-5" />
-          </div>
-          <div>
-            <h2 className="text-sm font-extrabold text-slate-900 leading-snug">SAP S/4HANA Cloud — Connected</h2>
-            <p className="text-xs text-slate-600 mt-0.5">API is reachable and responding correctly.</p>
-          </div>
-        </div>
-        <div className="text-right hidden sm:block">
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">BASE URL</p>
-          <p className="font-mono text-xs font-bold text-slate-700">my420266-api.s4hana.cloud.sap</p>
-        </div>
-      </div>
-
       {/* 2. Configured SAP APIs Box (1:1 matching user reference screenshot) */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-2xs space-y-4">
         <div className="flex items-center gap-2">

@@ -63,13 +63,18 @@ export default function VendorDetailsView() {
     try {
       setActionLoading(true);
       const res = await apiFetch(`/api/vendors/${vendor?.id || id}/generate-password`, { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
         setModalPassword(data.temporaryPassword);
         setPassModalOpen(true);
+      } else {
+        setToastMessage(data.error || 'Failed to generate password. Please try again.');
+        setTimeout(() => setToastMessage(''), 4000);
       }
     } catch (err) {
       console.error('Error generating password:', err);
+      setToastMessage('Network error — could not generate password.');
+      setTimeout(() => setToastMessage(''), 4000);
     } finally {
       setActionLoading(false);
     }

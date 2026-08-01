@@ -35,6 +35,7 @@ export default function VendorListView() {
   const [passModalOpen, setPassModalOpen] = useState(false);
   const [modalVendorName, setModalVendorName] = useState('');
   const [modalPassword, setModalPassword] = useState('');
+  const [genPwdLoading, setGenPwdLoading] = useState(false);
 
   // Toast Notification State
   const [toastText, setToastText] = useState('');
@@ -65,15 +66,21 @@ export default function VendorListView() {
 
   const handleGeneratePassword = async (vendorId, companyName) => {
     try {
+      setGenPwdLoading(vendorId);
       const res = await apiFetch(`/api/vendors/${vendorId}/generate-password`, { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
         setModalVendorName(companyName);
         setModalPassword(data.temporaryPassword);
         setPassModalOpen(true);
+      } else {
+        showToast(data.error || 'Failed to generate password. Please try again.');
       }
     } catch (err) {
       console.error('Error generating password:', err);
+      showToast('Network error — could not generate password.');
+    } finally {
+      setGenPwdLoading(false);
     }
   };
 
@@ -292,11 +299,15 @@ export default function VendorListView() {
                         <Button 
                           variant="ghost" 
                           size="icon" 
+                          disabled={genPwdLoading === (v.id || v._id)}
                           onClick={() => handleGeneratePassword(v.id || v._id, v.companyName || 'Vendor')} 
                           title="Generate Temporary Password"
-                          className="hover:bg-amber-50 hover:text-amber-700"
+                          className="hover:bg-amber-50 hover:text-amber-700 disabled:opacity-50"
                         >
-                          <KeyRound className="w-4 h-4 text-amber-600" />
+                          {genPwdLoading === (v.id || v._id)
+                            ? <Loader2 className="w-4 h-4 text-amber-500 animate-spin" />
+                            : <KeyRound className="w-4 h-4 text-amber-600" />
+                          }
                         </Button>
                         <Button 
                           variant="ghost" 

@@ -41,7 +41,9 @@ import EximReviewView from './features/p2p/EximReviewView';
 import BlInvoicesView from './features/p2p/BlInvoicesView';
 
 import CustomAgentsView from './features/p2p/CustomAgentsView';
+import CustomAgentFormView from './features/p2p/CustomAgentFormView';
 import LogisticsProvidersView from './features/p2p/LogisticsProvidersView';
+import LogisticsProviderFormView from './features/p2p/LogisticsProviderFormView';
 import SapSyncView from './features/p2p/SapSyncView';
 
 import ApprovalEngineView from './features/p2p/ApprovalEngineView';
@@ -56,6 +58,10 @@ import VendorUploadInvoicePage from './features/vendorPortal/VendorUploadInvoice
 import VendorAdvancesPage from './features/vendorPortal/VendorAdvancesPage';
 import VendorProfilePage from './features/vendorPortal/VendorProfilePage';
 import VendorInvoicesListPage from './features/vendorPortal/VendorInvoicesListPage';
+
+// Custom Agent Portal Imports
+import { CustomAgentProvider } from './features/customAgentPortal/customAgentContext';
+import CustomAgentLoginPage from './features/customAgentPortal/CustomAgentLoginPage';
 
 export default function App() {
   const dispatch = useDispatch();
@@ -91,7 +97,8 @@ export default function App() {
   return (
     <BrowserRouter>
       <VendorProvider>
-        <Routes>
+        <CustomAgentProvider>
+          <Routes>
           {/* Public Auth Routes */}
           <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
           <Route path="/register" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <RegisterPage />} />
@@ -107,6 +114,9 @@ export default function App() {
             <Route path="profile" element={<VendorProfilePage />} />
           </Route>
 
+          {/* Customs Agent Portal Routes */}
+          <Route path="/customs-agent/login" element={<CustomAgentLoginPage />} />
+          <Route path="/customs/login" element={<CustomAgentLoginPage />} />
           <Route path="/customs/dashboard" element={<CustomsBrokerPortalPage />} />
           <Route path="/customs-agent/dashboard" element={<CustomsBrokerPortalPage />} />
 
@@ -183,10 +193,27 @@ export default function App() {
             <Route path="management/vendors/:id/edit" element={<VendorFormView />} />
             <Route path="admin/vendors/:id/edit" element={<VendorFormView />} />
 
+            {/* MANAGEMENT / ADMIN: Custom Agents Routes */}
             <Route path="p2p/custom-agents" element={<CustomAgentsView />} />
             <Route path="management/custom-agents" element={<CustomAgentsView />} />
+            <Route path="admin/custom-agents" element={<CustomAgentsView />} />
+            <Route path="p2p/custom-agents/create" element={<CustomAgentFormView />} />
+            <Route path="management/custom-agents/create" element={<CustomAgentFormView />} />
+            <Route path="admin/custom-agents/create" element={<CustomAgentFormView />} />
+            <Route path="p2p/custom-agents/:id/edit" element={<CustomAgentFormView />} />
+            <Route path="management/custom-agents/:id/edit" element={<CustomAgentFormView />} />
+            <Route path="admin/custom-agents/:id/edit" element={<CustomAgentFormView />} />
+
+            {/* MANAGEMENT / ADMIN: Logistics Providers Routes */}
             <Route path="p2p/logistics-providers" element={<LogisticsProvidersView />} />
             <Route path="management/logistics-providers" element={<LogisticsProvidersView />} />
+            <Route path="admin/logistics-providers" element={<LogisticsProvidersView />} />
+            <Route path="p2p/logistics-providers/create" element={<LogisticsProviderFormView />} />
+            <Route path="management/logistics-providers/create" element={<LogisticsProviderFormView />} />
+            <Route path="admin/logistics-providers/create" element={<LogisticsProviderFormView />} />
+            <Route path="p2p/logistics-providers/:id/edit" element={<LogisticsProviderFormView />} />
+            <Route path="management/logistics-providers/:id/edit" element={<LogisticsProviderFormView />} />
+            <Route path="admin/logistics-providers/:id/edit" element={<LogisticsProviderFormView />} />
 
             <Route path="users" element={<UserManagementView />} />
             <Route path="admin/users" element={<UserManagementView />} />
@@ -205,6 +232,7 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
+        </CustomAgentProvider>
       </VendorProvider>
     </BrowserRouter>
   );

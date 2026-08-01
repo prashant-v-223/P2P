@@ -31,12 +31,12 @@ export default function RfqDetailView() {
 
   // New quote modal state
   const [showQuoteModal, setShowQuoteModal] = useState(false);
-  const [vendorName, setVendorName] = useState('Dummy FF');
-  const [shippingLine, setShippingLine] = useState('MSC');
-  const [oceanFreightUsd, setOceanFreightUsd] = useState('15000');
-  const [stChargesInr, setStChargesInr] = useState('25000');
-  const [otherChargesInr, setOtherChargesInr] = useState('0');
-  const [transitDays, setTransitDays] = useState('14');
+  const [vendorName, setVendorName] = useState('');
+  const [shippingLine, setShippingLine] = useState('');
+  const [oceanFreightUsd, setOceanFreightUsd] = useState('');
+  const [stChargesInr, setStChargesInr] = useState('');
+  const [otherChargesInr, setOtherChargesInr] = useState('');
+  const [transitDays, setTransitDays] = useState('');
   const [submittingQuote, setSubmittingQuote] = useState(false);
 
   const loadRfq = async () => {
@@ -341,17 +341,17 @@ export default function RfqDetailView() {
                         <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold flex items-center justify-center">
                           {q.rank || `L${idx + 1}`}
                         </span>
-                        {q.vendorName || 'Dummy FF'}
+                        {q.vendorName}
                       </td>
-                      <td className="p-3 font-bold text-slate-700">{q.shippingLine || 'MSC'}</td>
+                      <td className="p-3 font-bold text-slate-700">{q.shippingLine}</td>
                       <td className="p-3 text-right font-mono font-bold text-slate-900">
-                        USD {(q.oceanFreightUsd || 15000).toLocaleString()}
+                        USD {(q.oceanFreightUsd || 0).toLocaleString()}
                       </td>
                       <td className="p-3 text-right font-mono font-bold text-slate-900">
-                        ₹{(q.stChargesInr || 25000).toLocaleString()}
+                        ₹{(q.stChargesInr || 0).toLocaleString()}
                       </td>
                       <td className="p-3 text-right font-mono font-extrabold text-emerald-700">
-                        ₹{(q.totalInr || 1461531).toLocaleString()}
+                        ₹{(q.totalInr || 0).toLocaleString()}
                       </td>
                       <td className="p-3 text-right">
                         {rfq.status === 'awarded' && rfq.awardedVendorName === q.vendorName ? (
@@ -376,11 +376,11 @@ export default function RfqDetailView() {
 
           {activeTab === 'vendors' && (
             <div className="p-4 space-y-2">
-              {(rfq.invitedVendors || [{ companyName: 'Dummy FF', sapVendorCode: 'VEND-10029' }]).map((v, idx) => (
+              {(rfq.invitedVendors || []).map((v, idx) => (
                 <div key={idx} className="p-3 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between">
                   <div>
-                    <p className="text-xs font-bold text-slate-900">{v.companyName || v}</p>
-                    <p className="text-[10px] font-mono text-slate-400">{v.sapVendorCode || 'VEND-10029'}</p>
+                    <p className="text-xs font-bold text-slate-900">{v.companyName || (typeof v === 'string' ? v : '')}</p>
+                    <p className="text-[10px] font-mono text-slate-400">{v.sapVendorCode || ''}</p>
                   </div>
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
                     Invited
