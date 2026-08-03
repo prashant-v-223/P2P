@@ -310,22 +310,6 @@ export default function RfqDetailView() {
         </div>
       </div>
 
-      {rfq.approvalProgress && <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xs">
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
-          <div><div className="flex items-center gap-2"><Award className="h-4 w-4 text-[#0d7676]" /><h2 className="text-sm font-extrabold text-slate-900">RFQ Award Approval</h2><span className="rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-extrabold uppercase text-amber-700">{rfq.approvalProgress.status}</span></div><p className="mt-1 text-[10px] text-slate-500">{rfq.approvalProgress.slab || 'RFQ Vendor Award'} · Request {rfq.approvalProgress.id}</p></div>
-          <div className="text-right"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Currently waiting for</p><p className="mt-0.5 text-xs font-extrabold text-slate-900">{rfq.approvalProgress.requiredRole || 'Workflow completion'}</p></div>
-        </div>
-        <div className="px-5 py-5">
-          <div className="flex items-start">
-            {(rfq.approvalProgress.steps || []).map((step, index, steps) => <React.Fragment key={step.step}>
-              <div className="min-w-0 flex-1 text-center"><div className={`mx-auto flex h-9 w-9 items-center justify-center rounded-full border-2 ${step.state === 'completed' ? 'border-emerald-500 bg-emerald-500 text-white' : step.state === 'rejected' ? 'border-rose-500 bg-rose-50 text-rose-600' : step.state === 'current' ? 'border-[#0d7676] bg-teal-50 text-[#0d7676] ring-4 ring-teal-50' : 'border-slate-200 bg-white text-slate-400'}`}>{step.state === 'completed' ? <CheckCircle2 className="h-4 w-4" /> : step.state === 'rejected' ? <X className="h-4 w-4" /> : <span className="text-xs font-extrabold">{index + 1}</span>}</div><p className={`mx-auto mt-2 max-w-[170px] text-[10px] font-bold ${step.state === 'current' ? 'text-[#0d7676]' : step.state === 'completed' ? 'text-emerald-700' : 'text-slate-500'}`}>{step.title}</p><p className="mt-0.5 text-[9px] capitalize text-slate-400">{step.state}</p></div>
-              {index < steps.length - 1 && <div className={`mt-4 h-0.5 min-w-8 flex-1 ${step.state === 'completed' ? 'bg-emerald-400' : 'bg-slate-200'}`} />}
-            </React.Fragment>)}
-          </div>
-          <div className={`mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 ${rfq.approvalProgress.canCurrentUserAct ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}><div><p className={`text-xs font-extrabold ${rfq.approvalProgress.canCurrentUserAct ? 'text-emerald-800' : 'text-amber-800'}`}>{rfq.approvalProgress.canCurrentUserAct ? 'You have permission to action this approval.' : rfq.approvalProgress.blockedReason}</p><p className="mt-0.5 text-[10px] text-slate-500">Step {rfq.approvalProgress.currentStep} of {rfq.approvalProgress.totalSteps}</p></div><Link to={`/admin/approvals?q=${encodeURIComponent(rfq.approvalProgress.id)}`} className="rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white hover:bg-[#096464]">{rfq.approvalProgress.canCurrentUserAct ? 'Review & Action' : 'View Approval'}</Link></div>
-          {(rfq.approvalProgress.actionHistory || []).length > 0 && <div className="mt-4 border-t border-slate-100 pt-3"><p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Latest action</p>{(() => { const action = rfq.approvalProgress.actionHistory[rfq.approvalProgress.actionHistory.length - 1]; return <p className="mt-1 text-xs text-slate-600"><strong className="capitalize text-slate-900">{action.action}</strong> by {action.actionedBy} · {action.actionedAt ? new Date(action.actionedAt).toLocaleString('en-IN') : '—'}{action.remarks ? ` · ${action.remarks}` : ''}</p>; })()}</div>}
-        </div>
-      </section>}
 
       {/* Two Column Layout Matching Screenshot 2 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -362,6 +346,20 @@ export default function RfqDetailView() {
             </div>
           </div>
 
+      {rfq.approvalProgress && <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xs">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+          <div><div className="flex items-center gap-2"><Award className="h-4 w-4 text-[#0d7676]" /><h2 className="text-sm font-extrabold text-slate-900">RFQ Award Approval</h2><span className="rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-extrabold uppercase text-amber-700">{rfq.approvalProgress.status}</span></div><p className="mt-1 text-[10px] text-slate-500">{rfq.approvalProgress.slab || 'RFQ Vendor Award'} · Request {rfq.approvalProgress.id}</p></div>
+          <div className="text-right"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Currently waiting for</p><p className="mt-0.5 text-xs font-extrabold text-slate-900">{rfq.approvalProgress.requiredRole || 'Workflow completion'}</p></div>
+        </div>
+        <div className="px-5 py-5">
+          <div className="flex items-start">
+            {(rfq.approvalProgress.steps || []).map((step, index, steps) => <React.Fragment key={step.step}>
+              <div className="min-w-0 flex-1 text-center"><div className={`mx-auto flex h-9 w-9 items-center justify-center rounded-full border-2 ${step.state === 'completed' ? 'border-emerald-500 bg-emerald-500 text-white' : step.state === 'rejected' ? 'border-rose-500 bg-rose-50 text-rose-600' : step.state === 'current' ? 'border-[#0d7676] bg-teal-50 text-[#0d7676] ring-4 ring-teal-50' : 'border-slate-200 bg-white text-slate-400'}`}>{step.state === 'completed' ? <CheckCircle2 className="h-4 w-4" /> : step.state === 'rejected' ? <X className="h-4 w-4" /> : <span className="text-xs font-extrabold">{index + 1}</span>}</div><p className={`mx-auto mt-2 max-w-[170px] text-[10px] font-bold ${step.state === 'current' ? 'text-[#0d7676]' : step.state === 'completed' ? 'text-emerald-700' : 'text-slate-500'}`}>{step.title}</p><p className="mt-0.5 text-[9px] capitalize text-slate-400">{step.state}</p></div>
+              {index < steps.length - 1 && <div className={`mt-4 h-0.5 min-w-8 flex-1 ${step.state === 'completed' ? 'bg-emerald-400' : 'bg-slate-200'}`} />}
+            </React.Fragment>)}
+          </div>
+        </div>
+      </section>}
           {/* Card: Shipment Requirements */}
           <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100 pb-2">
