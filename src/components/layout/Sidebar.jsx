@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback } from 'react';
+import React from 'react';
 import { NavLink, Link } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import {
@@ -16,11 +16,9 @@ import {
   Shield,
   Users,
   Lock,
-  RefreshCw,
   Cloud,
   GitFork,
   DollarSign,
-  Sun,
   ChevronRight,
   Building2
 } from 'lucide-react';
@@ -95,30 +93,41 @@ const NavItem = React.memo(({ item, collapsed, onNavigate, badgeValue }) => {
       onClick={onNavigate}
       className={({ isActive }) =>
         cn(
-          "group relative w-full flex items-center transition-all outline-none rounded-xl text-xs font-semibold",
+          "group relative w-full flex items-center transition-all outline-none font-medium",
           collapsed
-            ? "justify-center py-2"
-            : "justify-between px-3 py-2.5",
+            ? "justify-center py-3 rounded-xl mx-auto"
+            : "justify-between pl-3 pr-3 py-2.5 rounded-xl",
           isActive
-            ? "bg-[#e8f5f5] text-[#0d7676] font-bold shadow-2xs border-l-4 border-[#0d7676] rounded-l-none"
-            : "text-slate-600 hover:bg-slate-100/80 hover:text-slate-900"
+            ? "bg-[#0d9488] text-white shadow-sm font-semibold"
+            : "text-slate-600 hover:bg-slate-50 hover:text-slate-800"
         )
       }
     >
       {({ isActive }) => (
         <>
           <div className="flex items-center gap-3 min-w-0">
-            <Icon className={cn("w-4 h-4 flex-shrink-0 transition-colors", isActive ? "text-[#0d7676]" : "text-slate-600 group-hover:text-slate-600")} />
-            {!collapsed && <span className="truncate text-[12px] ">{item.label}</span>}
+            <Icon className={cn(
+              "flex-shrink-0 transition-colors", 
+              collapsed ? "w-5 h-5" : "w-[18px] h-[18px]",
+              isActive ? "text-white" : "text-slate-400 group-hover:text-slate-600"
+            )} />
+            {!collapsed && <span className="truncate text-[13.5px] leading-tight">{item.label}</span>}
           </div>
 
-          {displayBadge !== null && (
+          {displayBadge !== null && !collapsed && (
             <span className={cn(
-              "flex-shrink-0 font-extrabold text-[11px] rounded-full flex items-center justify-center transition-all",
-              collapsed
-                ? "absolute -top-1 -right-1 w-5 h-5 bg-rose-500 text-white shadow-xs"
-                : "w-6 h-6 bg-rose-100 text-rose-600 group-hover:bg-rose-500 group-hover:text-white"
+              "flex-shrink-0 font-bold text-[11px] rounded-full flex items-center justify-center transition-all min-w-[24px] h-[20px] px-2",
+              isActive
+                ? "bg-white/25 text-white"
+                : "bg-slate-100 text-slate-600"
             )}>
+              {displayBadge}
+            </span>
+          )}
+
+          {/* Badge for collapsed state */}
+          {displayBadge !== null && collapsed && (
+            <span className="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-sm">
               {displayBadge}
             </span>
           )}
@@ -128,20 +137,20 @@ const NavItem = React.memo(({ item, collapsed, onNavigate, badgeValue }) => {
             <span
               className={cn(
                 "pointer-events-none absolute left-full ml-3 z-50",
-                "px-2.5 py-1.5 rounded-lg text-[11px] font-semibold whitespace-nowrap",
-                "bg-[#0d7676] text-white shadow-lg",
+                "px-3 py-1.5 rounded-lg text-[12px] font-medium whitespace-nowrap",
+                "bg-slate-800 text-white shadow-lg",
                 "opacity-0 -translate-x-1 scale-95",
                 "group-hover:opacity-100 group-hover:translate-x-0 group-hover:scale-100",
                 "transition-all duration-150 ease-out",
                 // Arrow
                 "before:absolute before:top-1/2 before:-translate-y-1/2 before:-left-1.5",
-                "before:border-4 before:border-transparent before:border-r-[#0d7676]",
+                "before:border-4 before:border-transparent before:border-r-slate-800",
                 "before:content-['']"
               )}
             >
               {item.label}
               {displayBadge !== null && (
-                <span className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-white/20 text-white text-[10px] font-extrabold">
+                <span className="ml-2 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold">
                   {displayBadge}
                 </span>
               )}
@@ -158,23 +167,24 @@ const UserProfile = React.memo(({ user, collapsed, onNavigate }) => {
   const initials = user?.name ? user.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase() : 'SA';
 
   return (
-    <div className="p-3 border-t border-slate-100 bg-slate-50/50 flex-shrink-0">
+    <div className="p-3 border-t border-slate-200 bg-white flex-shrink-0">
       <Link
         to="/profile"
         onClick={onNavigate}
-        className="flex items-center justify-between p-2 rounded-xl bg-white border border-slate-200 hover:border-teal-300 transition-all duration-200 group shadow-2xs"
+        className={cn(
+          "flex items-center p-2.5 rounded-xl hover:bg-slate-50 transition-all duration-200 group",
+          collapsed ? "justify-center" : "justify-start gap-2.5"
+        )}
       >
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-8 h-8 rounded-full bg-[#0d7676] text-white font-bold text-xs flex items-center justify-center flex-shrink-0">
-            {initials}
-          </div>
-          {!collapsed && (
-            <div className="min-w-0">
-              <p className="text-xs font-bold text-slate-900 truncate">{user?.name || 'System Admin'}</p>
-              <p className="text-[10px] text-slate-400 truncate">{user?.email || 'admin@rayzon.one'}</p>
-            </div>
-          )}
+        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#0d9488] to-[#0f766e] text-white font-bold text-sm flex items-center justify-center flex-shrink-0 shadow-sm">
+          {initials}
         </div>
+        {!collapsed && (
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-semibold text-slate-800 truncate leading-tight">{user?.name || 'System Admin'}</p>
+            <p className="text-[11px] text-slate-500 truncate leading-tight mt-0.5">{user?.email || 'admin@rayzon.one'}</p>
+          </div>
+        )}
       </Link>
     </div>
   );
@@ -186,31 +196,35 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
   return (
     <aside
       className={cn(
-        "bg-white border-r border-slate-200 h-screen flex flex-col transition-all duration-300 flex-shrink-0 select-none z-40 shadow-xs",
-        collapsed ? "w-16 overflow-visible" : "w-64 overflow-hidden",
+        "bg-white border-r border-slate-200 h-screen flex flex-col transition-all duration-300 flex-shrink-0 select-none z-40",
+        collapsed ? "w-[68px] overflow-visible" : "w-[220px] overflow-hidden",
         "fixed inset-y-0 left-0 lg:static lg:translate-x-0",
         mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       )}
     >
       {/* Brand Header with Improved Logo */}
       <header className={cn(
-        "border-b border-slate-100 flex items-center h-16 flex-shrink-0 bg-gradient-to-br from-white to-slate-50/30",
-        collapsed ? "px-2 justify-center" : "px-4 justify-start"
+        "border-b border-slate-200 flex items-center h-[64px] flex-shrink-0 bg-white",
+        collapsed ? "px-3 justify-center" : "px-4 justify-start"
       )}>
-        <Link to="/dashboard" onClick={onNavigate} className="flex items-center gap-2.5 overflow-hidden transition-all duration-300 hover:scale-105">
+        <Link to="/dashboard" onClick={onNavigate} className="flex items-center gap-3 overflow-hidden transition-all duration-200">
           {collapsed ? (
             /* Collapsed Logo - Icon Only */
-            <img src="/favicon.ico" alt="Logo" className="w-8 h-8" />
+            <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-[#0d9488] to-[#0f766e] shadow-sm">
+              <span className="text-white font-black text-[17px]">R</span>
+            </div>
           ) : (
             /* Full Logo with Company Name */
             <>
-            <img src="/favicon.ico" alt="Logo" className="w-8 h-8" />
+              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-[#0d9488] to-[#0f766e] shadow-sm">
+                <span className="text-white font-black text-[17px]">R</span>
+              </div>
               <div className="flex flex-col -space-y-0.5">
-                <span className="text-[17px] font-extrabold text-slate-900 tracking-tight leading-tight">
+                <span className="text-[16px] font-black text-slate-800 tracking-tight leading-tight">
                   RAYZON
                 </span>
-                <span className="text-[11px] font-bold text-[#0d7676] tracking-wide leading-tight">
-                  SOLAR
+                <span className="text-[11px] font-medium text-slate-500 tracking-wide leading-tight uppercase">
+                  Solar
                 </span>
               </div>
             </>
@@ -219,15 +233,14 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
       </header>
 
       {/* Navigation List */}
-      <nav className={cn("flex-1 py-3 space-y-4 scrollbar-none", collapsed ? "px-1.5 overflow-visible" : "px-3 overflow-y-auto")}>
+      <nav className={cn("flex-1 py-3 space-y-1", collapsed ? "px-2 overflow-visible" : "px-3 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent")}>
         {NAV_SECTIONS.map((section) => (
-          <div key={section.id} className="space-y-1">
+          <div key={section.id} className={cn("space-y-0.5", section.id !== 'core' && 'mt-5')}>
             {section.title && !collapsed && (
-              <div className="flex items-center gap-2 px-3 my-2">
-                <span className="text-[10px] font-extrabold text-slate-700 tracking-wider uppercase">
+              <div className="px-3 pt-2 pb-2">
+                <span className="text-[11px] font-bold text-slate-400 tracking-wider uppercase">
                   {section.title}
                 </span>
-                <div className="flex-1 h-[1px] bg-slate-100"></div>
               </div>
             )}
             {section.items.map((item) => (
