@@ -139,4 +139,3 @@ export const RfqHeader = mongoose.models.RfqHeader || mongoose.model('RfqHeader'
 export const RfqQuote = mongoose.models.RfqQuote || mongoose.model('RfqQuote', rfqQuoteSchema);
 export const RfqBlEntry = mongoose.models.RfqBlEntry || mongoose.model('RfqBlEntry', rfqBlEntrySchema);
 export const CustomDutyPayment = mongoose.models.CustomDutyPayment || mongoose.model('CustomDutyPayment', customDutyPaymentSchema);
-export const LogisticsPayment = mongoose.models.LogisticsPayment || mongoose.model('LogisticsPayment', logisticsPaymentSchema);

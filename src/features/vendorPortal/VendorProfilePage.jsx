@@ -61,8 +61,8 @@ export default function VendorProfilePage() {
       setPassError('New passwords do not match');
       return;
     }
-    if (newPass.length < 6) {
-      setPassError('Password must be at least 6 characters');
+    if (newPass.length < 8) {
+      setPassError('Password must be at least 8 characters');
       return;
     }
 

@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useVendor } from './vendorContext';
+import FreightForwarderDashboard from './FreightForwarderDashboard';
 import {
   FileSpreadsheet,
   HandCoins,
@@ -27,6 +28,13 @@ export default function VendorDashboardPage() {
 
   const approvedInvoicesCount = invoices.filter((i) => i.status === 'Approved').length;
   const paidInvoicesCount = invoices.filter((i) => i.status === 'Paid').length;
+  const isFreightForwarder = /(freight|forwarder|logistics|shipping)/i.test(`${vendorProfile.vendorType || ''} ${vendorProfile.category || ''}`);
+  const isImportVendor = String(vendorProfile.vendorType || '').toLowerCase().includes('import');
+  const formatAmount = (amount, currency = 'INR') => new Intl.NumberFormat('en-IN', {
+    style: 'currency', currency: currency === 'USD' ? 'USD' : 'INR', maximumFractionDigits: 2
+  }).format(Number(amount) || 0);
+
+  if (isFreightForwarder) return <FreightForwarderDashboard />;
 
   return (
     <div className="space-y-4 pb-7 font-sans antialiased">
@@ -74,7 +82,7 @@ export default function VendorDashboardPage() {
 
         <div className="mt-4 rounded-xl border border-white/10 bg-black/15 p-3 text-xs text-teal-50 font-medium flex items-center gap-2 backdrop-blur-xs">
           <Info className="h-4 w-4 shrink-0 text-teal-200" />
-          <span>As a domestic vendor, you can submit invoices against open purchase orders and track advance payments.</span>
+          <span>As {isImportVendor ? 'an import' : 'a domestic'} vendor, you can submit invoices against open purchase orders and track advance payments.</span>
         </div>
       </section>
 
@@ -210,7 +218,9 @@ export default function VendorDashboardPage() {
           </div>
 
           <div className="space-y-2">
-            {purchaseOrders.map((po) => (
+            {purchaseOrders.length === 0 ? (
+              <p className="py-8 text-center text-xs font-medium text-slate-400">No open purchase orders available.</p>
+            ) : purchaseOrders.slice(0, 4).map((po) => (
               <div
                 key={po.id}
                 onClick={() => handleSelectPO(po.id)}
@@ -280,7 +290,7 @@ export default function VendorDashboardPage() {
                       <span className="text-[11px] text-slate-400 font-medium block mt-0.5">PO: {inv.poNumber} · {inv.invoiceDate}</span>
                     </div>
                     <div className="text-right">
-                      <span className="text-xs font-bold text-slate-900">₹{Number(inv.invoiceAmount || 0).toLocaleString()}</span>
+                      <span className="text-xs font-bold text-slate-900">{formatAmount(inv.invoiceAmount, inv.currency)}</span>
                     </div>
                   </div>
                 ))}

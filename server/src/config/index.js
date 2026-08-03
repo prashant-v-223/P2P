@@ -6,6 +6,7 @@ export const config = {
   jwtRefreshExpiresIn: '7d',
   environment: process.env.NODE_ENV || 'development',
   mail: {
+    enabled: String(process.env.MAIL_ENABLED || 'false').toLowerCase() === 'true',
     host: process.env.MAIL_HOST,
     port: Number(process.env.MAIL_PORT || 587),
     username: process.env.MAIL_USERNAME,

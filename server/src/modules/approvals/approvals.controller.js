@@ -341,6 +341,29 @@ export const processApprovalAction = async (req, res) => {
       } catch (e) {
         console.error('[Approvals] Sync InvoicePayment failed:', e.message);
       }
+    } else if (approval.type === 'RFQ Vendor Award') {
+      try {
+        const { RfqHeader, RfqQuote } = await import('../../models/RfqLogistics.js');
+        const rfq = await RfqHeader.findOne({ awardApprovalId: approval.id });
+        if (rfq) {
+          if (newStatus === 'Approved & Dispatched') {
+            const allocations = approval.allocations || [];
+            rfq.status = 'awarded';
+            rfq.allocatedQuantity = allocations.reduce((sum, item) => sum + (Number(item.containers) || 0), 0);
+            rfq.pendingAllocation = Math.max(0, (Number(rfq.totalQuantity) || Number(rfq.cargoDetails?.containerCount) || 0) - rfq.allocatedQuantity);
+            rfq.awardedVendorId = allocations.map((item) => item.vendorId).join(',');
+            rfq.awardedVendorName = allocations.map((item) => item.vendorName).join(', ');
+            rfq.awardedQuoteId = allocations.map((item) => item.quoteId).join(',');
+            await Promise.all(allocations.map((item) => RfqQuote.updateOne({ quoteId: item.quoteId }, { status: 'awarded' })));
+            allocations.forEach((item) => broadcastEvent('RFQ_AWARDED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, vendorId: item.vendorId, vendorName: item.vendorName, containers: item.containers, awardedAt: new Date() }));
+          } else if (newStatus === 'Rejected' || newStatus === 'Returned for changes') {
+            rfq.status = 'published';
+          }
+          await rfq.save();
+        }
+      } catch (e) {
+        console.error('[Approvals] Sync RFQ Vendor Award failed:', e.message);
+      }
     }
 
     const isFullyApproved = newStatus === 'Approved & Dispatched';

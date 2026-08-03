@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 const logisticsPaymentSchema = new mongoose.Schema({
   logisticsPaymentId: { type: String, required: true, unique: true, index: true },
   referenceNumber: { type: String, required: true, unique: true, index: true },
+  blId: { type: String, index: true },
   vendorId: { type: String, required: true },
   vendorName: { type: String, required: true },
   invoiceNumber: { type: String, required: true },
@@ -11,7 +12,11 @@ const logisticsPaymentSchema = new mongoose.Schema({
   detentionCharges: { type: Number, default: 0 },
   terminalHandlingCharges: { type: Number, default: 0 },
   totalAmount: { type: Number, required: true },
+  amount: { type: Number },
   currency: { type: String, default: 'INR' },
+  category: { type: String, enum: ['freight', 'destination_charges', 'detention', 'port_storage', 'agency_fee'], default: 'freight' },
+  invoiceFile: String,
+  remarks: String,
 
   status: {
     type: String,

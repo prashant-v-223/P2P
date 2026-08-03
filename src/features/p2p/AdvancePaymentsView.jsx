@@ -237,7 +237,7 @@ export default function AdvancePaymentsView() {
           to="/p2p/advance-payments/create"
           className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-lg shadow-2xs transition-colors shrink-0"
         >
-          <Plus className="w-4 h-4" /> + New Advance Payment
+          <Plus className="w-4 h-4" /> New Advance Payment
         </Link>
       </div>
 

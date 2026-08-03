@@ -357,6 +357,7 @@ export const seedDatabase = async () => {
         vendorId: 'VEND-001',
         vendorName: 'Solar Tech Industries',
         invoiceNumber: 'INV-20260713-0001',
+        asnNumber: '', // ASN only for Import vendors, not seeded here
         grossAmount: 219497.36,
         gstAmount: 39509.52,
         tdsAmount: 4389.95,

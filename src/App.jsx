@@ -58,6 +58,9 @@ import VendorUploadInvoicePage from './features/vendorPortal/VendorUploadInvoice
 import VendorAdvancesPage from './features/vendorPortal/VendorAdvancesPage';
 import VendorProfilePage from './features/vendorPortal/VendorProfilePage';
 import VendorInvoicesListPage from './features/vendorPortal/VendorInvoicesListPage';
+import FreightRfqListPage from './features/vendorPortal/FreightRfqListPage';
+import FreightRfqDetailPage from './features/vendorPortal/FreightRfqDetailPage';
+import { FreightBlEntriesPage, FreightBlCreatePage, FreightBlDetailPage } from './features/vendorPortal/FreightBlFlowPage';
 
 // Custom Agent Portal Imports
 import { CustomAgentProvider } from './features/customAgentPortal/customAgentContext';
@@ -112,6 +115,11 @@ export default function App() {
             <Route path="invoices/upload" element={<VendorUploadInvoicePage />} />
             <Route path="advances" element={<VendorAdvancesPage />} />
             <Route path="profile" element={<VendorProfilePage />} />
+            <Route path="rfqs" element={<FreightRfqListPage />} />
+            <Route path="rfqs/:id" element={<FreightRfqDetailPage />} />
+            <Route path="rfqs/:id/bl-entries" element={<FreightBlEntriesPage />} />
+            <Route path="rfqs/:id/bl-entries/create" element={<FreightBlCreatePage />} />
+            <Route path="rfqs/:id/bl-entries/:blId" element={<FreightBlDetailPage />} />
           </Route>
 
           {/* Customs Agent Portal Routes */}
@@ -119,6 +127,12 @@ export default function App() {
           <Route path="/customs/login" element={<CustomAgentLoginPage />} />
           <Route path="/customs/dashboard" element={<CustomsBrokerPortalPage />} />
           <Route path="/customs-agent/dashboard" element={<CustomsBrokerPortalPage />} />
+          <Route path="/customs-agent/bl-entries" element={<CustomsBrokerPortalPage />} />
+          <Route path="/customs-agent/bl-entries/:blId" element={<CustomsBrokerPortalPage />} />
+          <Route path="/customs-agent/profile" element={<CustomsBrokerPortalPage />} />
+          <Route path="/agent/bl-entries" element={<CustomsBrokerPortalPage />} />
+          <Route path="/agent/bl-entries/:blId" element={<CustomsBrokerPortalPage />} />
+          <Route path="/agent/profile" element={<CustomsBrokerPortalPage />} />
 
           {/* Protected Main Admin/User Portal Routes */}
           <Route
@@ -169,6 +183,9 @@ export default function App() {
             <Route path="admin/rfqs/:id" element={<RfqDetailView />} />
             <Route path="admin/rfqs/:id/edit" element={<RfqFormView />} />
             <Route path="p2p/exim-review" element={<EximReviewView />} />
+            <Route path="p2p/exim-review/:blId" element={<EximReviewView />} />
+            <Route path="admin/exim" element={<EximReviewView />} />
+            <Route path="admin/exim/:blId" element={<EximReviewView />} />
             <Route path="p2p/bl-invoices" element={<BlInvoicesView />} />
 
             {/* APPROVALS & SETTLEMENT */}

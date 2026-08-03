@@ -27,16 +27,10 @@ router.get('/stream', (req, res) => {
         userRole: decoded.role || ''
       };
     } catch {
-      // Try decode without verify for dev-mode expired tokens
-      const decoded = jwt.decode(token);
-      if (decoded) {
-        userInfo = {
-          userId: decoded.id || decoded._id || decoded.sub,
-          userName: decoded.name || decoded.email,
-          userRole: decoded.role || ''
-        };
-      }
+      return res.status(401).json({ success: false, error: 'Invalid or expired notification token.' });
     }
+  } else {
+    return res.status(401).json({ success: false, error: 'Notification token is required.' });
   }
 
   registerClient(res, userInfo);

@@ -203,12 +203,12 @@ export const vendorLogin = async (req, res) => {
         { supplierId: rx },
         { id: rx }
       ]
-    }).select('+passwordHash');
+    }).sort({ updatedAt: -1 }).select('+passwordHash');
 
     if (!vendor) {
       vendor = await Vendor.findOne({
         email: new RegExp(escapeRegex(loginIdentifier), 'i')
-      }).select('+passwordHash');
+      }).sort({ updatedAt: -1 }).select('+passwordHash');
     }
 
     if (!vendor) {
@@ -244,6 +244,7 @@ export const vendorLogin = async (req, res) => {
       email: vendor.email,
       phone: vendor.phone || '+91 9800000000',
       vendorType: vendor.vendorType || 'Domestic Vendor',
+      category: vendor.category || '',
       status: vendor.status || 'Active',
       gstin: vendor.gstin || '-',
       pan: vendor.pan || '-',
@@ -268,8 +269,15 @@ export const vendorLogin = async (req, res) => {
 
 export const getVendorPortalData = async (req, res) => {
   try {
-    const vendorCode = String(req.query.vendorCode || req.query.sapVendorCode || req.user?.sapVendorCode || '').trim();
-    const email = String(req.query.email || req.user?.email || '').trim();
+    const isVendorSession = req.user?.role === 'Vendor';
+    const vendorCode = String(
+      isVendorSession
+        ? (req.user?.sapVendorCode || '')
+        : (req.query.vendorCode || req.query.sapVendorCode || req.user?.sapVendorCode || '')
+    ).trim();
+    const email = String(
+      isVendorSession ? (req.user?.email || '') : (req.query.email || req.user?.email || '')
+    ).trim();
 
     if (!vendorCode && !email) {
       return res.json({ success: true, purchaseOrders: [], invoices: [], advances: [] });
@@ -325,9 +333,35 @@ export const getVendorPortalData = async (req, res) => {
       ]
     }).sort({ createdAt: -1 }).lean().catch(() => []);
 
+    const activeStatuses = new Set(['pending', 'approved', 'paid']);
+    const purchaseOrders = pos.map((po) => {
+      const refs = new Set([po.poNumber, po.sapPoNumber].filter(Boolean).map(String));
+      const poInvoices = invs.filter((invoice) =>
+        activeStatuses.has(String(invoice.status).toLowerCase()) &&
+        (refs.has(String(invoice.poId)) || refs.has(String(invoice.sapPoNumber)))
+      );
+      const poAdvances = advs.filter((advance) =>
+        activeStatuses.has(String(advance.status).toLowerCase()) &&
+        (refs.has(String(advance.poId)) || refs.has(String(advance.sapPoNumber)))
+      );
+      const invoicedAmount = poInvoices.reduce((sum, invoice) => sum + (Number(invoice.grossAmount) || 0), 0);
+      const invoicedQuantity = poInvoices.reduce((sum, invoice) => sum + (Number(invoice.threeWayMatch?.invoiceQuantity) || 0), 0);
+      const advanceCommitted = poAdvances.reduce((sum, advance) => sum + (Number(advance.amount) || 0), 0);
+      const totalQuantity = (po.items || []).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+      return {
+        ...po,
+        invoicedAmount,
+        remainingInvoiceAmount: Math.max(0, Number(po.totalAmount) - invoicedAmount),
+        advanceCommitted,
+        remainingAdvanceAmount: Math.max(0, Number(po.totalAmount) - advanceCommitted),
+        totalQuantity,
+        remainingQuantity: Math.max(0, totalQuantity - invoicedQuantity)
+      };
+    });
+
     return res.json({
       success: true,
-      purchaseOrders: pos,
+      purchaseOrders,
       invoices: invs,
       advances: advs
     });
@@ -412,12 +446,33 @@ export const updateVendor = async (req, res) => {
   try {
     const { id } = req.params;
     const filter = buildVendorFilter(id);
-    const updatedVendor = await Vendor.findOneAndUpdate(filter, req.body, { new: true });
+    const existingVendor = await Vendor.findOne(filter);
+    if (!existingVendor) {
+      return res.status(404).json({ success: false, error: 'Vendor account not found.' });
+    }
+
+    let updates = { ...req.body };
+    delete updates.passwordHash;
+    delete updates.password;
+
+    if (req.user?.role === 'Vendor') {
+      const ownsAccount = [existingVendor.id, existingVendor.sapVendorCode, existingVendor.supplierId]
+        .filter(Boolean)
+        .some((value) => String(value) === String(req.user.sapVendorCode || req.user.id));
+      if (!ownsAccount) {
+        return res.status(403).json({ success: false, error: 'You cannot update another vendor account.' });
+      }
+
+      const editableFields = ['contactPerson', 'phone', 'email', 'bankName', 'branch', 'accountNumber', 'ifscCode'];
+      updates = Object.fromEntries(Object.entries(updates).filter(([key]) => editableFields.includes(key)));
+    }
+
+    const updatedVendor = await Vendor.findOneAndUpdate(filter, { $set: updates }, { new: true, runValidators: true });
     
     return res.json({
       success: true,
       message: 'Vendor record updated',
-      vendor: updatedVendor || req.body
+      vendor: updatedVendor
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -449,13 +504,34 @@ export const generateVendorPassword = async (req, res) => {
     const { User } = await import('../../models/User.js');
     const passwordHash = await User.hashPassword(tempPass);
     
-    const updated = await Vendor.findOneAndUpdate(filter, { passwordHash }, { new: true }).catch(() => {});
+    const updated = await Vendor.findOneAndUpdate(
+      filter,
+      { $set: { passwordHash } },
+      { new: true }
+    ).select('+passwordHash');
+
+    if (!updated) {
+      return res.status(404).json({ success: false, error: 'Vendor account not found. Password was not changed.' });
+    }
+
+    // Do not expose a password unless the stored hash verifies successfully.
+    const passwordWasSaved = await User.prototype.verifyPassword.call(
+      { passwordHash: updated.passwordHash },
+      tempPass
+    );
+    if (!passwordWasSaved) {
+      return res.status(500).json({ success: false, error: 'Password could not be saved. Please try again.' });
+    }
     
     return res.json({
       success: true,
       message: `Temporary password generated for vendor ${id}`,
       temporaryPassword: tempPass, // Only show once for communication to vendor
-      vendor: updated
+      vendor: {
+        id: updated.id,
+        sapVendorCode: updated.sapVendorCode,
+        email: updated.email
+      }
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });

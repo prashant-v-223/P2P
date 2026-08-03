@@ -78,6 +78,7 @@ export default function RfqFormView() {
             setContainerType(cargo.containerType || '40 FT');
             setContainerCount(String(cargo.containerCount || 1));
             setWeightPerContainer(cargo.weightPerContainer || '');
+            setSelectedVendors((data.invitedVendors || []).map((vendor) => vendor.vendorId || vendor.sapVendorCode).filter(Boolean));
           }
         }
       } catch (e) {
@@ -111,6 +112,10 @@ export default function RfqFormView() {
       showToast({ title: 'Validation Error', description: 'Cargo Type is required.', type: 'error' });
       return;
     }
+    if (selectedVendors.length === 0) {
+      showToast({ title: 'Validation Error', description: 'Select at least one Freight Forwarder.', type: 'error' });
+      return;
+    }
     if (!portOfLoading.trim()) {
       showToast({ title: 'Validation Error', description: 'Port of Loading is required.', type: 'error' });
       return;
@@ -135,7 +140,14 @@ export default function RfqFormView() {
         containerCount,
         weightPerContainer,
         estimatedReadinessDate,
-        invitedVendors: selectedVendors
+        invitedVendors: selectedVendors.map((vendorId) => {
+          const vendor = logisticsVendors.find((item) => item.id === vendorId || item.sapVendorCode === vendorId);
+          return {
+            vendorId: vendor?.id || vendorId,
+            sapVendorCode: vendor?.sapVendorCode || vendorId,
+            companyName: vendor?.companyName || 'Freight Forwarder'
+          };
+        })
       };
 
       const endpoint = isEdit ? `/api/p2p/rfqs/${id}` : '/api/p2p/rfqs';

@@ -6,11 +6,15 @@ import { AdvancePayment } from '../../models/AdvancePayment.js';
 import { PaymentLedger } from '../../models/PaymentLedger.js';
 import { Approval } from '../../models/Approval.js';
 import { Workflow } from '../../models/Workflow.js';
-import { RfqHeader, RfqQuote, RfqBlEntry, CustomDutyPayment, LogisticsPayment } from '../../models/RfqLogistics.js';
+import { RfqHeader, RfqQuote, RfqBlEntry, CustomDutyPayment } from '../../models/RfqLogistics.js';
+import { LogisticsPayment } from '../../models/LogisticsPayment.js';
 import { Vendor } from '../../models/Vendor.js';
 import { LogisticsProvider } from '../../models/LogisticsProvider.js';
+import { CustomAgent } from '../../models/CustomAgent.js';
 import { broadcastEvent } from '../../services/sse.service.js';
 import { sendApprovalCreatedEmails } from '../../services/notification.service.js';
+import { authenticateToken } from '../../middleware/auth.middleware.js';
+import { sendRfqInvitationEmail } from '../../services/mail.service.js';
 
 const router = express.Router();
 
@@ -41,6 +45,45 @@ function buildAdvanceFilter(idParam) {
     filterOr.push({ _id: idParam });
   }
   return { $or: filterOr };
+}
+
+const activePaymentStatuses = ['pending', 'approved', 'paid'];
+
+function sameValue(left, right) {
+  return String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+}
+
+function getPoQuantity(po) {
+  return (po?.items || []).reduce((total, item) => total + (Number(item.quantity) || 0), 0);
+}
+
+async function validateVendorOwnsPo(req, po) {
+  if (req.user?.role !== 'Vendor') return true;
+
+  const tokenIdentifiers = [req.user.id, req.user.sapVendorCode].filter(Boolean);
+  const vendor = await Vendor.findOne({
+    $or: tokenIdentifiers.flatMap((value) => [
+      { id: value }, { sapVendorCode: value }, { supplierId: value }
+    ])
+  }).lean();
+
+  const vendorIdentifiers = new Set([
+    req.user.id,
+    req.user.sapVendorCode,
+    vendor?.id,
+    vendor?.sapVendorCode,
+    vendor?.supplierId
+  ].filter(Boolean).map((value) => String(value).trim().toLowerCase()));
+
+  if (po.supplierId) {
+    return vendorIdentifiers.has(String(po.supplierId).trim().toLowerCase());
+  }
+  return Boolean(po.supplierName && sameValue(po.supplierName, vendor?.companyName || req.user.companyName));
+}
+
+function validateOpenPo(po) {
+  const status = String(po?.status || '').trim().toLowerCase();
+  return Boolean(po && Number(po.totalAmount) > 0 && !['closed', 'cancelled', 'canceled', 'blocked'].includes(status));
 }
 
 // ─── GET /api/p2p/workflows/preview ──────────────────────────────────────────
@@ -270,7 +313,7 @@ router.post('/seed', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // PURCHASE ORDERS
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/purchase-orders', async (req, res) => {
+router.get('/purchase-orders', authenticateToken, async (req, res) => {
   try {
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
     const size = Math.min(100, Math.max(1, Number.parseInt(req.query.size || req.query.pageSize, 10) || 10));
@@ -282,6 +325,16 @@ router.get('/purchase-orders', async (req, res) => {
     if (poCount === 0) await seedMasterData();
 
     const filter = {};
+    if (req.user?.role === 'Vendor') {
+      const vendorCode = String(req.user.sapVendorCode || '');
+      const vendorName = String(req.user.companyName || '');
+      filter.$and = [{
+        $or: [
+          ...(vendorCode ? [{ supplierId: new RegExp(`^${escapeRegex(vendorCode)}$`, 'i') }] : []),
+          ...(vendorName ? [{ supplierName: new RegExp(`^${escapeRegex(vendorName)}$`, 'i') }] : [])
+        ]
+      }];
+    }
     if (search) {
       const regex = new RegExp(escapeRegex(search), 'i');
       filter.$or = [
@@ -312,7 +365,56 @@ router.get('/purchase-orders', async (req, res) => {
     const pos = await PurchaseOrder.find(filter)
       .sort({ createdAt: -1 }).skip((safePage - 1) * size).limit(size).lean();
 
-    return res.json({ success: true, data: pos, total, page: safePage, pageSize: size, totalPages,
+    const poRefs = pos.flatMap((po) => [po.poNumber, po.sapPoNumber]).filter(Boolean);
+    const vendorKeys = pos.flatMap((po) => [po.supplierId, po.supplierName]).filter(Boolean);
+    const [invoiceCommitments, advanceCommitments, poVendors] = await Promise.all([
+      InvoicePayment.find({
+        $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }],
+        status: { $in: activePaymentStatuses }
+      }).select('poId sapPoNumber grossAmount threeWayMatch.invoiceQuantity').lean(),
+      AdvancePayment.find({
+        $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }],
+        status: { $in: activePaymentStatuses }
+      }).select('poId sapPoNumber amount').lean(),
+      vendorKeys.length ? Vendor.find({
+        $or: [
+          { id: { $in: vendorKeys } },
+          { sapVendorCode: { $in: vendorKeys } },
+          { supplierId: { $in: vendorKeys } },
+          { companyName: { $in: vendorKeys } }
+        ]
+      }).select('id sapVendorCode supplierId companyName vendorType gstin pan').lean() : []
+    ]);
+
+    const enrichedPos = pos.map((po) => {
+      const refs = new Set([po.poNumber, po.sapPoNumber].filter(Boolean).map(String));
+      const matchingInvoices = invoiceCommitments.filter((item) => refs.has(String(item.poId)) || refs.has(String(item.sapPoNumber)));
+      const matchingAdvances = advanceCommitments.filter((item) => refs.has(String(item.poId)) || refs.has(String(item.sapPoNumber)));
+      const invoicedAmount = matchingInvoices.reduce((sum, item) => sum + (Number(item.grossAmount) || 0), 0);
+      const invoicedQuantity = matchingInvoices.reduce((sum, item) => sum + (Number(item.threeWayMatch?.invoiceQuantity) || 0), 0);
+      const advanceCommitted = matchingAdvances.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+      const totalQuantity = getPoQuantity(po);
+      const vendor = poVendors.find((item) =>
+        sameValue(item.id, po.supplierId) ||
+        sameValue(item.sapVendorCode, po.supplierId) ||
+        sameValue(item.supplierId, po.supplierId) ||
+        sameValue(item.companyName, po.supplierName)
+      );
+      return {
+        ...po,
+        vendorType: vendor?.vendorType || '',
+        vendorGstin: vendor?.gstin || '',
+        vendorPan: vendor?.pan || '',
+        invoicedAmount,
+        remainingInvoiceAmount: Math.max(0, Number(po.totalAmount) - invoicedAmount),
+        advanceCommitted,
+        remainingAdvanceAmount: Math.max(0, Number(po.totalAmount) - advanceCommitted),
+        totalQuantity,
+        remainingQuantity: Math.max(0, totalQuantity - invoicedQuantity)
+      };
+    });
+
+    return res.json({ success: true, data: enrichedPos, total, page: safePage, pageSize: size, totalPages,
       hasPrevious: safePage > 1, hasNext: safePage < totalPages });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -392,7 +494,7 @@ const createAdvanceHandler = async (req, res) => {
     const {
       poNumber, vendorName, vendorCode, amount, percentageOfPo,
       cgst, sgst, igst, totalGst, grandTotal,
-      paymentMode, bankName, bankAccountNumber, remarks, requestedBy
+      paymentMode, bankName, bankAccountNumber, remarks, requestedBy, currency
     } = req.body;
 
     if (!poNumber) {
@@ -401,12 +503,44 @@ const createAdvanceHandler = async (req, res) => {
     if (!amount || Number(amount) <= 0) {
       return res.status(400).json({ success: false, error: 'Amount must be greater than zero.' });
     }
+    if (req.user?.role === 'Vendor' && String(remarks || '').trim().length < 10) {
+      return res.status(400).json({ success: false, error: 'Advance justification must contain at least 10 characters.' });
+    }
 
-    // Lookup PO
+    // All payment validation is based on the persisted PO, never browser totals.
     const po = await PurchaseOrder.findOne({ $or: [{ poNumber }, { sapPoNumber: poNumber }] }).lean();
+    if (!po) {
+      return res.status(404).json({ success: false, error: 'Purchase Order not found.' });
+    }
+    if (!validateOpenPo(po)) {
+      return res.status(400).json({ success: false, error: `Advance requests are not allowed for a ${po.status} Purchase Order.` });
+    }
+    if (!(await validateVendorOwnsPo(req, po))) {
+      return res.status(403).json({ success: false, error: 'This Purchase Order does not belong to the signed-in vendor.' });
+    }
 
-    const vendorNameFinal = vendorName || po?.supplierName || 'Vendor';
-    const vendorIdFinal   = vendorCode  || po?.supplierId   || 'VEND-00000';
+    const poCurrency = String(po.currency || 'INR').toUpperCase();
+    const requestCurrency = String(currency || poCurrency).toUpperCase();
+    if (requestCurrency !== poCurrency) {
+      return res.status(400).json({ success: false, error: `Currency must match the Purchase Order (${poCurrency}). Convert the request before submitting.` });
+    }
+
+    const poRefs = [po.poNumber, po.sapPoNumber].filter(Boolean);
+    const priorAdvances = await AdvancePayment.aggregate([
+      { $match: { $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }], status: { $in: activePaymentStatuses } } },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+    const committedAdvance = Number(priorAdvances[0]?.total) || 0;
+    const remainingAdvance = Math.max(0, Number(po.totalAmount) - committedAdvance);
+    if (Number(amount) > remainingAdvance) {
+      return res.status(400).json({
+        success: false,
+        error: `Advance amount exceeds the remaining PO balance. Available: ${poCurrency} ${remainingAdvance.toLocaleString('en-IN')}.`
+      });
+    }
+
+    const vendorNameFinal = req.user?.role === 'Vendor' ? (req.user.companyName || po.supplierName) : (vendorName || po.supplierName || 'Vendor');
+    const vendorIdFinal   = req.user?.role === 'Vendor' ? (req.user.sapVendorCode || po.supplierId) : (vendorCode || po.supplierId || 'VEND-00000');
     const poRef           = po?.sapPoNumber || poNumber;
     const numAmount       = Number(amount);
 
@@ -419,6 +553,7 @@ const createAdvanceHandler = async (req, res) => {
       vendorId:   vendorIdFinal,
       vendorName: vendorNameFinal,
       amount:     numAmount,
+      currency:   poCurrency,
       percentageOfPo: Number(percentageOfPo) || 0,
       gstBreakup: {
         cgst:     Number(cgst)     || 0,
@@ -460,8 +595,8 @@ const createAdvanceHandler = async (req, res) => {
   }
 };
 
-router.post('/advances/create', createAdvanceHandler);
-router.post('/advance-payments/create', createAdvanceHandler);
+router.post('/advances/create', authenticateToken, createAdvanceHandler);
+router.post('/advance-payments/create', authenticateToken, createAdvanceHandler);
 
 // ─── DELETE Advance Payment ───────────────────────────────────────────────────
 const deleteAdvanceHandler = async (req, res) => {
@@ -562,24 +697,86 @@ router.get('/invoices/:id', async (req, res) => {
 });
 
 // ─── POST Create Invoice Payment ─────────────────────────────────────────────
-router.post('/invoices/create', async (req, res) => {
+router.post('/invoices/create', authenticateToken, async (req, res) => {
   try {
     const {
       poNumber, invoiceNumber, grossAmount, gstAmount, tdsAmount, tdsPercentage,
       advanceAdjusted, advanceIdAdjusted, poQuantity, grnQuantity, invoiceQuantity,
-      grnNumber, remarks, approvalTo, requestedBy, vendorId, vendorName
+      grnNumber, remarks, approvalTo, requestedBy, vendorId, vendorName, asnNumber: requestedAsnNumber,
+      invoiceDate, currency
     } = req.body;
 
+    if (!poNumber) return res.status(400).json({ success: false, error: 'Purchase Order is required.' });
+    if (req.user?.role === 'Vendor' && !String(grnNumber || '').trim()) {
+      return res.status(400).json({ success: false, error: 'GRN / Delivery Note number is required.' });
+    }
+    if (invoiceDate && Date.parse(invoiceDate) > Date.now()) {
+      return res.status(400).json({ success: false, error: 'Invoice date cannot be in the future.' });
+    }
     const po = await PurchaseOrder.findOne({ $or: [{ poNumber }, { sapPoNumber: poNumber }] }).lean();
+    if (!po) return res.status(404).json({ success: false, error: 'Purchase Order not found.' });
+    if (!validateOpenPo(po)) {
+      return res.status(400).json({ success: false, error: `Invoices are not allowed for a ${po.status} Purchase Order.` });
+    }
+    if (!(await validateVendorOwnsPo(req, po))) {
+      return res.status(403).json({ success: false, error: 'This Purchase Order does not belong to the signed-in vendor.' });
+    }
 
-    const vendorNameFinal = vendorName || requestedBy || po?.supplierName || 'Jinko Solar (Vietnam) Industries Co., Ltd';
-    const vendorIdFinal   = vendorId || po?.supplierId || 'VEND-10029';
+    const poCurrency = String(po.currency || 'INR').toUpperCase();
+    const requestCurrency = String(currency || poCurrency).toUpperCase();
+    if (requestCurrency !== poCurrency) {
+      return res.status(400).json({ success: false, error: `Invoice currency must match the Purchase Order (${poCurrency}). Convert the invoice before submitting.` });
+    }
+
+    const vendorNameFinal = req.user?.role === 'Vendor' ? (req.user.companyName || po.supplierName) : (vendorName || requestedBy || po.supplierName || 'Vendor');
+    const vendorIdFinal   = req.user?.role === 'Vendor' ? (req.user.sapVendorCode || po.supplierId) : (vendorId || po.supplierId || 'VEND-00000');
     const poRef           = po?.sapPoNumber  || poNumber || '4300001510';
 
     const numGross   = Number(grossAmount)   || 0;
     const numGst     = Number(gstAmount)     || 0;
-    const numTds     = Number(tdsAmount)     || 0;
+    const tdsRate    = Number.parseFloat(tdsPercentage) || 0;
+    const numTds     = tdsAmount == null ? (numGross * tdsRate / 100) : (Number(tdsAmount) || 0);
     const numAdv     = Number(advanceAdjusted) || 0;
+    if (numGross <= 0) return res.status(400).json({ success: false, error: 'Invoice amount must be greater than zero.' });
+    if ([numGst, numTds, numAdv].some((value) => value < 0) || tdsRate < 0 || tdsRate > 100) {
+      return res.status(400).json({ success: false, error: 'GST, TDS, and advance adjustment cannot be negative.' });
+    }
+
+    const poRefs = [po.poNumber, po.sapPoNumber].filter(Boolean);
+    const priorInvoices = await InvoicePayment.aggregate([
+      { $match: { $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }], status: { $in: activePaymentStatuses } } },
+      { $group: { _id: null, amount: { $sum: '$grossAmount' }, quantity: { $sum: '$threeWayMatch.invoiceQuantity' }, advanceAdjusted: { $sum: '$advanceAdjusted' } } }
+    ]);
+    const committedInvoiceAmount = Number(priorInvoices[0]?.amount) || 0;
+    const remainingInvoiceAmount = Math.max(0, Number(po.totalAmount) - committedInvoiceAmount);
+    if (numGross > remainingInvoiceAmount) {
+      return res.status(400).json({
+        success: false,
+        error: `Invoice amount exceeds the remaining PO balance. Available: ${poCurrency} ${remainingInvoiceAmount.toLocaleString('en-IN')}.`
+      });
+    }
+
+    const poQty = getPoQuantity(po);
+    const invQty = Number(invoiceQuantity);
+    if (poQty > 0 && (!Number.isFinite(invQty) || invQty <= 0)) {
+      return res.status(400).json({ success: false, error: 'Invoice quantity is required and must be greater than zero.' });
+    }
+    const committedQuantity = Number(priorInvoices[0]?.quantity) || 0;
+    const remainingQuantity = Math.max(0, poQty - committedQuantity);
+    if (poQty > 0 && invQty > remainingQuantity) {
+      return res.status(400).json({ success: false, error: `Invoice quantity exceeds the remaining PO quantity. Available: ${remainingQuantity}.` });
+    }
+
+    if (numAdv > 0) {
+      const availableAdvances = await AdvancePayment.aggregate([
+        { $match: { $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }], status: { $in: ['approved', 'paid'] } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const availableToAdjust = Math.max(0, (Number(availableAdvances[0]?.total) || 0) - (Number(priorInvoices[0]?.advanceAdjusted) || 0));
+      if (numAdv > availableToAdjust || numAdv > numGross + numGst) {
+        return res.status(400).json({ success: false, error: `Advance adjustment exceeds the available amount (${poCurrency} ${availableToAdjust.toLocaleString('en-IN')}).` });
+      }
+    }
     const netPayable = Math.max(0, numGross + numGst - numTds - numAdv);
 
     // Unique invoice number handling
@@ -587,16 +784,30 @@ router.post('/invoices/create', async (req, res) => {
     if (!finalInvoiceNumber) {
       finalInvoiceNumber = 'INV-' + new Date().getFullYear() + '-' + Math.floor(100000 + Math.random() * 900000);
     }
-    const existingInv = await InvoicePayment.findOne({ invoiceNumber: finalInvoiceNumber });
+    const existingInv = await InvoicePayment.findOne({ invoiceNumber: finalInvoiceNumber, vendorId: vendorIdFinal });
     if (existingInv) {
-      finalInvoiceNumber = `${finalInvoiceNumber}-${Math.floor(1000 + Math.random() * 9000)}`;
+      return res.status(409).json({ success: false, error: 'This invoice number has already been submitted.' });
     }
 
     const invPaymentId = 'INV-PAY-' + Date.now().toString().slice(-6);
 
-    const poQty  = Number(poQuantity)      || 100;
-    const grnQty = Number(grnQuantity)     || 100;
-    const invQty = Number(invoiceQuantity) || 100;
+    // Check if vendor is Import type - only then generate ASN number
+    const vendor = await Vendor.findOne({
+      $or: [
+        { id: vendorIdFinal },
+        { sapVendorCode: vendorIdFinal },
+        { supplierId: vendorIdFinal }
+      ]
+    }).lean();
+
+    const isImportVendor = String(vendor?.vendorType || '').toLowerCase().includes('import');
+
+    // Generate ASN number ONLY for Import vendors
+    const asnNumber = isImportVendor
+      ? (String(requestedAsnNumber || '').trim() || `ASN-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`)
+      : '';
+
+    const grnQty = Number(grnQuantity) || invQty || poQty;
     const isMatched = (poQty === grnQty) && (grnQty === invQty);
 
     const newInvoice = await InvoicePayment.create({
@@ -606,11 +817,13 @@ router.post('/invoices/create', async (req, res) => {
       vendorId:         vendorIdFinal,
       vendorName:       vendorNameFinal,
       invoiceNumber:    finalInvoiceNumber,
-      invoiceDate:      new Date(),
+      asnNumber:        asnNumber,
+      invoiceDate:      invoiceDate && !Number.isNaN(Date.parse(invoiceDate)) ? new Date(invoiceDate) : new Date(),
       grossAmount:      numGross,
+      currency:         poCurrency,
       gstAmount:        numGst,
       tdsAmount:        numTds,
-      tdsPercentage:    Number(tdsPercentage) || 0,
+      tdsPercentage:    tdsRate,
       advanceAdjusted:  numAdv,
       advanceIdAdjusted: advanceIdAdjusted || '',
       grnNumber:        grnNumber  || '',
@@ -657,9 +870,10 @@ router.put('/invoices/:id', async (req, res) => {
     if (!invoice) return res.status(404).json({ success: false, error: 'Invoice payment not found' });
 
     const { poNumber, invoiceNumber, grossAmount, gstAmount, tdsAmount,
-            tdsPercentage, advanceAdjusted, grnNumber, remarks, approvalTo } = req.body;
+            tdsPercentage, advanceAdjusted, grnNumber, remarks, approvalTo, asnNumber } = req.body;
 
     if (invoiceNumber)      invoice.invoiceNumber    = invoiceNumber.trim();
+    if (asnNumber !== undefined) invoice.asnNumber = asnNumber.trim();
     if (grossAmount !== undefined) invoice.grossAmount = Number(grossAmount);
     if (gstAmount !== undefined)   invoice.gstAmount   = Number(gstAmount);
     if (tdsAmount !== undefined)   invoice.tdsAmount   = Number(tdsAmount);
@@ -1022,7 +1236,7 @@ router.get('/rfqs/logistics-vendors', async (req, res) => {
 
 
 // ─── POST Create RFQ ─────────────────────────────────────────────────────────
-router.post('/rfqs', async (req, res) => {
+router.post('/rfqs', authenticateToken, async (req, res) => {
   try {
     const {
       title, linkedPoId, closingDate, description,
@@ -1057,9 +1271,35 @@ router.post('/rfqs', async (req, res) => {
         weightPerContainer: Number(weightPerContainer) || 0,
         estimatedReadinessDate: estimatedReadinessDate || new Date()
       },
+      totalQuantity: Number(containerCount) || 1,
+      allocatedQuantity: 0,
+      pendingAllocation: Number(containerCount) || 1,
       closingDate: closingDate ? new Date(closingDate) : new Date(Date.now() + 7*24*60*60*1000),
-      status: 'published'
+      status: 'published',
+      invitedVendors: Array.isArray(invitedVendors) ? invitedVendors : []
     });
+
+    const inviteKeys = (newRfq.invitedVendors || []).flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).filter(Boolean);
+    const invitedVendorDocs = inviteKeys.length ? await Vendor.find({
+      $or: [{ id: { $in: inviteKeys } }, { sapVendorCode: { $in: inviteKeys } }, { supplierId: { $in: inviteKeys } }]
+    }).select('id sapVendorCode supplierId companyName email').lean() : [];
+
+    broadcastEvent('RFQ_INVITED', {
+      rfqId: newRfq.rfqId,
+      rfqNumber: newRfq.rfqNumber,
+      title: newRfq.title,
+      closingDate: newRfq.closingDate,
+      vendorIds: inviteKeys
+    });
+    Promise.allSettled(invitedVendorDocs.filter((vendor) => vendor.email).map((vendor) =>
+      sendRfqInvitationEmail({
+        to: vendor.email,
+        vendorName: vendor.companyName,
+        rfqNumber: newRfq.rfqNumber,
+        title: newRfq.title,
+        closingDate: newRfq.closingDate
+      })
+    )).catch(() => {});
 
     const wf = await Workflow.findOne({ module: 'RfqHeader', isActive: true }).lean().catch(() => null);
     if (wf) {
@@ -1083,6 +1323,244 @@ router.post('/rfqs', async (req, res) => {
 });
 
 // ─── GET Single RFQ Details ──────────────────────────────────────────────────
+async function getFreightVendorFromRequest(req) {
+  const keys = [req.user?.id, req.user?.sapVendorCode].filter(Boolean);
+  if (!keys.length || req.user?.role !== 'Vendor') return null;
+  const freightType = /(freight|forwarder|logistics|shipping)/i;
+  // A vendor code can exist in legacy/imported duplicate records. Select the
+  // newest matching Freight Forwarder record, consistent with vendor login.
+  return Vendor.findOne({
+    $and: [
+      { $or: keys.flatMap((key) => [{ id: key }, { sapVendorCode: key }, { supplierId: key }]) },
+      { $or: [{ vendorType: freightType }, { category: freightType }] }
+    ]
+  }).sort({ updatedAt: -1 }).lean();
+}
+
+function normaliseInviteValue(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isFreightVendorInvited(rfq, vendor) {
+  const vendorKeys = new Set([
+    vendor.id, vendor.sapVendorCode, vendor.supplierId, vendor.companyName
+  ].map(normaliseInviteValue).filter(Boolean));
+  const invitationValues = [
+    ...(Array.isArray(rfq.invitedVendorIds) ? rfq.invitedVendorIds : []),
+    ...(Array.isArray(rfq.invitedVendors) ? rfq.invitedVendors.flatMap((invite) => {
+      if (typeof invite === 'string' || typeof invite === 'number') return [invite];
+      return [invite?.vendorId, invite?.sapVendorCode, invite?.supplierId, invite?.id, invite?.companyName];
+    }) : [])
+  ];
+  return invitationValues.some((value) => vendorKeys.has(normaliseInviteValue(value)));
+}
+
+function freightVendorKeys(vendor) {
+  return [vendor?.id, vendor?.sapVendorCode, vendor?.supplierId, vendor?.companyName]
+    .map(normaliseInviteValue).filter(Boolean);
+}
+
+function getVendorAward(rfq, vendor) {
+  const keys = new Set(freightVendorKeys(vendor));
+  const allocations = Array.isArray(rfq.awardAllocations) ? rfq.awardAllocations : [];
+  const allocation = allocations.find((item) =>
+    [item.vendorId, item.vendorCode, item.vendorName].map(normaliseInviteValue).some((key) => keys.has(key))
+  );
+  if (allocation) return { ...allocation, containers: Number(allocation.containers) || 0 };
+  const legacyMatch = [rfq.awardedVendorId, rfq.awardedVendorName]
+    .map(normaliseInviteValue).some((key) => keys.has(key));
+  if (!legacyMatch) return null;
+  return {
+    vendorId: rfq.awardedVendorId,
+    vendorName: rfq.awardedVendorName,
+    containers: Number(rfq.allocatedQuantity) || Number(rfq.cargoDetails?.containerCount) || Number(rfq.totalQuantity) || 0
+  };
+}
+
+async function resolveVendorAwardedRfq(req) {
+  const vendor = await getFreightVendorFromRequest(req);
+  if (!vendor) return { error: 'Freight Forwarder access is required.', status: 403 };
+  const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
+  if (!rfq || !isFreightVendorInvited(rfq.toObject(), vendor)) return { error: 'Assigned RFQ not found.', status: 404 };
+  const allocation = getVendorAward(rfq.toObject(), vendor);
+  if (String(rfq.status).toLowerCase() !== 'awarded' || !allocation) {
+    return { error: 'Only an awarded vendor can manage Bill of Lading entries.', status: 403 };
+  }
+  return { vendor, rfq, allocation };
+}
+
+function isRfqClosed(closingDate) {
+  if (!closingDate) return false;
+  const deadline = new Date(closingDate);
+  // Admin RFQ forms select a calendar date. A stored midnight timestamp means
+  // the RFQ remains available until the end of that calendar day.
+  const isUtcMidnight = deadline.getUTCHours() === 0 && deadline.getUTCMinutes() === 0 && deadline.getUTCSeconds() === 0;
+  const isLocalMidnight = deadline.getHours() === 0 && deadline.getMinutes() === 0 && deadline.getSeconds() === 0;
+  if (isLocalMidnight) {
+    deadline.setHours(23, 59, 59, 999);
+  } else if (isUtcMidnight) {
+    deadline.setUTCHours(23, 59, 59, 999);
+  }
+  return deadline < new Date();
+}
+
+router.get('/vendor-rfqs', authenticateToken, async (req, res) => {
+  try {
+    const vendor = await getFreightVendorFromRequest(req);
+    if (!vendor) return res.status(403).json({ success: false, error: 'Freight Forwarder access is required.' });
+    // Invitations created by older screens used strings/legacy IDs while newer
+    // records use structured objects. Filter after loading so both shapes work.
+    const rfqs = (await RfqHeader.find({}).sort({ createdAt: -1 }).lean())
+      .filter((rfq) => isFreightVendorInvited(rfq, vendor));
+    const ids = [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean);
+    const quotes = await RfqQuote.find({ vendorId: { $in: ids } }).lean();
+    return res.json({ success: true, data: rfqs.map((rfq) => ({ ...rfq, myQuote: quotes.find((q) => q.rfqId === rfq.rfqId) || null })) });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.get('/vendor-rfqs/:id', authenticateToken, async (req, res) => {
+  try {
+    const vendor = await getFreightVendorFromRequest(req);
+    if (!vendor) return res.status(403).json({ success: false, error: 'Freight Forwarder access is required.' });
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] }).lean();
+    if (!rfq || !isFreightVendorInvited(rfq, vendor)) return res.status(404).json({ success: false, error: 'Assigned RFQ not found.' });
+    const ids = [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean);
+    const myQuote = await RfqQuote.findOne({ rfqId: rfq.rfqId, vendorId: { $in: ids } }).lean();
+    return res.json({ success: true, data: { ...rfq, myQuote, myAllocation: getVendorAward(rfq, vendor) } });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/vendor-rfqs/:id/quote', authenticateToken, async (req, res) => {
+  try {
+    const vendor = await getFreightVendorFromRequest(req);
+    if (!vendor) return res.status(403).json({ success: false, error: 'Freight Forwarder access is required.' });
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
+    if (!rfq || !isFreightVendorInvited(rfq.toObject(), vendor)) return res.status(404).json({ success: false, error: 'Assigned RFQ not found.' });
+    if (String(rfq.status).toLowerCase() !== 'published' || isRfqClosed(rfq.closingDate)) {
+      return res.status(400).json({ success: false, error: 'This RFQ is not open for quotations.' });
+    }
+    const ocean = Number(req.body.oceanFreightUsd);
+    const shipping = Number(req.body.stChargesInr);
+    const other = Number(req.body.otherChargesInr) || 0;
+    const transitDays = Number(req.body.transitDays);
+    if (!String(req.body.shippingLine || '').trim() || ocean <= 0 || shipping < 0 || other < 0 || transitDays <= 0) {
+      return res.status(400).json({ success: false, error: 'Shipping line, positive freight, valid charges, and transit days are required.' });
+    }
+    if (req.body.vesselEtd && req.body.vesselEta && new Date(req.body.vesselEta) < new Date(req.body.vesselEtd)) {
+      return res.status(400).json({ success: false, error: 'Vessel ETA cannot be earlier than Vessel ETD.' });
+    }
+    const vendorId = vendor.sapVendorCode || vendor.supplierId || vendor.id;
+    const quote = await RfqQuote.findOneAndUpdate(
+      { rfqId: rfq.rfqId, vendorId },
+      { $set: {
+        vendorName: vendor.companyName, shippingLine: String(req.body.shippingLine).trim(),
+        oceanFreightUsd: ocean, stChargesInr: shipping, otherChargesInr: other,
+        totalInr: Math.round(ocean * 92.5 + shipping + other), freightAmount: ocean,
+        destinationCharges: shipping, transitDays, vesselRoute: req.body.vesselRoute || '',
+        cutoffDate: req.body.cutoffDate || null, vesselEtd: req.body.vesselEtd || null,
+        vesselEta: req.body.vesselEta || null, freeDays: req.body.freeDays || '',
+        rateValidity: req.body.rateValidity || '', costParticular: req.body.costParticular || '',
+        remarks: req.body.remarks || '', status: 'submitted'
+      }, $setOnInsert: { quoteId: `Q-${Date.now().toString().slice(-6)}` } },
+      { new: true, upsert: true, runValidators: true }
+    );
+    const ranked = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 });
+    await Promise.all(ranked.map((item, index) => RfqQuote.updateOne({ _id: item._id }, { rank: index < 5 ? `L${index + 1}` : 'N/A' })));
+    broadcastEvent('RFQ_QUOTE_SUBMITTED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, vendorName: vendor.companyName, quoteId: quote.quoteId });
+    return res.json({ success: true, message: 'Freight quote submitted successfully.', data: quote });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.get('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) => {
+  try {
+    const context = await resolveVendorAwardedRfq(req);
+    if (context.error) return res.status(context.status).json({ success: false, error: context.error });
+    const vendorKeys = freightVendorKeys(context.vendor);
+    const entries = await RfqBlEntry.find({ rfqId: context.rfq.rfqId }).sort({ createdAt: -1 }).lean();
+    const mine = entries.filter((entry) => vendorKeys.includes(normaliseInviteValue(entry.vendorId)) || vendorKeys.includes(normaliseInviteValue(entry.vendorName)));
+    const usedContainers = mine.reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0);
+    return res.json({ success: true, data: { rfq: context.rfq.toObject(), allocation: context.allocation, usedContainers, remainingContainers: Math.max(0, context.allocation.containers - usedContainers), entries: mine } });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) => {
+  try {
+    const context = await resolveVendorAwardedRfq(req);
+    if (context.error) return res.status(context.status).json({ success: false, error: context.error });
+    const blNumber = String(req.body.blNumber || '').trim().toUpperCase();
+    const containerCount = Number(req.body.containerCount);
+    if (!blNumber) return res.status(400).json({ success: false, error: 'BL Number is required.' });
+    if (!Number.isInteger(containerCount) || containerCount <= 0) return res.status(400).json({ success: false, error: 'Number of containers must be a positive whole number.' });
+    const duplicate = await RfqBlEntry.exists({ blNumber });
+    if (duplicate) return res.status(409).json({ success: false, error: 'This BL Number already exists.' });
+    const vendorKeys = freightVendorKeys(context.vendor);
+    const existing = await RfqBlEntry.find({ rfqId: context.rfq.rfqId }).lean();
+    const used = existing.filter((entry) => vendorKeys.includes(normaliseInviteValue(entry.vendorId)) || vendorKeys.includes(normaliseInviteValue(entry.vendorName))).reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0);
+    const remaining = context.allocation.containers - used;
+    if (containerCount > remaining) return res.status(400).json({ success: false, error: `Only ${Math.max(0, remaining)} awarded container(s) remain.` });
+    const documents = (Array.isArray(req.body.documents) ? req.body.documents : []).filter((doc) => doc?.fileName).map((doc) => ({ docType: doc.docType || 'Bill of Lading', fileUrl: String(doc.fileName), uploadedBy: context.vendor.companyName, uploadedAt: new Date() }));
+    if (!documents.length) return res.status(400).json({ success: false, error: 'At least one supporting document is required.' });
+    const entry = await RfqBlEntry.create({
+      blId: `BL-${Date.now().toString(36).toUpperCase()}`,
+      rfqId: context.rfq.rfqId, rfqNumber: context.rfq.rfqNumber,
+      blNumber, containerCount, vendorId: context.vendor.sapVendorCode || context.vendor.supplierId || context.vendor.id,
+      vendorName: context.vendor.companyName, remarks: String(req.body.remarks || '').trim(),
+      vesselName: context.rfq.title, shippingLine: context.rfq.awardedVendorName || context.vendor.companyName,
+      autoAsnNumber: String(req.body.asnNumber || '').trim(), status: 'submitted', documents
+    });
+    broadcastEvent('BL_SUBMITTED', { blId: entry.blId, blNumber, rfqId: context.rfq.rfqId, vendorName: context.vendor.companyName });
+    return res.status(201).json({ success: true, message: 'BL entry submitted for EXIM review.', data: entry });
+  } catch (err) { return res.status(500).json({ success: false, error: err.code === 11000 ? 'This BL Number already exists.' : err.message }); }
+});
+
+router.get('/vendor-rfqs/:id/bl-entries/:blId', authenticateToken, async (req, res) => {
+  try {
+    const context = await resolveVendorAwardedRfq(req);
+    if (context.error) return res.status(context.status).json({ success: false, error: context.error });
+    const entry = await RfqBlEntry.findOne({ rfqId: context.rfq.rfqId, $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] }).lean();
+    const keys = freightVendorKeys(context.vendor);
+    if (!entry || ![entry.vendorId, entry.vendorName].map(normaliseInviteValue).some((key) => keys.includes(key))) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+    const rawInvoices = await LogisticsPayment.find({ blId: entry.blId }).sort({ createdAt: -1 }).lean();
+    const seenDocuments = new Set();
+    const documents = (entry.documents || []).filter((doc) => {
+      const key = `${doc.docType || ''}|${doc.fileUrl || ''}`.toLowerCase();
+      if (seenDocuments.has(key)) return false;
+      seenDocuments.add(key);
+      return true;
+    });
+    const invoices = rawInvoices.map((invoice) => {
+      const candidates = [invoice.amount, invoice.invoiceAmount, invoice.totalAmount, invoice.grossAmount];
+      const amount = candidates.map(Number).find(Number.isFinite);
+      return { ...invoice, amount: amount ?? 0, amountMissing: amount === undefined, status: invoice.status || 'draft' };
+    });
+    return res.json({ success: true, data: { ...entry, documents, invoices, canInvoice: entry.status === 'custom_cleared' || entry.status === 'invoice_pending' } });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/vendor-rfqs/:id/bl-entries/:blId/invoices', authenticateToken, async (req, res) => {
+  try {
+    const context = await resolveVendorAwardedRfq(req);
+    if (context.error) return res.status(context.status).json({ success: false, error: context.error });
+    const bl = await RfqBlEntry.findOne({ rfqId: context.rfq.rfqId, $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] });
+    const keys = freightVendorKeys(context.vendor);
+    if (!bl || ![bl.vendorId, bl.vendorName].map(normaliseInviteValue).some((key) => keys.includes(key))) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+    if (!['custom_cleared', 'invoice_pending'].includes(bl.status)) return res.status(400).json({ success: false, error: 'Logistics invoice can only be raised after customs clearance.' });
+    const invoiceNumber = String(req.body.invoiceNumber || '').trim().toUpperCase();
+    const amount = Number(req.body.amount);
+    if (!invoiceNumber || !(amount > 0)) return res.status(400).json({ success: false, error: 'Invoice Number and a positive amount are required.' });
+    if (await LogisticsPayment.exists({ invoiceNumber, $or: [{ vendorId: bl.vendorId }, { providerId: bl.vendorId }] })) return res.status(409).json({ success: false, error: 'This invoice number has already been submitted.' });
+    const logisticsPaymentId = `LP-${Date.now().toString(36).toUpperCase()}`;
+    const payment = await LogisticsPayment.create({
+      logisticsPaymentId, referenceNumber: logisticsPaymentId, blId: bl.blId, blNumber: bl.blNumber,
+      vendorId: bl.vendorId, vendorName: bl.vendorName, category: req.body.category || 'freight', invoiceNumber,
+      amount, totalAmount: amount, currency: String(req.body.currency || 'INR').toUpperCase(), remarks: String(req.body.remarks || '').trim(),
+      invoiceFile: String(req.body.fileName || '').trim(), status: 'pending'
+    });
+    broadcastEvent('LOGISTICS_INVOICE_SUBMITTED', { logisticsPaymentId: payment.logisticsPaymentId, blId: bl.blId, vendorId: bl.vendorId, amount });
+    return res.status(201).json({ success: true, message: 'Logistics invoice submitted for approval.', data: payment });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
 router.get('/rfqs/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -1108,7 +1586,7 @@ router.get('/rfqs/:id', async (req, res) => {
 });
 
 // ─── PUT Update RFQ ──────────────────────────────────────────────────────────
-router.put('/rfqs/:id', async (req, res) => {
+router.put('/rfqs/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const {
@@ -1136,12 +1614,33 @@ router.put('/rfqs/:id', async (req, res) => {
     if (portOfLoading) rfq.cargoDetails.portOfOrigin = portOfLoading;
     if (portOfDischarge) rfq.cargoDetails.portOfDestination = portOfDischarge;
     if (containerType) rfq.cargoDetails.containerType = containerType;
-    if (containerCount !== undefined) rfq.cargoDetails.containerCount = Number(containerCount);
+    if (containerCount !== undefined) {
+      const nextContainerCount = Number(containerCount);
+      if (!Number.isFinite(nextContainerCount) || nextContainerCount <= 0) {
+        return res.status(400).json({ success: false, error: 'Number of containers must be greater than zero.' });
+      }
+      rfq.cargoDetails.containerCount = nextContainerCount;
+      rfq.totalQuantity = nextContainerCount;
+      rfq.allocatedQuantity = Math.min(Number(rfq.allocatedQuantity) || 0, nextContainerCount);
+      rfq.pendingAllocation = Math.max(0, nextContainerCount - rfq.allocatedQuantity);
+    }
     if (weightPerContainer !== undefined) rfq.cargoDetails.weightPerContainer = weightPerContainer;
     if (estimatedReadinessDate) rfq.cargoDetails.estimatedReadinessDate = new Date(estimatedReadinessDate);
 
     if (invitedVendors && Array.isArray(invitedVendors)) {
+      if (!invitedVendors.length) return res.status(400).json({ success: false, error: 'At least one Freight Forwarder must remain invited.' });
+      const submittedQuotes = await RfqQuote.find({ rfqId: rfq.rfqId }).select('vendorId vendorName').lean();
+      const retainsVendor = (quote) => invitedVendors.some((vendor) =>
+        [vendor.vendorId, vendor.sapVendorCode].filter(Boolean).map(normaliseInviteValue).includes(normaliseInviteValue(quote.vendorId)) ||
+        normaliseInviteValue(vendor.companyName) === normaliseInviteValue(quote.vendorName)
+      );
+      if (submittedQuotes.some((quote) => !retainsVendor(quote))) {
+        return res.status(400).json({ success: false, error: 'A vendor that already submitted a quote cannot be removed.' });
+      }
+      const previousKeys = new Set((rfq.invitedVendors || []).flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).map(normaliseInviteValue).filter(Boolean));
       rfq.invitedVendors = invitedVendors;
+      const addedVendorIds = invitedVendors.flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).filter((value) => value && !previousKeys.has(normaliseInviteValue(value)));
+      if (addedVendorIds.length) broadcastEvent('RFQ_INVITED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, title: rfq.title, closingDate: rfq.closingDate, vendorIds: addedVendorIds });
     }
 
     await rfq.save();
@@ -1183,6 +1682,12 @@ router.post('/rfqs/:id/copy', async (req, res) => {
       rfqNumber: newRfqNumber,
       title: `COPY - ${sourceRfq.title}`,
       status: 'published',
+      totalQuantity: Number(sourceRfq.cargoDetails?.containerCount) || Number(sourceRfq.totalQuantity) || 1,
+      allocatedQuantity: 0,
+      pendingAllocation: Number(sourceRfq.cargoDetails?.containerCount) || Number(sourceRfq.totalQuantity) || 1,
+      awardedVendorId: undefined,
+      awardedVendorName: undefined,
+      awardedQuoteId: undefined,
       createdAt: new Date(),
       updatedAt: new Date()
     });
@@ -1240,13 +1745,42 @@ router.post('/rfqs/:id/quote', async (req, res) => {
 });
 
 // ─── POST Award RFQ Quote ─────────────────────────────────────────────────────
-router.post('/rfqs/:id/award', async (req, res) => {
+router.post('/rfqs/:id/award', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { quoteId, vendorId, vendorName } = req.body;
+    const { quoteId, vendorId, vendorName, allocations, submitForApproval } = req.body;
 
     const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
     if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
+
+    if (submitForApproval && Array.isArray(allocations)) {
+      const totalContainers = Number(rfq.cargoDetails?.containerCount) || Number(rfq.totalQuantity) || 0;
+      if (!allocations.length) return res.status(400).json({ success: false, error: 'Add at least one vendor allocation.' });
+      const quoteIds = allocations.map((item) => item.quoteId).filter(Boolean);
+      const quotes = await RfqQuote.find({ rfqId: rfq.rfqId, quoteId: { $in: quoteIds } }).lean();
+      if (quotes.length !== new Set(quoteIds).size) return res.status(400).json({ success: false, error: 'Every allocation must use a valid quote from this RFQ.' });
+      const normalized = allocations.map((item) => {
+        const quote = quotes.find((entry) => entry.quoteId === item.quoteId);
+        const containers = Number(item.containers);
+        if (!Number.isInteger(containers) || containers <= 0) throw new Error('Allocated containers must be positive whole numbers.');
+        return { quoteId: quote.quoteId, vendorId: quote.vendorId, vendorName: quote.vendorName, vendorCode: quote.vendorId, containers, ratePerContainer: Number(quote.totalInr) || 0, allocationAmount: (Number(quote.totalInr) || 0) * containers, remark: String(item.remark || '').trim() };
+      });
+      const allocated = normalized.reduce((sum, item) => sum + item.containers, 0);
+      if (allocated > totalContainers) return res.status(400).json({ success: false, error: `Allocation exceeds RFQ quantity. Available: ${totalContainers} containers.` });
+      if (new Set(normalized.map((item) => item.quoteId)).size !== normalized.length) return res.status(400).json({ success: false, error: 'A vendor quote can only be allocated once.' });
+      const totalAmount = normalized.reduce((sum, item) => sum + item.allocationAmount, 0);
+      const approvalId = `RFQ-AWARD-${rfq.rfqNumber}-${Date.now().toString().slice(-5)}`;
+      await Approval.create({ id: approvalId, type: 'RFQ Vendor Award', vendorName: normalized.map((item) => item.vendorName).join(', '), amountOriginal: `INR ${totalAmount}`, amountINR: String(totalAmount), currency: 'INR', requestedBy: req.user?.name || req.user?.email || 'System Admin', poReference: rfq.poId, status: 'Pending Procurement Head Approval', containersCount: allocated, allocations: normalized, remarks: `Container allocation for ${rfq.rfqNumber}` });
+      rfq.status = 'pending_approval';
+      rfq.totalQuantity = totalContainers;
+      rfq.allocatedQuantity = 0;
+      rfq.pendingAllocation = totalContainers;
+      rfq.set('awardAllocations', normalized);
+      rfq.set('awardApprovalId', approvalId);
+      await rfq.save();
+      broadcastEvent('APPROVAL_CREATED', { approvalId, approvalType: 'RFQ Vendor Award', amount: `INR ${totalAmount.toLocaleString('en-IN')}`, requestedBy: req.user?.name || 'System Admin', firstStepTitle: 'Procurement Head' });
+      return res.json({ success: true, message: 'Vendor allocations submitted for approval.', data: rfq, approvalId });
+    }
 
     rfq.status = 'awarded';
     rfq.awardedVendorId = vendorId;
@@ -1260,7 +1794,7 @@ router.post('/rfqs/:id/award', async (req, res) => {
       await RfqQuote.updateOne({ quoteId }, { status: 'awarded' });
     }
 
-    broadcastEvent('rfq_awarded', { rfqId: rfq.rfqId, vendorName, awardedAt: new Date() });
+    broadcastEvent('RFQ_AWARDED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, vendorId, vendorName, awardedAt: new Date() });
 
     return res.json({ success: true, message: 'RFQ awarded successfully in MongoDB.', data: rfq });
   } catch (err) {
@@ -1269,14 +1803,69 @@ router.post('/rfqs/:id/award', async (req, res) => {
 });
 
 // ─── CUSTOMS BROKER & BL ASSIGNMENT ROUTES ──────────────────────────────────
-router.get('/customs-agent/assigned', async (req, res) => {
+router.get('/exim/bl-entries', authenticateToken, async (req, res) => {
   try {
-    await seedRfqMasterData();
-    const bls = await RfqBlEntry.find().sort({ createdAt: -1 }).lean();
+    const entries = await RfqBlEntry.find().sort({ createdAt: -1 }).lean();
+    const agents = await CustomAgent.find({ status: 'Active' }).select('agentId agencyName contactPerson email').sort({ agencyName: 1 }).lean();
+    return res.json({ success: true, data: entries, agents });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.get('/exim/bl-entries/:blId', authenticateToken, async (req, res) => {
+  try {
+    const entry = await RfqBlEntry.findOne({ $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] }).lean();
+    if (!entry) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+    const [rfq, agents] = await Promise.all([
+      RfqHeader.findOne({ rfqId: entry.rfqId }).select('rfqId rfqNumber title').lean(),
+      CustomAgent.find({ status: 'Active' }).select('agentId agencyName contactPerson email').sort({ agencyName: 1 }).lean()
+    ]);
+    return res.json({ success: true, data: { ...entry, rfq }, agents });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/exim/bl-entries/:blId/documents', authenticateToken, async (req, res) => {
+  try {
+    const bl = await RfqBlEntry.findOne({ $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] });
+    if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+    const documents = Array.isArray(req.body.documents) ? req.body.documents : [];
+    const valid = documents.filter((doc) => String(doc.docType || '').trim() && String(doc.fileName || '').trim());
+    if (!valid.length) return res.status(400).json({ success: false, error: 'Select a document type and file.' });
+    bl.documents.push(...valid.map((doc) => ({ docType: String(doc.docType).trim(), fileUrl: String(doc.fileName).trim(), uploadedBy: req.user?.name || req.user?.email || 'EXIM Team', uploadedAt: new Date(), stage: 'EXIM Review' })));
+    if (bl.status === 'submitted') bl.status = 'exim_review';
+    bl.eximReviewedAt = bl.eximReviewedAt || new Date();
+    await bl.save();
+    broadcastEvent('BL_EXIM_REVIEWED', { blId: bl.blId, vendorId: bl.vendorId });
+    return res.json({ success: true, message: 'EXIM documents uploaded.', data: bl });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/exim/bl-entries/:blId/assign', authenticateToken, async (req, res) => {
+  try {
+    const agent = await CustomAgent.findOne({ agentId: req.body.agentId, status: 'Active' }).lean();
+    if (!agent) return res.status(400).json({ success: false, error: 'Select an active customs agent.' });
+    const bl = await RfqBlEntry.findOne({ $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] });
+    if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+    if (bl.status === 'custom_cleared') return res.status(400).json({ success: false, error: 'A customs-cleared BL cannot be reassigned.' });
+    bl.customAgentId = agent.agentId;
+    bl.customAgentName = agent.agencyName;
+    bl.eximNotes = String(req.body.notes || '').trim();
+    bl.eximReviewedAt = bl.eximReviewedAt || new Date();
+    bl.assignedAt = new Date();
+    bl.status = 'assigned_to_agent';
+    await bl.save();
+    broadcastEvent('BL_ASSIGNED', { blId: bl.blId, blNumber: bl.blNumber, agentId: agent.agentId, vendorId: bl.vendorId });
+    return res.json({ success: true, message: 'BL assigned to customs agent.', data: bl });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.get('/customs-agent/assigned', authenticateToken, async (req, res) => {
+  try {
+    if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
+    const bls = await RfqBlEntry.find({ customAgentId: req.user.id }).sort({ createdAt: -1 }).lean();
     return res.json({
       success: true,
-      agentName: 'Magnesh',
-      agentCompany: 'Fast Forward Logistics India',
+      agentName: req.user.email,
+      agentCompany: req.user.agencyName,
       totalAssigned: bls.length,
       pendingClearance: bls.filter(b => b.status !== 'custom_cleared').length,
       customCleared: bls.filter(b => b.status === 'custom_cleared').length,
@@ -1287,18 +1876,62 @@ router.get('/customs-agent/assigned', async (req, res) => {
   }
 });
 
-router.post('/customs-agent/upload-boe', async (req, res) => {
+router.get('/customs-agent/assigned/:blId', authenticateToken, async (req, res) => {
   try {
-    const { blId, boeNumber, dutyAmount, fileName } = req.body;
-    const bl = await RfqBlEntry.findOne({ $or: [{ blId }, { blNumber: blId }] });
-    if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
-
-    bl.documents.push({
-      docType: 'Customs Bill of Entry',
-      fileUrl: fileName || 'BOE-Doc.pdf',
-      uploadedBy: 'Magnesh (Customs Agent)',
-      uploadedAt: new Date()
+    if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
+    const bl = await RfqBlEntry.findOne({ customAgentId: req.user.id, $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] }).lean();
+    if (!bl) return res.status(404).json({ success: false, error: 'Assigned BL entry not found.' });
+    const rfq = await RfqHeader.findOne({ rfqId: bl.rfqId }).select('rfqId rfqNumber title cargoDetails').lean();
+    const seenDocuments = new Set();
+    const documents = (bl.documents || []).filter((doc) => {
+      const key = `${doc.docType || ''}|${doc.fileUrl || ''}`.toLowerCase();
+      if (seenDocuments.has(key)) return false;
+      seenDocuments.add(key);
+      return true;
     });
+    return res.json({ success: true, data: { ...bl, documents, rfq } });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/customs-agent/documents', authenticateToken, async (req, res) => {
+  try {
+    if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
+    const bl = await RfqBlEntry.findOne({ customAgentId: req.user.id, $or: [{ blId: req.body.blId }, { blNumber: req.body.blId }] });
+    if (!bl) return res.status(404).json({ success: false, error: 'Assigned BL entry not found.' });
+    if (bl.status === 'custom_cleared') return res.status(400).json({ success: false, error: 'Documents cannot be changed after customs clearance.' });
+    const docType = String(req.body.docType || '').trim();
+    const fileName = String(req.body.fileName || '').trim();
+    if (!docType || !fileName) return res.status(400).json({ success: false, error: 'Document type and file are required.' });
+    bl.documents.push({ docType, fileUrl: fileName, uploadedBy: `${req.user.agencyName || req.user.email} (Customs Agent)`, uploadedAt: new Date(), stage: 'Customs Clearance' });
+    await bl.save();
+    return res.json({ success: true, message: 'Customs document uploaded.', data: bl });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/customs-agent/upload-boe', authenticateToken, async (req, res) => {
+  try {
+    if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
+    const { blId, boeNumber, dutyAmount, fileName } = req.body;
+    const bl = await RfqBlEntry.findOne({ customAgentId: req.user.id, $or: [{ blId }, { blNumber: blId }] });
+    if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+    if (bl.status === 'custom_cleared') return res.status(400).json({ success: false, error: 'BOE cannot be changed after customs clearance.' });
+    const existingBoeDocument = bl.documents.some((doc) => doc.docType === 'Customs Bill of Entry');
+    if (!String(boeNumber || '').trim()) return res.status(400).json({ success: false, error: 'BOE Number is required.' });
+    if (!existingBoeDocument && !String(fileName || '').trim()) return res.status(400).json({ success: false, error: 'BOE document is required.' });
+
+    const duplicateBoeFile = bl.documents.some((doc) => doc.docType === 'Customs Bill of Entry' && String(doc.fileUrl || '').trim() === String(fileName || '').trim());
+    if (String(fileName || '').trim() && !duplicateBoeFile) {
+      bl.documents.push({
+        docType: 'Customs Bill of Entry',
+        fileUrl: String(fileName).trim(),
+        uploadedBy: `${req.user.agencyName || req.user.email} (Customs Agent)`,
+        uploadedAt: new Date(),
+        stage: 'Customs Clearance'
+      });
+    }
+    bl.boeNumber = String(boeNumber).trim();
+    bl.dutyAmount = Math.max(0, Number(dutyAmount) || 0);
+    bl.boeUploadedAt = new Date();
     await bl.save();
 
     return res.json({ success: true, message: 'Bill of Entry uploaded successfully.', bl });
@@ -1307,16 +1940,25 @@ router.post('/customs-agent/upload-boe', async (req, res) => {
   }
 });
 
-router.post('/customs-agent/clear', async (req, res) => {
+router.post('/customs-agent/clear', authenticateToken, async (req, res) => {
   try {
+    if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
     const { blId } = req.body;
-    const bl = await RfqBlEntry.findOne({ $or: [{ blId }, { blNumber: blId }] });
+    const bl = await RfqBlEntry.findOne({ customAgentId: req.user.id, $or: [{ blId }, { blNumber: blId }] });
     if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+    const boeDocument = bl.documents.find((doc) => doc.docType === 'Customs Bill of Entry');
+    if (!boeDocument) return res.status(400).json({ success: false, error: 'Upload the Bill of Entry document before marking customs cleared.' });
+    // Older/imported BL records stored the BOE document without a separate
+    // number. The document is sufficient for clearance, while new BOE uploads
+    // continue to require and persist the real BOE number.
+    if (!bl.boeNumber) bl.boeReference = `DOCUMENT:${boeDocument.fileUrl}`;
 
     bl.status = 'custom_cleared';
+    bl.customsClearedAt = new Date();
+    bl.customsClearanceNotes = String(req.body.notes || '').trim();
     await bl.save();
 
-    broadcastEvent('customs_cleared', { blId: bl.blId, blNumber: bl.blNumber, clearedAt: new Date() });
+    broadcastEvent('BL_CUSTOMS_CLEARED', { blId: bl.blId, blNumber: bl.blNumber, rfqId: bl.rfqId, vendorId: bl.vendorId, clearedAt: bl.customsClearedAt });
 
     return res.json({ success: true, message: 'Marked as Customs Cleared! Invoicing options enabled.', bl });
   } catch (err) {

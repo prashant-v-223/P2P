@@ -10,6 +10,7 @@ const initialVendorProfile = {
   email: '',
   phone: '',
   vendorType: '',
+  category: '',
   status: 'Active',
   gstin: '',
   pan: '',
@@ -21,30 +22,42 @@ const initialVendorProfile = {
 
 const initialPurchaseOrders = [];
 
+const readStored = (key, fallback) => {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    localStorage.removeItem(key);
+    return fallback;
+  }
+};
+
+const formatStatus = (status, fallback = 'Pending') => {
+  if (!status) return fallback;
+  return String(status)
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+};
+
 export const VendorProvider = ({ children }) => {
   const [vendorUser, setVendorUser] = useState(() => {
-    const saved = localStorage.getItem('rayzon_vendor_user');
-    return saved ? JSON.parse(saved) : null;
+    return readStored('rayzon_vendor_user', null);
   });
 
   const [vendorProfile, setVendorProfile] = useState(() => {
-    const saved = localStorage.getItem('rayzon_vendor_profile');
-    return saved ? JSON.parse(saved) : initialVendorProfile;
+    return readStored('rayzon_vendor_profile', initialVendorProfile);
   });
 
   const [purchaseOrders, setPurchaseOrders] = useState(() => {
-    const saved = localStorage.getItem('rayzon_vendor_pos');
-    return saved ? JSON.parse(saved) : initialPurchaseOrders;
+    return readStored('rayzon_vendor_pos', initialPurchaseOrders);
   });
 
   const [invoices, setInvoices] = useState(() => {
-    const saved = localStorage.getItem('rayzon_vendor_invoices');
-    return saved ? JSON.parse(saved) : [];
+    return readStored('rayzon_vendor_invoices', []);
   });
 
   const [advances, setAdvances] = useState(() => {
-    const saved = localStorage.getItem('rayzon_vendor_advances');
-    return saved ? JSON.parse(saved) : [];
+    return readStored('rayzon_vendor_advances', []);
   });
 
   const fetchPortalData = useCallback(async (vendorCode, vendorEmail) => {
@@ -54,44 +67,52 @@ export const VendorProvider = ({ children }) => {
       const res = await apiFetch(`/api/vendors/portal-data?vendorCode=${encodeURIComponent(code)}&email=${encodeURIComponent(mail)}`);
       const json = await res.json();
       if (res.ok && json.success) {
-        if (json.purchaseOrders?.length) {
-          const pos = json.purchaseOrders.map(p => ({
+        const pos = (json.purchaseOrders || []).map(p => ({
             id: p.sapPoNumber || p.poNumber,
             date: p.date || 'Today',
             amount: `₹${(p.totalAmount || 0).toLocaleString('en-IN')}`,
             status: p.status || 'Open',
             currency: p.currency || 'INR',
-            numericAmount: p.totalAmount || 0
+            numericAmount: Number(p.totalAmount) || 0,
+            remainingInvoiceAmount: Number(p.remainingInvoiceAmount) || 0,
+            remainingAdvanceAmount: Number(p.remainingAdvanceAmount) || 0,
+            totalQuantity: Number(p.totalQuantity) || 0,
+            remainingQuantity: Number(p.remainingQuantity) || 0
           }));
-          setPurchaseOrders(pos);
-          localStorage.setItem('rayzon_vendor_pos', JSON.stringify(pos));
-        }
-        if (json.invoices?.length) {
-          const invs = json.invoices.map(i => ({
+        setPurchaseOrders(pos);
+        localStorage.setItem('rayzon_vendor_pos', JSON.stringify(pos));
+
+        const invs = (json.invoices || []).map(i => ({
             id: i.invoicePaymentId || i.invoiceNumber,
             invoiceNumber: i.invoiceNumber,
             poNumber: i.sapPoNumber || i.poId,
             createdAt: i.createdAt ? new Date(i.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today',
             paymentDueDate: i.createdAt ? new Date(new Date(i.createdAt).getTime() + 30*24*60*60*1000).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '30 Days',
-            status: i.status ? (i.status.charAt(0).toUpperCase() + i.status.slice(1)) : 'Pending',
-            invoiceAmount: i.grossAmount ? `₹${Number(i.grossAmount).toLocaleString('en-IN')}` : '₹0',
+            invoiceDate: i.invoiceDate ? new Date(i.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '',
+            status: formatStatus(i.status),
+            invoiceAmount: Number(i.grossAmount) || 0,
+            currency: i.currency || 'INR',
             grnNo: i.grnNumber || 'GRN-001',
             fileName: 'Invoice-Document.pdf'
           }));
-          setInvoices(invs);
-          localStorage.setItem('rayzon_vendor_invoices', JSON.stringify(invs));
-        }
-        if (json.advances?.length) {
-          const advs = json.advances.map(a => ({
+        setInvoices(invs);
+        localStorage.setItem('rayzon_vendor_invoices', JSON.stringify(invs));
+
+        const advs = (json.advances || []).map(a => ({
             id: a.advanceId,
             poNumber: a.sapPoNumber || a.poId,
-            amount: a.amount,
-            status: a.status,
+            amount: Number(a.amount) || 0,
+            currency: a.currency || 'INR',
+            status: formatStatus(a.status),
             createdAt: a.createdAt
+              ? new Date(a.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+              : '',
+            requestedDate: a.createdAt
+              ? new Date(a.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+              : ''
           }));
-          setAdvances(advs);
-          localStorage.setItem('rayzon_vendor_advances', JSON.stringify(advs));
-        }
+        setAdvances(advs);
+        localStorage.setItem('rayzon_vendor_advances', JSON.stringify(advs));
       }
     } catch (e) {
       console.warn('[VENDOR PORTAL FETCH WARN]', e.message);
@@ -161,27 +182,25 @@ export const VendorProvider = ({ children }) => {
       vendorName: vendorProfile.companyName || vendorUser.companyName || 'Vendor',
       requestedBy: vendorProfile.companyName || vendorUser.companyName || 'Vendor',
       grossAmount: Number(newInvoice.invoiceAmount) || 0,
+      invoiceQuantity: Number(newInvoice.invoiceQuantity) || undefined,
+      currency: newInvoice.currency || 'INR',
       gstAmount: Number(newInvoice.cgstAmount || 0) + Number(newInvoice.sgstAmount || 0) + Number(newInvoice.igstAmount || 0),
-      tdsAmount: 0,
-      tdsPercentage: newInvoice.tdsPercentage || '0%',
+      tdsPercentage: Number.parseFloat(newInvoice.tdsPercentage) || 0,
+      tdsAmount: (Number(newInvoice.invoiceAmount) || 0) * (Number.parseFloat(newInvoice.tdsPercentage) || 0) / 100,
       advanceAdjusted: Number(newInvoice.advanceAdjust || 0),
       grnNumber: newInvoice.grnNo,
       remarks: newInvoice.remarks
     };
 
-    let backendInvoiceId = null;
-    try {
-      const res = await apiFetch('/api/p2p/invoices/create', {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      });
-      const json = await res.json();
-      if (res.ok && json.success) {
-        backendInvoiceId = json.data?.invoicePaymentId || json.data?.invoiceNumber;
-      }
-    } catch (e) {
-      console.warn('[VENDOR INVOICE POST ERROR]', e.message);
+    const res = await apiFetch('/api/p2p/invoices/create', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || 'Failed to submit invoice.');
     }
+    const backendInvoiceId = json.data?.invoicePaymentId || json.data?.invoiceNumber;
 
     const invoiceRecord = {
       id: backendInvoiceId || `INV-${Date.now().toString().slice(-6)}`,
@@ -195,37 +214,76 @@ export const VendorProvider = ({ children }) => {
       localStorage.setItem('rayzon_vendor_invoices', JSON.stringify(updated));
       return updated;
     });
+    setPurchaseOrders((prev) => {
+      const updated = prev.map((po) => po.id === newInvoice.poNumber ? {
+        ...po,
+        remainingInvoiceAmount: Math.max(0, Number(po.remainingInvoiceAmount) - Number(newInvoice.invoiceAmount)),
+        remainingQuantity: Math.max(0, Number(po.remainingQuantity) - (Number(newInvoice.invoiceQuantity) || 0))
+      } : po);
+      localStorage.setItem('rayzon_vendor_pos', JSON.stringify(updated));
+      return updated;
+    });
     return invoiceRecord;
   };
 
-  const addAdvanceRequest = (newAdvance) => {
+  const addAdvanceRequest = async (newAdvance) => {
+    const res = await apiFetch('/api/p2p/advances/create', {
+      method: 'POST',
+      body: JSON.stringify({
+        poNumber: newAdvance.poNumber,
+        vendorName: vendorProfile.companyName || vendorUser?.companyName || 'Vendor',
+        vendorCode: vendorProfile.sapVendorCode || vendorUser?.sapVendorCode,
+        amount: Number(newAdvance.amount),
+        currency: newAdvance.currency || 'INR',
+        remarks: newAdvance.reason || '',
+        requestedBy: vendorProfile.companyName || vendorUser?.companyName || 'Vendor'
+      })
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || 'Failed to submit advance payment request.');
+    }
+
     const advanceRecord = {
-      id: `ADV-${Date.now().toString().slice(-6)}`,
+      id: json.data?.advanceId || `ADV-${Date.now().toString().slice(-6)}`,
       createdAt: new Date().toISOString(),
-      status: 'In Progress',
-      ...newAdvance
+      status: formatStatus(json.data?.status),
+      ...newAdvance,
+      amount: Number(newAdvance.amount)
     };
-    setAdvances((prev) => [advanceRecord, ...prev]);
+    setAdvances((prev) => {
+      const updated = [advanceRecord, ...prev];
+      localStorage.setItem('rayzon_vendor_advances', JSON.stringify(updated));
+      return updated;
+    });
+    setPurchaseOrders((prev) => {
+      const updated = prev.map((po) => po.id === newAdvance.poNumber ? {
+        ...po,
+        remainingAdvanceAmount: Math.max(0, Number(po.remainingAdvanceAmount) - Number(newAdvance.amount))
+      } : po);
+      localStorage.setItem('rayzon_vendor_pos', JSON.stringify(updated));
+      return updated;
+    });
     return advanceRecord;
   };
 
   const updateProfile = async (updatedFields) => {
-    const updated = { ...vendorProfile, ...updatedFields };
-    setVendorProfile(updated);
-    if (vendorUser) {
-      setVendorUser((prev) => ({ ...prev, ...updatedFields }));
+    const vId = vendorProfile.sapVendorCode || vendorProfile.id;
+    if (!vId) throw new Error('Vendor account identifier is missing.');
+    const res = await apiFetch(`/api/vendors/${vId}`, {
+      method: 'PUT',
+      body: JSON.stringify(updatedFields)
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || 'Failed to update vendor profile.');
     }
-    localStorage.setItem('rayzon_vendor_profile', JSON.stringify(updated));
 
-    try {
-      const vId = vendorProfile.sapVendorCode || vendorProfile.id || '20000201';
-      await apiFetch(`/api/vendors/${vId}`, {
-        method: 'PUT',
-        body: JSON.stringify(updatedFields)
-      });
-    } catch (e) {
-      console.warn('[UPDATE VENDOR PROFILE API ERROR]', e.message);
-    }
+    const updated = { ...vendorProfile, ...updatedFields, ...(json.vendor || {}) };
+    setVendorProfile(updated);
+    if (vendorUser) setVendorUser((prev) => ({ ...prev, ...updatedFields }));
+    localStorage.setItem('rayzon_vendor_profile', JSON.stringify(updated));
+    return updated;
   };
 
   const changePassword = async (currentPassword, newPassword) => {

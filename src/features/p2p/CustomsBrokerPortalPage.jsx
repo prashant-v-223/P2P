@@ -1,367 +1,56 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, CheckCircle2, Clock, FileText, Loader2, LogOut, Search, ShieldCheck, Ship, Upload } from 'lucide-react';
 import { useCustomAgent } from '../customAgentPortal/customAgentContext';
 import { useToast } from '../../components/ui/toast';
-import { 
-  Ship, 
-  Clock, 
-  CheckCircle2, 
-  Upload, 
-  ShieldCheck, 
-  LogOut, 
-  Loader2, 
-  X,
-  FileCheck2
-} from 'lucide-react';
+
+const inputClass = 'w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs outline-none focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-100';
+const statusText = (value) => ({ assigned_to_agent: 'With Customs Agent', material_received: 'Material Received', custom_cleared: 'Customs Cleared' }[value] || String(value || '').replaceAll('_', ' '));
+const dateText = (value) => value ? new Date(value).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+
+function PortalShell({ children }) {
+  const navigate = useNavigate(); const location = useLocation(); const { agentUser, logoutAgent } = useCustomAgent();
+  const base = '/customs-agent';
+  const logout = () => { logoutAgent(); navigate(`${base}/login`); };
+  const links = [{ label: 'Dashboard', to: `${base}/dashboard` }, { label: 'BL Assignments', to: `${base}/bl-entries` }, { label: 'Profile', to: `${base}/profile` }];
+  return <div className="min-h-screen bg-slate-50 pb-14 text-slate-800"><header className="sticky top-0 z-40 border-b bg-white"><div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4"><div className="flex items-center gap-8"><button onClick={() => navigate(`${base}/dashboard`)} className="flex items-center gap-2"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#0d7676] font-extrabold text-white">R</span><strong>RAYZON <span className="font-medium text-[#0d7676]">SOLAR</span></strong></button><nav className="hidden gap-1 rounded-xl bg-slate-100 p-1 md:flex">{links.map((item) => <Link key={item.to} to={item.to} className={`rounded-lg px-3 py-2 text-xs font-bold ${location.pathname === item.to || (item.label === 'BL Assignments' && location.pathname.includes('/bl-entries')) ? 'bg-white text-[#0d7676] shadow-sm' : 'text-slate-600'}`}>{item.label}</Link>)}</nav></div><div className="flex items-center gap-3"><span className="hidden text-xs font-bold sm:block">{agentUser?.contactPerson || agentUser?.email}</span><button onClick={logout} className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-bold text-rose-600"><LogOut className="h-4 w-4" />Sign Out</button></div></div></header><main className="mx-auto max-w-6xl px-4 pt-6">{children}</main></div>;
+}
+
+function Dashboard() {
+  const { agentUser, assignedBls, fetchAssignedBls } = useCustomAgent(); const [loading, setLoading] = useState(false); const [error, setError] = useState('');
+  const refresh = async () => { setLoading(true); setError(''); try { await fetchAssignedBls(agentUser.agentId); } catch (e) { setError(e.message); } finally { setLoading(false); } };
+  const cleared = assignedBls.filter((item) => item.status === 'custom_cleared').length;
+  return <div className="space-y-5"><section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#0d7676] to-[#0f766e] p-8 text-white shadow-md"><p className="text-xs font-bold uppercase text-teal-100">Customs Broker Portal</p><h1 className="mt-1 text-3xl font-extrabold">{agentUser.contactPerson || 'Customs Agent'}</h1><p className="text-xs text-teal-100">{agentUser.agencyName}</p><ShieldCheck className="absolute -bottom-12 right-4 h-44 w-44 opacity-15" /></section>{error && <div className="rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</div>}<div className="grid gap-4 md:grid-cols-3">{[['Total Assigned', assignedBls.length, Ship, 'text-sky-600'], ['Pending Clearance', assignedBls.length - cleared, Clock, 'text-amber-600'], ['Customs Cleared', cleared, CheckCircle2, 'text-emerald-600']].map(([label, count, Icon, color]) => <div key={label} className="flex items-center justify-between rounded-2xl border bg-white p-5 shadow-sm"><div><p className="text-[10px] font-extrabold uppercase text-slate-400">{label}</p><p className={`mt-1 text-2xl font-black ${color}`}>{count}</p></div><Icon className={`h-6 w-6 ${color}`} /></div>)}</div><section className="overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="flex items-center justify-between border-b p-5"><div><h2 className="text-sm font-extrabold">Recent BL Assignments</h2><p className="text-xs text-slate-500">Your latest customs-clearance work.</p></div><button onClick={refresh} disabled={loading} className="rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white">{loading ? 'Refreshing...' : 'Refresh'}</button></div>{assignedBls.slice(0, 5).map((bl) => <Link key={bl.blId} to={`/customs-agent/bl-entries/${bl.blId}`} className="flex items-center justify-between border-b p-5 text-xs last:border-0 hover:bg-slate-50"><div><strong>{bl.blNumber}</strong><p className="mt-1 text-slate-500">{bl.vendorName || 'Vendor'} · {bl.containerCount} containers</p></div><span className={`rounded-full px-2 py-1 font-bold ${bl.status === 'custom_cleared' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{statusText(bl.status)}</span></Link>)}{!assignedBls.length && <div className="p-12 text-center text-xs text-slate-400">No assigned BL entries.</div>}</section></div>;
+}
+
+function AssignmentList() {
+  const { agentUser, assignedBls, fetchAssignedBls } = useCustomAgent(); const [query, setQuery] = useState(''); const [status, setStatus] = useState(''); const [loading, setLoading] = useState(true); const [error, setError] = useState('');
+  useEffect(() => { fetchAssignedBls(agentUser.agentId).catch((e) => setError(e.message)).finally(() => setLoading(false)); }, [agentUser.agentId, fetchAssignedBls]);
+  const filtered = useMemo(() => assignedBls.filter((bl) => (!status || bl.status === status) && [bl.blNumber, bl.rfqNumber, bl.rfqId, bl.vendorName].some((value) => String(value || '').toLowerCase().includes(query.toLowerCase()))), [assignedBls, query, status]);
+  return <div className="space-y-4"><div><h1 className="text-xl font-extrabold">BL Clearance Assignments</h1><p className="text-xs text-slate-500">BL entries assigned to your customs-agent account.</p></div>{error && <div className="rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</div>}<section className="overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="flex gap-2 border-b p-4"><label className="flex w-72 items-center gap-2 rounded-lg border bg-slate-50 px-3"><Search className="h-4 w-4 text-slate-400" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search reference, vendor..." className="w-full bg-transparent py-2.5 text-xs outline-none" /></label><select value={status} onChange={(e) => setStatus(e.target.value)} className="w-44 rounded-lg border bg-slate-50 px-3 text-xs"><option value="">All Status</option><option value="assigned_to_agent">With Customs Agent</option><option value="custom_cleared">Customs Cleared</option></select></div>{loading ? <div className="p-12"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></div> : <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th className="px-4 py-3">#</th><th>BL Number</th><th>RFQ</th><th>Vendor</th><th>Containers</th><th>BOE</th><th>Status</th><th>Assigned</th><th className="px-4">Actions</th></tr></thead><tbody>{filtered.map((bl, index) => <tr key={bl.blId} className="border-t"><td className="px-4 py-4 text-slate-400">{index + 1}</td><td className="font-bold">{bl.blNumber}</td><td>{bl.rfqNumber || bl.rfqId}</td><td>{bl.vendorName || '—'}</td><td>{bl.containerCount}</td><td>{bl.boeNumber || '—'}</td><td><span className="rounded-full bg-teal-50 px-2 py-1 font-bold text-[#0d7676]">{statusText(bl.status)}</span></td><td>{dateText(bl.assignedAt)}</td><td className="px-4"><Link to={`/customs-agent/bl-entries/${bl.blId}`} className="rounded-lg border px-3 py-2 font-bold">View</Link></td></tr>)}</tbody></table>{!filtered.length && <div className="p-12 text-center text-xs text-slate-400">No assignments found.</div>}</div>}</section></div>;
+}
+
+function AssignmentDetail({ blId }) {
+  const { showToast } = useToast(); const { fetchAssignedBl, fetchAssignedBls, uploadBoe, uploadCustomsDocument, markAsCleared, agentUser } = useCustomAgent();
+  const [bl, setBl] = useState(null); const [error, setError] = useState(''); const [saving, setSaving] = useState(false); const [boe, setBoe] = useState({ boeNumber: '', dutyAmount: '' }); const [boeFile, setBoeFile] = useState(null); const [docType, setDocType] = useState(''); const [docFile, setDocFile] = useState(null); const [notes, setNotes] = useState('');
+  const load = async () => { try { const next = await fetchAssignedBl(blId); setBl(next); setBoe({ boeNumber: next.boeNumber || '', dutyAmount: next.dutyAmount || '' }); setError(''); } catch (e) { setError(e.message); } };
+  useEffect(() => { load(); }, [blId]);
+  const saveBoe = async (event) => { event.preventDefault(); const hasExistingBoeDocument = bl.documents?.some((doc) => doc.docType === 'Customs Bill of Entry'); if (!boe.boeNumber.trim()) return setError('BOE Number is required.'); if (!boeFile && !hasExistingBoeDocument) return setError('BOE document is required.'); setSaving(true); setError(''); try { await uploadBoe(bl.blId, { ...boe, dutyAmount: Number(boe.dutyAmount) || 0, fileName: boeFile?.name || '' }); showToast({ type: 'success', title: 'BOE Saved', description: 'The Bill of Entry number and document are now linked to this BL.' }); setBoeFile(null); await load(); } catch (e) { setError(e.message); } finally { setSaving(false); } };
+  const saveDocument = async () => { if (!docType || !docFile) return setError('Select a customs document type and file.'); setSaving(true); setError(''); try { await uploadCustomsDocument(bl.blId, { docType, fileName: docFile.name }); setDocType(''); setDocFile(null); showToast({ type: 'success', title: 'Document Uploaded' }); await load(); } catch (e) { setError(e.message); } finally { setSaving(false); } };
+  const clear = async () => { const hasBoe = bl.documents?.some((doc) => doc.docType === 'Customs Bill of Entry'); if (!hasBoe) return setError('Upload the BOE document before customs clearance.'); if (!window.confirm(`Confirm customs clearance for BL ${bl.blNumber}? This locks customs documents.`)) return; setSaving(true); setError(''); try { await markAsCleared(bl.blId, notes); await fetchAssignedBls(agentUser.agentId); showToast({ type: 'success', title: 'Customs Cleared', description: 'The vendor can now submit logistics invoices.' }); await load(); } catch (e) { setError(e.message); } finally { setSaving(false); } };
+  if (!bl) return <div className="p-12 text-center">{error || <Loader2 className="mx-auto h-5 w-5 animate-spin" />}</div>; const cleared = bl.status === 'custom_cleared'; const hasBoeDocument = bl.documents?.some((doc) => doc.docType === 'Customs Bill of Entry'); if (!bl.boeNumber && hasBoeDocument) bl.boeNumber = 'Document on file';
+  return <div className="space-y-4"><Link to="/customs-agent/bl-entries" className="inline-flex items-center gap-1 text-xs font-bold text-[#0d7676]"><ArrowLeft className="h-4 w-4" />BL Assignments</Link><div><h1 className="text-xl font-extrabold">BL: {bl.blNumber}</h1><p className="text-xs text-slate-500">{bl.rfqNumber || bl.rfqId} · {bl.vendorName} · {bl.containerCount} containers</p></div>{error && <div className="rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</div>}<section className="grid gap-4 rounded-2xl border bg-white p-5 text-xs shadow-sm sm:grid-cols-3"><div><p className="text-slate-400">Assigned At</p><strong>{dateText(bl.assignedAt)}</strong></div><div><p className="text-slate-400">BOE Number</p><strong>{bl.boeNumber || 'Not uploaded'}</strong></div><div><p className="text-slate-400">Customs Cleared</p><strong className={cleared ? 'text-emerald-700' : 'text-amber-700'}>{cleared ? dateText(bl.customsClearedAt) : 'Pending'}</strong></div></section>{!cleared && <form onSubmit={saveBoe} className="rounded-2xl border border-teal-200 bg-white p-5 shadow-sm"><h2 className="text-sm font-extrabold">Upload Bill of Entry (BOE)</h2><p className="mt-1 text-xs text-slate-500">A saved BOE number and document are mandatory before clearance.</p><div className="mt-4 grid gap-3 sm:grid-cols-3"><input value={boe.boeNumber} onChange={(e) => setBoe({ ...boe, boeNumber: e.target.value })} placeholder="BOE number" className={inputClass} /><input type="number" min="0" value={boe.dutyAmount} onChange={(e) => setBoe({ ...boe, dutyAmount: e.target.value })} placeholder="Duty amount (INR)" className={inputClass} /><input type="file" onChange={(e) => setBoeFile(e.target.files?.[0] || null)} className={inputClass} /></div><button disabled={saving} className="mt-3 rounded-lg bg-[#0d7676] px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50">Save BOE</button></form>}<section className="overflow-hidden rounded-2xl border bg-white shadow-sm"><h2 className="border-b px-5 py-4 text-sm font-extrabold">Documents ({bl.documents?.length || 0})</h2>{bl.documents?.map((doc, index) => <div key={`${doc.fileUrl}-${index}`} className="flex items-center justify-between border-b px-5 py-3 text-xs last:border-0"><span className="flex items-center gap-2"><FileText className="h-4 w-4 text-[#0d7676]" />{doc.docType}</span><span className="text-slate-500">{doc.fileUrl}</span><span className="text-slate-400">{dateText(doc.uploadedAt)}</span></div>)}</section>{!cleared && <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-sm font-extrabold">Upload Customs Documents</h2><div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr_auto]"><select value={docType} onChange={(e) => setDocType(e.target.value)} className={inputClass}><option value="">Select type</option><option>Duty Calculation</option><option>Assessment Order</option><option>Examination Report</option><option>Out of Charge</option><option>Other Customs Document</option></select><input type="file" onChange={(e) => setDocFile(e.target.files?.[0] || null)} className={inputClass} /><button onClick={saveDocument} type="button" disabled={saving || !docType || !docFile} className="rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">Upload</button></div></section>}<section className={`rounded-2xl border p-5 ${cleared ? 'border-emerald-200 bg-emerald-50' : 'border-teal-200 bg-teal-50'}`}><h2 className="text-sm font-extrabold">{cleared ? 'Customs Clearance Completed' : 'Mark as Customs Cleared'}</h2>{cleared ? <p className="mt-2 text-xs text-emerald-700">Clearance completed. Vendor logistics invoicing is enabled.</p> : <><p className="mt-1 text-xs text-slate-600">Review all documents before confirming. This action locks customs uploads.</p><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Clearance notes (optional)" className={`${inputClass} mt-3`} /><button onClick={clear}  className="mt-3 rounded-lg bg-[#0d7676] px-4 py-2.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><CheckCircle2 className="mr-1 inline h-4 w-4" />Confirm Customs Cleared</button>{!bl.boeNumber && <p className="mt-2 text-xs font-semibold text-amber-700">Upload the BOE before marking this BL as cleared.</p>}</>}</section></div>;
+}
+
+function Profile() { const { agentUser } = useCustomAgent(); return <div className="space-y-4"><h1 className="text-xl font-extrabold">My Profile</h1><section className="grid gap-5 rounded-2xl border bg-white p-6 text-xs shadow-sm sm:grid-cols-2">{[['Agency', agentUser.agencyName], ['Contact Person', agentUser.contactPerson], ['Email', agentUser.email], ['Phone', agentUser.phone], ['Port Location', agentUser.portLocation], ['Licence Number', agentUser.licenceNumber], ['Status', agentUser.status]].map(([label, value]) => <div key={label}><p className="text-slate-400">{label}</p><strong>{value || '—'}</strong></div>)}</section></div>; }
 
 export default function CustomsBrokerPortalPage() {
-  const navigate = useNavigate();
-  const { showToast } = useToast();
-  const { agentUser, assignedBls, fetchAssignedBls, uploadBoe, markAsCleared, logoutAgent } = useCustomAgent();
-
-  const [loading, setLoading] = useState(true);
-  const [selectedBl, setSelectedBl] = useState(null);
-  const [showBoeModal, setShowBoeModal] = useState(false);
-  const [boeNumber, setBoeNumber] = useState('');
-  const [dutyAmount, setDutyAmount] = useState('');
-  const [submittingBoe, setSubmittingBoe] = useState(false);
-
-  // Redirect to login if not authenticated
-  useEffect(() => {
-    if (!agentUser || !agentUser.isLoggedIn) {
-      navigate('/customs-agent/login');
-    }
-  }, [agentUser, navigate]);
-
-  useEffect(() => {
-    if (agentUser?.isLoggedIn) {
-      setLoading(true);
-      fetchAssignedBls(agentUser.agentId)
-        .finally(() => setLoading(false));
-    }
-  }, [agentUser?.isLoggedIn, agentUser?.agentId, fetchAssignedBls]);
-
-  const handleUploadBoeSubmit = async (e) => {
-    e.preventDefault();
-    if (!boeNumber.trim()) {
-      showToast({ title: 'Error', description: 'BOE Number is required.', type: 'error' });
-      return;
-    }
-    setSubmittingBoe(true);
-    try {
-      await uploadBoe(selectedBl.blId, {
-        boeNumber,
-        dutyAmount: Number(dutyAmount) || 0,
-        fileName: `BOE-${boeNumber.trim()}.pdf`
-      });
-      
-      showToast({
-        title: 'BOE Uploaded',
-        description: `Bill of Entry ${boeNumber} uploaded successfully.`,
-        type: 'success'
-      });
-      setShowBoeModal(false);
-      setBoeNumber('');
-      setDutyAmount('');
-    } catch (err) {
-      showToast({ title: 'Error', description: err.message, type: 'error' });
-    } finally {
-      setSubmittingBoe(false);
-    }
-  };
-
-  const handleMarkAsCleared = async (bl) => {
-    if (!window.confirm(`Confirm marking BL ${bl.blNumber} as Customs Cleared?`)) return;
-    try {
-      await markAsCleared(bl.blId);
-      showToast({
-        title: 'Customs Cleared!',
-        description: 'BL marked as cleared. Invoicing options enabled for Agent & Vendors.',
-        type: 'success'
-      });
-    } catch (err) {
-      showToast({ title: 'Error', description: err.message, type: 'error' });
-    }
-  };
-
-  const handleLogout = () => {
-    logoutAgent();
-    navigate('/customs-agent/login');
-  };
-
-  // Calculate metrics from assignedBls
-  const totalAssigned = assignedBls.length;
-  const pendingClearance = assignedBls.filter(bl => bl.status !== 'custom_cleared').length;
-  const customCleared = assignedBls.filter(bl => bl.status === 'custom_cleared').length;
-
-  // If not logged in, return null (redirect will handle navigation)
-  if (!agentUser || !agentUser.isLoggedIn) {
-    return null;
-  }
-
-  return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 antialiased pb-16 text-left">
-      {/* Top Navbar Matching Screenshot 4 */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-xs">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-[#0d7676] text-white flex items-center justify-center font-extrabold text-sm">
-                R
-              </div>
-              <span className="text-base font-extrabold text-slate-900 tracking-tight">
-                RAYZON <span className="text-[#0d7676] font-medium">SOLAR</span>
-              </span>
-            </div>
-
-            <nav className="hidden md:flex items-center gap-1 bg-slate-100/70 p-1 rounded-xl">
-              <button className="px-3 py-1.5 bg-white text-[#0d7676] font-bold text-xs rounded-lg shadow-2xs">
-                Dashboard
-              </button>
-              <button className="px-3 py-1.5 text-slate-600 hover:text-slate-900 font-semibold text-xs rounded-lg transition">
-                BL Assignments
-              </button>
-              <button className="px-3 py-1.5 text-slate-600 hover:text-slate-900 font-semibold text-xs rounded-lg transition">
-                Profile
-              </button>
-            </nav>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-bold text-slate-700 hidden sm:inline-block">
-              {agentUser?.contactPerson || agentUser?.email || 'Agent'}
-            </span>
-            <button
-              onClick={handleLogout}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Sign Out</span>
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content Body */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 space-y-6">
-        {/* Banner Card Matching Screenshot 4 */}
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#0d7676] to-[#0f766e] text-white p-6 sm:p-8 shadow-md">
-          <div className="relative z-10 space-y-1">
-            <span className="text-xs font-bold uppercase tracking-wider text-teal-200">
-              Customs Broker Portal
-            </span>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              {agentUser?.contactPerson || 'Agent'}
-            </h1>
-            <p className="text-xs font-medium text-teal-100">
-              {agentUser?.agencyName || agentUser?.email || 'Custom Agent Portal'}
-            </p>
-          </div>
-          <div className="absolute -right-8 -bottom-10 opacity-15 pointer-events-none">
-            <ShieldCheck className="w-64 h-64 text-white" />
-          </div>
-        </div>
-
-        {/* 3 Metric Cards Matching Screenshot 4 */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-2xs flex items-center justify-between">
-            <div className="space-y-1">
-              <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
-                TOTAL ASSIGNED
-              </span>
-              <p className="text-2xl font-black text-slate-900">{totalAssigned}</p>
-              <p className="text-[11px] text-slate-400 font-medium">BL entries assigned to you</p>
-            </div>
-            <div className="w-10 h-10 rounded-2xl bg-sky-50 text-sky-600 flex items-center justify-center border border-sky-100 shrink-0">
-              <Ship className="w-5 h-5" />
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl p-5 border border-amber-200/80 bg-amber-50/20 shadow-2xs flex items-center justify-between">
-            <div className="space-y-1">
-              <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-700">
-                PENDING CLEARANCE
-              </span>
-              <p className="text-2xl font-black text-amber-700">{pendingClearance}</p>
-              <p className="text-[11px] text-amber-600 font-medium">Awaiting your action</p>
-            </div>
-            <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center border border-amber-200 shrink-0">
-              <Clock className="w-5 h-5" />
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl p-5 border border-emerald-200/80 bg-emerald-50/20 shadow-2xs flex items-center justify-between">
-            <div className="space-y-1">
-              <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-700">
-                CUSTOM CLEARED
-              </span>
-              <p className="text-2xl font-black text-emerald-700">{customCleared}</p>
-              <p className="text-[11px] text-emerald-600 font-medium">Successfully cleared</p>
-            </div>
-            <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center border border-emerald-200 shrink-0">
-              <CheckCircle2 className="w-5 h-5" />
-            </div>
-          </div>
-        </div>
-
-        {/* Section Card: BL Clearance Assignments Matching Screenshot 4 */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
-          <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-bold text-slate-900">BL Clearance Assignments</h2>
-              <p className="text-xs text-slate-500 font-medium mt-0.5">
-                View and manage your assigned Bill of Lading entries
-              </p>
-            </div>
-            <button
-              onClick={() => fetchAssignedBls(agentUser?.agentId)}
-              className="px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition"
-            >
-              Refresh →
-            </button>
-          </div>
-
-          {loading ? (
-            <div className="py-16 flex flex-col items-center justify-center text-center space-y-2">
-              <Loader2 className="w-7 h-7 animate-spin text-[#0d7676]" />
-              <p className="text-xs font-semibold text-slate-600">Loading assignments...</p>
-            </div>
-          ) : assignedBls.length === 0 ? (
-            <div className="py-16 text-center text-xs font-medium text-slate-400">
-              No BL clearance assignments assigned to your agent account.
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-100">
-              {assignedBls.map((bl) => {
-                const isCleared = bl.status === 'custom_cleared';
-                return (
-                  <div key={bl.blId} className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50/70 transition">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-bold text-slate-900">{bl.blNumber}</span>
-                        <span className="text-[10px] font-mono text-slate-400">({bl.blId})</span>
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border ${
-                            isCleared
-                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                              : 'bg-amber-50 text-amber-700 border-amber-200'
-                          }`}
-                        >
-                          {isCleared ? 'CUSTOM CLEARED' : 'PENDING CLEARANCE'}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-600 font-medium">
-                        Vessel: <span className="font-bold text-slate-800">{bl.vesselName || 'EVER GIVEN V-104E'}</span> • Shipping Line: <span className="font-bold text-slate-800">{bl.shippingLine || 'MSC'}</span>
-                      </p>
-                      <p className="text-[11px] text-slate-400">
-                        Containers: <span className="font-bold text-slate-700">{bl.containerCount || 1} x 40FT</span>
-                      </p>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        onClick={() => {
-                          setSelectedBl(bl);
-                          setShowBoeModal(true);
-                        }}
-                        className="px-3.5 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl shadow-2xs transition inline-flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Upload className="w-3.5 h-3.5 text-[#0d7676]" />
-                        <span>Upload BOE</span>
-                      </button>
-
-                      {!isCleared ? (
-                        <button
-                          onClick={() => handleMarkAsCleared(bl)}
-                          className="px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition inline-flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>Mark as Customs Cleared</span>
-                        </button>
-                      ) : (
-                        <span className="px-3 py-1.5 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-xl inline-flex items-center gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Cleared & Invoicing Enabled
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </main>
-
-      {/* Upload BOE Modal */}
-      {showBoeModal && selectedBl && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full space-y-4 shadow-xl border border-slate-100">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <FileCheck2 className="w-4 h-4 text-[#0d7676]" />
-                Upload Bill of Entry (BOE)
-              </h3>
-              <button onClick={() => setShowBoeModal(false)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleUploadBoeSubmit} className="space-y-4">
-              <div className="space-y-1">
-                <p className="text-xs text-slate-500 font-medium">BL Number: <span className="font-mono font-bold text-slate-900">{selectedBl.blNumber}</span></p>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-slate-700">BOE Number *</label>
-                <input
-                  type="text"
-                  required
-                  value={boeNumber}
-                  onChange={(e) => setBoeNumber(e.target.value)}
-                  placeholder="e.g. BOE-8902145"
-                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#0d7676]"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-slate-700">Duty Amount (INR)</label>
-                <input
-                  type="number"
-                  value={dutyAmount}
-                  onChange={(e) => setDutyAmount(e.target.value)}
-                  placeholder="e.g. 450000"
-                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#0d7676]"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-slate-700">Attach Document</label>
-                <input
-                  type="file"
-                  className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-teal-50 file:text-[#0d7676]"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowBoeModal(false)}
-                  className="px-4 py-2 border border-slate-200 text-xs font-semibold text-slate-600 rounded-xl hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submittingBoe}
-                  className="px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white text-xs font-bold uppercase rounded-xl shadow-xs"
-                >
-                  {submittingBoe ? 'Uploading...' : 'Save BOE'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  const navigate = useNavigate(); const location = useLocation(); const { blId } = useParams(); const { agentUser } = useCustomAgent();
+  useEffect(() => { if (!agentUser?.isLoggedIn) navigate('/customs-agent/login', { replace: true }); }, [agentUser, navigate]);
+  if (!agentUser?.isLoggedIn) return null;
+  let content = <Dashboard />;
+  if (location.pathname.includes('/bl-entries/')) content = <AssignmentDetail blId={blId} />;
+  else if (location.pathname.endsWith('/bl-entries')) content = <AssignmentList />;
+  else if (location.pathname.endsWith('/profile')) content = <Profile />;
+  return <PortalShell>{content}</PortalShell>;
 }

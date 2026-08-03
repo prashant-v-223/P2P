@@ -58,9 +58,11 @@ export default function CreateAdvancePaymentWizard() {
           supplierId:   p.supplierId   || '',
           totalAmount:  p.totalAmount  || 0,
           advancePaid:  p.advancePaid  || 0,
+          advanceCommitted: p.advanceCommitted || 0,
+          remainingAdvanceAmount: Number(p.remainingAdvanceAmount ?? p.totalAmount) || 0,
           currency:     p.currency     || 'INR',
           status:       p.status       || 'open',
-        })));
+        })).filter((p) => !['closed', 'cancelled', 'canceled', 'blocked'].includes(String(p.status).toLowerCase())));
       } catch (e) { console.error(e); } finally { setLoadingPos(false); }
     })();
   }, []);
@@ -77,7 +79,7 @@ export default function CreateAdvancePaymentWizard() {
 
   const poValue          = selectedPo?.totalAmount || 0;
   const advancePaid      = selectedPo?.advancePaid || 0;
-  const availableBalance = Math.max(0, poValue - advancePaid);
+  const availableBalance = selectedPo ? Number(selectedPo.remainingAdvanceAmount) : 0;
 
   const calculatedAmount = useMemo(() => {
     if (!selectedPo) return 0;
@@ -116,7 +118,7 @@ export default function CreateAdvancePaymentWizard() {
     if (step === 1 && !selectedPo)                                          e.po     = 'Please select a Purchase Order.';
     if (step === 2 && calculatedAmount <= 0)                                e.amount = 'Amount must be greater than ₹0.';
     if (step === 2 && calculatedAmount > availableBalance)                  e.amount = `Exceeds available balance ₹${fmt(availableBalance)}.`;
-    if (step === 2 && (!reason.trim() || reason.trim().length < 5))         e.reason = 'Please enter a reason (min 5 chars).';
+    if (step === 2 && (!reason.trim() || reason.trim().length < 10))        e.reason = 'Please enter a reason (min 10 chars).';
     if (step === 3 && documents.length === 0)                               e.docs   = 'At least one supporting document is required.';
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -139,6 +141,7 @@ export default function CreateAdvancePaymentWizard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ poNumber: selectedPo.poNumber, vendorName: selectedPo.supplierName,
           vendorCode: selectedPo.supplierId, amount: calculatedAmount, percentageOfPo: calculatedPct,
+          currency: selectedPo.currency,
           cgst: cgstAmount, sgst: sgstAmount, igst: igstAmount, totalGst: totalGstAmount,
           grandTotal, paymentMode, bankName, remarks: reason,
           requestedBy: user?.name || user?.email || 'Finance Team' }),

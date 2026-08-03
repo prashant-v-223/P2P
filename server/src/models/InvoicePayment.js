@@ -10,6 +10,7 @@ const invoicePaymentSchema = new mongoose.Schema({
   asnNumber:        { type: String, default: '' },
   invoiceDate:      { type: Date, default: Date.now },
   grossAmount:      { type: Number, required: true },
+  currency:         { type: String, default: 'INR', uppercase: true, trim: true },
   gstAmount:        { type: Number, default: 0 },
   tdsAmount:        { type: Number, default: 0 },
   tdsPercentage:    { type: Number, default: 0 },

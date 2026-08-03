@@ -1,12 +1,22 @@
 // Centralized API Client Service with Automatic JWT Bearer Headers, Multi-Port Fallback & Silent Token Refresh
 
-const getAccessToken = () => 
-  localStorage.getItem('rayzon_access_token') || 
-  sessionStorage.getItem('rayzon_access_token') || 
-  localStorage.getItem('rayzon_token') ||
-  localStorage.getItem('rayzon_vendor_token') ||
-  localStorage.getItem('rayzon_agent_token');
-const getRefreshToken = () => localStorage.getItem('rayzon_refresh_token') || sessionStorage.getItem('rayzon_refresh_token');
+const getAccessToken = () => {
+  const path = window.location.pathname;
+  if (path.startsWith('/vendor')) {
+    return localStorage.getItem('rayzon_vendor_token');
+  }
+  if (path.startsWith('/customs') || path.startsWith('/agent')) {
+    return localStorage.getItem('rayzon_agent_token');
+  }
+  return localStorage.getItem('rayzon_access_token') ||
+    sessionStorage.getItem('rayzon_access_token') ||
+    localStorage.getItem('rayzon_token');
+};
+const getRefreshToken = () => {
+  const path = window.location.pathname;
+  if (path.startsWith('/vendor') || path.startsWith('/customs') || path.startsWith('/agent')) return null;
+  return localStorage.getItem('rayzon_refresh_token') || sessionStorage.getItem('rayzon_refresh_token');
+};
 
 export const apiFetch = async (url, options = {}) => {
   const token = getAccessToken();
@@ -63,8 +73,9 @@ export const apiFetch = async (url, options = {}) => {
 
       if (refreshRes.ok) {
         const refreshData = await refreshRes.json();
-        localStorage.setItem('rayzon_access_token', refreshData.accessToken);
-        localStorage.setItem('rayzon_refresh_token', refreshData.refreshToken);
+        const storage = sessionStorage.getItem('rayzon_refresh_token') ? sessionStorage : localStorage;
+        storage.setItem('rayzon_access_token', refreshData.accessToken);
+        storage.setItem('rayzon_refresh_token', refreshData.refreshToken);
 
         headers['Authorization'] = `Bearer ${refreshData.accessToken}`;
         res = await fetch(url, { ...requestOptions, headers });

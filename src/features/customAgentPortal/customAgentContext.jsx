@@ -18,18 +18,19 @@ export const CustomAgentProvider = ({ children }) => {
     try {
       const res = await apiFetch('/api/p2p/customs-agent/assigned');
       const json = await res.json();
-      if (res.ok && json.success) {
-        setAssignedBls(json.assignments || []);
-        localStorage.setItem('rayzon_agent_bls', JSON.stringify(json.assignments || []));
-      }
+      if (!res.ok || !json.success) throw new Error(json.error || 'Unable to load BL assignments.');
+      setAssignedBls(json.assignments || []);
+      localStorage.setItem('rayzon_agent_bls', JSON.stringify(json.assignments || []));
+      return json.assignments || [];
     } catch (e) {
       console.warn('[AGENT PORTAL FETCH WARN]', e.message);
+      throw e;
     }
   }, []);
 
   useEffect(() => {
     if (agentUser?.isLoggedIn) {
-      fetchAssignedBls(agentUser.agentId);
+      fetchAssignedBls(agentUser.agentId).catch(() => {});
     }
   }, [agentUser?.isLoggedIn, fetchAssignedBls]);
 
@@ -90,11 +91,11 @@ export const CustomAgentProvider = ({ children }) => {
     }
   };
 
-  const markAsCleared = async (blId) => {
+  const markAsCleared = async (blId, notes = '') => {
     try {
       const res = await apiFetch('/api/p2p/customs-agent/clear', {
         method: 'POST',
-        body: JSON.stringify({ blId })
+        body: JSON.stringify({ blId, notes })
       });
       const json = await res.json();
       if (res.ok && json.success) {
@@ -105,6 +106,21 @@ export const CustomAgentProvider = ({ children }) => {
     } catch (err) {
       throw err;
     }
+  };
+
+  const fetchAssignedBl = async (blId) => {
+    const res = await apiFetch(`/api/p2p/customs-agent/assigned/${blId}`);
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.error || 'Unable to load the assigned BL.');
+    return json.data;
+  };
+
+  const uploadCustomsDocument = async (blId, document) => {
+    const res = await apiFetch('/api/p2p/customs-agent/documents', { method: 'POST', body: JSON.stringify({ blId, ...document }) });
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.error || 'Customs document upload failed.');
+    await fetchAssignedBls(agentUser?.agentId);
+    return json.data;
   };
 
   const changePassword = async (currentPassword, newPassword) => {
@@ -137,6 +153,8 @@ export const CustomAgentProvider = ({ children }) => {
         logoutAgent,
         uploadBoe,
         markAsCleared,
+        fetchAssignedBl,
+        uploadCustomsDocument,
         changePassword,
         fetchAssignedBls
       }}

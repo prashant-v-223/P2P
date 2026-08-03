@@ -9,6 +9,12 @@ export default function VendorInvoicesListPage() {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const formatAmount = (amount, currency = 'INR') => {
+    if (typeof amount === 'string' && /[^\d.,-]/.test(amount)) return amount;
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency', currency: currency === 'USD' ? 'USD' : 'INR', minimumFractionDigits: 2
+    }).format(Number(amount) || 0);
+  };
 
   const filteredInvoices = invoices.filter((inv) => {
     const matchesSearch =
@@ -105,9 +111,7 @@ export default function VendorInvoicesListPage() {
                     <td className="p-4 text-slate-500">{inv.invoiceDate || inv.createdAt || 'Today'}</td>
                     <td className="p-4 text-slate-500">{inv.paymentDueDate || '30 Days'}</td>
                     <td className="p-4 font-bold text-slate-900 font-mono">
-                      {typeof inv.invoiceAmount === 'string' && (inv.invoiceAmount.includes('₹') || inv.invoiceAmount.includes('USD'))
-                        ? inv.invoiceAmount
-                        : `${inv.currency || '₹'} ${Number(inv.invoiceAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}
+                      {formatAmount(inv.invoiceAmount, inv.currency)}
                     </td>
                     <td className="p-4">
                       <span

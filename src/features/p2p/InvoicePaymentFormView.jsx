@@ -12,7 +12,8 @@ import {
   Check,
   ChevronDown,
   Building2,
-  DollarSign
+  DollarSign,
+  Globe
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
@@ -50,11 +51,12 @@ export default function InvoicePaymentFormView() {
   const [poNumber, setPoNumber] = useState('');
   const [selectedPoObj, setSelectedPoObj] = useState(null);
   const [invoiceNumber, setInvoiceNumber] = useState(generateUniqueInvoiceNumber());
-  const [asnNumber, setAsnNumber] = useState(generateASNNumber());
+  const [asnNumber, setAsnNumber] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
   const [currency, setCurrency] = useState('INR');
   const [dueDays, setDueDays] = useState(30);
   const [invoiceAmount, setInvoiceAmount] = useState('');
+  const [invoiceQuantity, setInvoiceQuantity] = useState('');
   const [grnNo, setGrnNo] = useState('');
   const [remarks, setRemarks] = useState('');
 
@@ -87,7 +89,10 @@ export default function InvoicePaymentFormView() {
       const res = await apiFetch(`/api/p2p/purchase-orders${query}`);
       const data = await res.json();
       if (res.ok && data.data) {
-        setPurchaseOrders(data.data);
+        setPurchaseOrders(data.data.filter((po) =>
+          !['closed', 'cancelled', 'canceled', 'blocked'].includes(String(po.status || '').toLowerCase()) &&
+          Number(po.remainingInvoiceAmount ?? po.totalAmount) > 0
+        ));
       }
     } catch (e) {
       console.error('Fetch POs error:', e);
@@ -112,6 +117,7 @@ export default function InvoicePaymentFormView() {
             setAsnNumber(inv.asnNumber || generateASNNumber());
             setInvoiceDate(inv.invoiceDate ? new Date(inv.invoiceDate).toISOString().split('T')[0] : '');
             setInvoiceAmount(inv.grossAmount || '');
+            setInvoiceQuantity(inv.threeWayMatch?.invoiceQuantity || '');
             setGrnNo(inv.grnNumber || '');
             setCgstAmount(inv.cgstAmount || '0');
             setSgstAmount(inv.sgstAmount || '0');
@@ -124,6 +130,17 @@ export default function InvoicePaymentFormView() {
         .catch(err => console.error(err));
     }
   }, [id]);
+
+  useEffect(() => {
+    if (!poNumber || selectedPoObj || purchaseOrders.length === 0) return;
+    const po = purchaseOrders.find((item) => (item.sapPoNumber || item.poNumber) === poNumber);
+    if (!po) return;
+    setSelectedPoObj(po);
+    if (po.currency) setCurrency(po.currency);
+    if (String(po.vendorType || '').toLowerCase().includes('import') && !asnNumber) {
+      setAsnNumber(generateASNNumber());
+    }
+  }, [poNumber, purchaseOrders, selectedPoObj, asnNumber]);
 
   // Debounced API search when user types in search box
   useEffect(() => {
@@ -152,7 +169,12 @@ export default function InvoicePaymentFormView() {
     setErrorMsg('');
 
     if (po.currency) setCurrency(po.currency);
-    if (po.totalAmount && !invoiceAmount) setInvoiceAmount(po.totalAmount);
+    if (String(po.vendorType || '').toLowerCase().includes('import')) {
+      setAsnNumber((current) => current || generateASNNumber());
+    } else {
+      setAsnNumber('');
+    }
+    if (!invoiceAmount) setInvoiceAmount(po.remainingInvoiceAmount ?? po.totalAmount ?? '');
     if (po.paymentTerms) {
       const match = String(po.paymentTerms).match(/\d+/);
       if (match) setDueDays(Number(match[0]));
@@ -201,6 +223,12 @@ export default function InvoicePaymentFormView() {
       showToast({ title: 'Currency Required', description: msg, type: 'error' });
       return;
     }
+    if (selectedPoObj?.currency && currency !== selectedPoObj.currency) {
+      const msg = `Currency must match the Purchase Order (${selectedPoObj.currency}).`;
+      setErrorMsg(msg);
+      showToast({ title: 'Currency Mismatch', description: msg, type: 'error' });
+      return;
+    }
     if (!dueDays && dueDays !== 0) {
       const msg = 'Net Days is required.';
       setErrorMsg(msg);
@@ -211,6 +239,24 @@ export default function InvoicePaymentFormView() {
       const msg = 'Please enter a valid positive invoice amount.';
       setErrorMsg(msg);
       showToast({ title: 'Invoice Amount Required', description: msg, type: 'error' });
+      return;
+    }
+    if (!isEditMode && Number(invoiceAmount) > Number(selectedPoObj?.remainingInvoiceAmount ?? selectedPoObj?.totalAmount)) {
+      const msg = `Invoice exceeds the remaining PO balance (${currency} ${Number(selectedPoObj?.remainingInvoiceAmount || 0).toLocaleString('en-IN')}).`;
+      setErrorMsg(msg);
+      showToast({ title: 'Amount Exceeds PO', description: msg, type: 'error' });
+      return;
+    }
+    if (!isEditMode && Number(selectedPoObj?.totalQuantity) > 0 && (!invoiceQuantity || Number(invoiceQuantity) <= 0)) {
+      const msg = 'Invoice quantity is required.';
+      setErrorMsg(msg);
+      showToast({ title: 'Quantity Required', description: msg, type: 'error' });
+      return;
+    }
+    if (!isEditMode && Number(invoiceQuantity) > Number(selectedPoObj?.remainingQuantity)) {
+      const msg = `Invoice quantity exceeds the remaining PO quantity (${selectedPoObj.remainingQuantity}).`;
+      setErrorMsg(msg);
+      showToast({ title: 'Quantity Exceeds PO', description: msg, type: 'error' });
       return;
     }
     if (!grnNo.trim()) {
@@ -243,13 +289,16 @@ export default function InvoicePaymentFormView() {
         dueDays: Number(dueDays),
         dueDate: calculateDueDate(),
         grossAmount: Number(invoiceAmount) || 0,
+        currency,
+        invoiceQuantity: Number(invoiceQuantity) || undefined,
         gstAmount: (Number(cgstAmount) || 0) + (Number(sgstAmount) || 0) + (Number(igstAmount) || 0),
         tdsAmount: ((Number(invoiceAmount) || 0) * numTdsPct) / 100,
         tdsPercentage: numTdsPct,
         advanceAdjusted: Number(advanceAdjust) || 0,
         grnNumber: grnNo.trim(),
         remarks: remarks.trim(),
-        approvalTo: sendApprovalTo
+        approvalTo: sendApprovalTo,
+        vendorType: selectedPoObj?.vendorType || ''
       };
 
       const url = isEditMode ? `/api/p2p/invoices/${id}` : '/api/p2p/invoices/create';
@@ -282,6 +331,10 @@ export default function InvoicePaymentFormView() {
     }
   };
 
+  // Vendor type is resolved from the selected PO's supplier record.
+  const isImportVendor = String(selectedPoObj?.vendorType || '').toLowerCase().includes('import');
+  const shouldShowAsn = isImportVendor || (isEditMode && Boolean(asnNumber));
+
   return (
     <div className="w-full space-y-3 font-sans pb-10 text-left">
       <form onSubmit={handleSubmit} noValidate className="space-y-3 w-full">
@@ -292,8 +345,14 @@ export default function InvoicePaymentFormView() {
               <ChevronLeft className="w-4 h-4" />
             </Link>
             <div>
-              <h1 className="text-base font-extrabold tracking-tight text-slate-900 leading-tight">
+              <h1 className="text-base font-extrabold tracking-tight text-slate-900 leading-tight flex items-center gap-2">
                 {isEditMode ? 'Edit Invoice Payment' : 'Create New Invoice Payment'}
+                {isImportVendor && (
+                  <span className="px-2 py-0.5 text-[10px] font-extrabold bg-amber-100 text-amber-700 border border-amber-200 rounded uppercase tracking-wider flex items-center gap-1">
+                    <Globe className="w-3 h-3" />
+                    Import Vendor
+                  </span>
+                )}
               </h1>
               <p className="text-[11px] text-slate-500 font-medium">
                 Submit invoice against an open Purchase Order. Both domestic and Import POs are supported.
@@ -332,7 +391,37 @@ export default function InvoicePaymentFormView() {
           </div>
         )}
 
-        {/* Section 1: SEARCHABLE PURCHASE ORDER SELECTOR (Initial 10, Server API search) */}
+        {/* Selected PO Vendor Banner */}
+        {selectedPoObj && (
+          <div className="bg-gradient-to-r from-teal-50/80 to-white p-3 rounded-xl border border-teal-200 shadow-2xs">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-3">
+                <Building2 className="w-4 h-4 text-[#0d7676]" />
+                <span className="text-xs font-bold text-slate-900">{selectedPoObj.supplierName || 'Vendor'}</span>
+                <span className="text-[10px] text-slate-500">|</span>
+                <span className="text-xs font-mono text-[#0d7676] font-bold">Code: {selectedPoObj.supplierId || '—'}</span>
+                {isImportVendor && (
+                  <span className="px-2 py-0.5 text-[9px] font-extrabold bg-amber-100 text-amber-700 border border-amber-200 rounded uppercase tracking-wider flex items-center gap-1">
+                    <Globe className="w-3 h-3" />
+                    Import
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-3 text-xs text-slate-600">
+                <span className="flex items-center gap-1">
+                  <span className="text-slate-400">GST:</span>
+                  <span className="font-mono font-semibold">{selectedPoObj.vendorGstin || 'N/A'}</span>
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="text-slate-400">PAN:</span>
+                  <span className="font-mono font-semibold">{selectedPoObj.vendorPan || 'N/A'}</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Section 1: SEARCHABLE PURCHASE ORDER SELECTOR */}
         <div className="bg-white rounded-xl p-3.5 border border-slate-200 shadow-2xs space-y-2 w-full">
           <h2 className="text-[11px] font-bold text-slate-800 uppercase tracking-wider border-b border-slate-100 pb-1.5 flex items-center justify-between">
             <span>SELECT PURCHASE ORDER</span>
@@ -481,30 +570,32 @@ export default function InvoicePaymentFormView() {
               />
             </div>
 
-            {/* ASN Number */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
-                  ASN Number
-                  <span className="px-1.5 py-0.5 text-[9px] font-extrabold bg-amber-100 text-amber-700 border border-amber-200 rounded uppercase tracking-wider">Auto</span>
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setAsnNumber(generateASNNumber())}
-                  className="text-[10px] font-bold text-amber-600 hover:underline cursor-pointer"
-                >
-                  ⚡ Regenerate
-                </button>
+            {/* ASN Number - Import vendor POs only */}
+            {shouldShowAsn && (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-slate-700 flex items-center gap-1">
+                    ASN Number
+                    <span className="px-1.5 py-0.5 text-[9px] font-bold bg-slate-100 text-slate-600 border border-slate-200 rounded uppercase tracking-wider">Auto</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setAsnNumber(generateASNNumber())}
+                    className="text-[10px] font-bold text-[#0d7676] hover:underline cursor-pointer"
+                  >
+                    ⚡ Regenerate
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={asnNumber}
+                  onChange={(e) => setAsnNumber(e.target.value)}
+                  placeholder="e.g. ASN-2026-48291"
+                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
+                />
+                <p className="text-[10px] text-slate-500 font-medium">Advance Shipment Notice for this Import vendor PO</p>
               </div>
-              <input
-                type="text"
-                value={asnNumber}
-                onChange={(e) => setAsnNumber(e.target.value)}
-                placeholder="e.g. ASN-2026-48291"
-                className="w-full px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-400 focus:bg-white"
-              />
-              <p className="text-[10px] text-amber-600 font-semibold">Auto-generated Advance Shipment Notice</p>
-            </div>
+            )}
 
             {/* Invoice Date */}
             <div className="space-y-1">
@@ -575,6 +666,8 @@ export default function InvoicePaymentFormView() {
               <input
                 type="number"
                 step="0.01"
+                min="0.01"
+                max={selectedPoObj?.remainingInvoiceAmount || undefined}
                 value={invoiceAmount}
                 onChange={(e) => {
                   setInvoiceAmount(e.target.value);
@@ -583,6 +676,30 @@ export default function InvoicePaymentFormView() {
                 placeholder="0.00"
                 className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white font-mono font-bold"
               />
+              {selectedPoObj && !isEditMode && (
+                <p className="text-[10px] text-slate-500">Remaining: {currency} {Number(selectedPoObj.remainingInvoiceAmount || 0).toLocaleString('en-IN')}</p>
+              )}
+            </div>
+
+            {/* Invoice Quantity */}
+            <div className="space-y-1">
+              <label className="block text-xs font-semibold text-slate-700">
+                Invoice Quantity {Number(selectedPoObj?.totalQuantity) > 0 && <span className="text-rose-500">*</span>}
+              </label>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                max={selectedPoObj?.remainingQuantity || undefined}
+                value={invoiceQuantity}
+                onChange={(e) => { setInvoiceQuantity(e.target.value); setErrorMsg(''); }}
+                disabled={!selectedPoObj || Number(selectedPoObj.totalQuantity) <= 0}
+                placeholder="Delivered quantity"
+                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] disabled:opacity-60"
+              />
+              {Number(selectedPoObj?.totalQuantity) > 0 && !isEditMode && (
+                <p className="text-[10px] text-slate-500">Remaining quantity: {selectedPoObj.remainingQuantity}</p>
+              )}
             </div>
 
             {/* GRN / Delivery Note No */}
@@ -708,7 +825,7 @@ export default function InvoicePaymentFormView() {
           </div>
         </div>
 
-        {/* Section 4: INVOICE FILE * */}
+        {/* Section 4: INVOICE FILE */}
         <div className="bg-white rounded-xl p-3.5 border border-slate-200 shadow-2xs space-y-2 w-full">
           <h2 className="text-[11px] font-bold text-slate-800 uppercase tracking-wider border-b border-slate-100 pb-1.5">
             INVOICE FILE {!isEditMode && <span className="text-rose-500">*</span>}

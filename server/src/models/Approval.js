@@ -30,6 +30,17 @@ const approvalSchema = new mongoose.Schema({
   },
   submittedAt:   { type: Date, default: Date.now },
   remarks:       { type: String, default: '' },
+  containersCount: { type: Number, default: 0 },
+  allocations: [{
+    quoteId: String,
+    vendorId: String,
+    vendorName: String,
+    vendorCode: String,
+    containers: Number,
+    ratePerContainer: Number,
+    allocationAmount: Number,
+    remark: String
+  }],
   actionedBy:    { type: String },
   actionedAt:    { type: Date },
   actionHistory: [actionRecordSchema]                              // Audit log storing ALL approvals, rejections, returns

@@ -279,7 +279,7 @@ const getInitials = (name) => {
           onClick={() => navigate('/admin/invoice-payments/create')}
           className="flex items-center gap-1.5 bg-[#0d7676] hover:bg-[#0f766e] text-white px-4 py-2 rounded-lg font-bold text-xs shadow-2xs transition-colors shrink-0"
         >
-          <Plus className="w-4 h-4" /> + New Invoice Payment
+          <Plus className="w-4 h-4" /> New Invoice Payment
         </button>
       </div>
 

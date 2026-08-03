@@ -24,14 +24,32 @@ const getTransporter = () => {
   return transporter;
 };
 
-const SEND = (options) => getTransporter().sendMail({
-  from: `"${config.mail.fromName}" <${config.mail.fromAddress}>`,
-  ...options,
-});
+const SEND = (options) => {
+  if (!config.mail.enabled) {
+    console.log(`[MAIL DISABLED] Skipped email to ${options.to || 'unknown recipient'}: ${options.subject || 'No subject'}`);
+    return Promise.resolve({ skipped: true, reason: 'MAIL_ENABLED is not true' });
+  }
+  return getTransporter().sendMail({
+    from: `"${config.mail.fromName}" <${config.mail.fromAddress}>`,
+    ...options,
+  });
+};
 
 const APP_URL     = process.env.APP_URL || 'http://localhost:3000';
 const BRAND_COLOR = '#0d9488'; // Rayzon Teal
 const BRAND_DARK  = '#115e59';
+
+export const sendRfqInvitationEmail = ({ to, vendorName, rfqNumber, title, closingDate }) => SEND({
+  to,
+  subject: `RFQ Invitation ${rfqNumber}: ${title}`,
+  html: `<div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;padding:24px;color:#0f172a">
+    <h2 style="color:#0d7676">New Freight RFQ Invitation</h2>
+    <p>Hello ${vendorName || 'Freight Partner'},</p>
+    <p>You have been invited to submit a quotation for <strong>${rfqNumber}</strong> — ${title}.</p>
+    <p>Closing date: <strong>${closingDate ? new Date(closingDate).toLocaleString('en-IN') : 'See portal'}</strong></p>
+    <p><a href="${APP_URL}/vendor/rfqs" style="display:inline-block;background:#0d7676;color:white;padding:10px 16px;text-decoration:none;border-radius:8px">Open RFQ Portal</a></p>
+  </div>`
+});
 
 // ─── Base Outer Frame ──────────────────────────────────────────────────────
 const frame = ({ badge, badgeBg = BRAND_COLOR, title, subtitle, body, footer }) => `

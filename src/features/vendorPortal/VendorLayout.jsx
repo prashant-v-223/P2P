@@ -1,7 +1,9 @@
-import React from 'react';
-import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Navigate, Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useVendor } from './vendorContext';
-import { LayoutDashboard, FileText, Wallet, User, LogOut, Sun } from 'lucide-react';
+import { LayoutDashboard, FileText, Wallet, User, LogOut, Sun, ClipboardList, Bell } from 'lucide-react';
+import { useToast } from '../../components/ui/toast';
+import { apiFetch } from '../../services/api';
 
 export function RayzonLogo() {
   return (
@@ -25,15 +27,71 @@ export function RayzonLogo() {
 }
 
 export default function VendorLayout() {
-  const { vendorProfile, logoutVendor } = useVendor();
+  const { vendorUser, vendorProfile, logoutVendor } = useVendor();
   const navigate = useNavigate();
   const location = useLocation();
+  const { showToast } = useToast();
+  const [rfqNotificationCount, setRfqNotificationCount] = useState(0);
+  const isFreightForwarder = /(freight|forwarder|logistics|shipping)/i.test(`${vendorProfile.vendorType || ''} ${vendorProfile.category || ''}`);
+
+  const refreshRfqCount = useCallback(async () => {
+    if (!isFreightForwarder || !localStorage.getItem('rayzon_vendor_token')) return;
+    try {
+      const response = await apiFetch('/api/p2p/vendor-rfqs');
+      const json = await response.json();
+      if (!response.ok || !json.success) return;
+      const now = new Date();
+      const actionable = (json.data || []).filter((rfq) => {
+        if (rfq.myQuote || String(rfq.status).toLowerCase() !== 'published') return false;
+        if (!rfq.closingDate) return true;
+        const deadline = new Date(rfq.closingDate);
+        const utcMidnight = deadline.getUTCHours() === 0 && deadline.getUTCMinutes() === 0 && deadline.getUTCSeconds() === 0;
+        const localMidnight = deadline.getHours() === 0 && deadline.getMinutes() === 0 && deadline.getSeconds() === 0;
+        if (localMidnight) deadline.setHours(23, 59, 59, 999);
+        else if (utcMidnight) deadline.setUTCHours(23, 59, 59, 999);
+        return deadline >= now;
+      }).length;
+      setRfqNotificationCount(actionable);
+      window.dispatchEvent(new CustomEvent('vendor-rfqs-updated', { detail: json.data || [] }));
+    } catch { /* Dashboard/list surfaces API failures to the user. */ }
+  }, [isFreightForwarder]);
 
   const handleSignOut = (e) => {
     e.preventDefault();
     logoutVendor();
     navigate('/vendor/login');
   };
+
+  useEffect(() => {
+    if (!isFreightForwarder) return undefined;
+    refreshRfqCount();
+    const token = localStorage.getItem('rayzon_vendor_token');
+    if (!token) return undefined;
+    const stream = new EventSource(`/api/events/stream?token=${encodeURIComponent(token)}`);
+    const identifiers = [vendorProfile.sapVendorCode, vendorProfile.id, vendorUser?.id].filter(Boolean).map(String);
+    const invited = (event) => {
+      let data; try { data = JSON.parse(event.data); } catch { return; }
+      if (!(data.vendorIds || []).some((id) => identifiers.includes(String(id)))) return;
+      refreshRfqCount();
+      showToast({ type: 'info', title: 'New RFQ Invitation', description: `${data.rfqNumber}: ${data.title}` });
+    };
+    const awarded = (event) => {
+      let data; try { data = JSON.parse(event.data); } catch { return; }
+      if (!identifiers.includes(String(data.vendorId)) && data.vendorName !== vendorProfile.companyName) return;
+      refreshRfqCount();
+      showToast({ type: 'success', title: 'RFQ Awarded', description: `${data.rfqNumber || data.rfqId} has been awarded to your company.` });
+    };
+    stream.addEventListener('RFQ_INVITED', invited);
+    stream.addEventListener('RFQ_AWARDED', awarded);
+    return () => stream.close();
+  }, [isFreightForwarder, vendorProfile.sapVendorCode, vendorProfile.id, vendorProfile.companyName, vendorUser?.id, showToast, refreshRfqCount]);
+
+  if (!vendorUser?.isLoggedIn || !localStorage.getItem('rayzon_vendor_token')) {
+    return <Navigate to="/vendor/login" replace state={{ from: location.pathname }} />;
+  }
+  if (isFreightForwarder && (location.pathname.startsWith('/vendor/invoices') || location.pathname.startsWith('/vendor/advances'))) {
+    return <Navigate to="/vendor/rfqs" replace />;
+  }
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-800 flex flex-col font-sans antialiased">
@@ -62,7 +120,12 @@ export default function VendorLayout() {
                 <span>Dashboard</span>
               </NavLink>
 
-              <NavLink
+              {isFreightForwarder && <NavLink
+                to="/vendor/rfqs"
+                className={({ isActive }) => `flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl transition-all ${isActive ? 'bg-teal-50 text-[#0d7676] border-2 border-[#0d7676] font-bold' : 'text-slate-600 hover:bg-slate-50'}`}
+              ><ClipboardList className="w-4 h-4" /><span>RFQs</span>{rfqNotificationCount > 0 && <span className="rounded-full bg-rose-500 px-1.5 py-0.5 text-[9px] font-bold leading-none text-white">{rfqNotificationCount}</span>}</NavLink>}
+
+              {!isFreightForwarder && <NavLink
                 to="/vendor/invoices"
                 className={({ isActive }) =>
                   `flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl transition-all ${
@@ -74,9 +137,9 @@ export default function VendorLayout() {
               >
                 <FileText className="w-4 h-4" />
                 <span>Invoices</span>
-              </NavLink>
+              </NavLink>}
 
-              <NavLink
+              {!isFreightForwarder && <NavLink
                 to="/vendor/advances"
                 className={({ isActive }) =>
                   `flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl transition-all ${
@@ -88,7 +151,7 @@ export default function VendorLayout() {
               >
                 <Wallet className="w-4 h-4" />
                 <span>Advance</span>
-              </NavLink>
+              </NavLink>}
 
               <NavLink
                 to="/vendor/profile"
@@ -108,6 +171,7 @@ export default function VendorLayout() {
 
           {/* User Profile Right */}
           <div className="flex items-center gap-3">
+            {isFreightForwarder && <button type="button" onClick={() => navigate('/vendor/rfqs')} className="relative rounded-xl border border-slate-200 bg-white p-2 text-slate-600 hover:bg-teal-50 hover:text-[#0d7676]" title={`${rfqNotificationCount} RFQ${rfqNotificationCount === 1 ? '' : 's'} awaiting your quote`}><Bell className="h-4 w-4" />{rfqNotificationCount > 0 && <span className="absolute -right-1 -top-1 rounded-full bg-rose-500 px-1.5 text-[9px] font-bold text-white">{rfqNotificationCount}</span>}</button>}
             <div className="flex items-center gap-2.5 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-xs">
               <div className="w-7 h-7 rounded-lg bg-teal-50 text-[#0d7676] font-bold flex items-center justify-center text-xs border border-teal-200">
                 {(vendorProfile.companyName || 'Vendor').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
@@ -144,7 +208,10 @@ export default function VendorLayout() {
           >
             Dashboard
           </NavLink>
-          <NavLink
+          {isFreightForwarder ? <NavLink
+            to="/vendor/rfqs"
+            className={({ isActive }) => `flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold ${isActive ? 'bg-teal-50 text-[#0d7676] font-bold' : 'text-slate-600'}`}
+          >RFQs</NavLink> : <NavLink
             to="/vendor/invoices"
             className={({ isActive }) =>
               `flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold ${
@@ -153,8 +220,8 @@ export default function VendorLayout() {
             }
           >
             Invoices
-          </NavLink>
-          <NavLink
+          </NavLink>}
+          {!isFreightForwarder && <NavLink
             to="/vendor/advances"
             className={({ isActive }) =>
               `flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold ${
@@ -163,7 +230,7 @@ export default function VendorLayout() {
             }
           >
             Advance
-          </NavLink>
+          </NavLink>}
           <NavLink
             to="/vendor/profile"
             className={({ isActive }) =>

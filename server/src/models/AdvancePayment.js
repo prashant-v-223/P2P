@@ -7,6 +7,7 @@ const advancePaymentSchema = new mongoose.Schema({
   vendorId: { type: String, required: true },
   vendorName: { type: String, required: true },
   amount: { type: Number, required: true },
+  currency: { type: String, default: 'INR', uppercase: true, trim: true },
   percentageOfPo: { type: Number, default: 0 },
   gstBreakup: {
     cgst: { type: Number, default: 0 },

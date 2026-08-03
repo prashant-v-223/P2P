@@ -17,8 +17,13 @@ const generateASNNumber = () => {
   return `ASN-${year}-${rand}`;
 };
 
+const getLocalISODate = () => {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+};
+
 export default function VendorUploadInvoicePage() {
-  const { purchaseOrders, addInvoice } = useVendor();
+  const { vendorProfile, purchaseOrders, addInvoice } = useVendor();
   const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -34,10 +39,12 @@ export default function VendorUploadInvoicePage() {
 
   const [invoiceNumber, setInvoiceNumber] = useState(generateUniqueInvoiceNumber());
   const [asnNumber, setAsnNumber] = useState(generateASNNumber());
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
+  const isImportVendor = String(vendorProfile?.vendorType || '').trim().toLowerCase().includes('import');
+  const [invoiceDate, setInvoiceDate] = useState(getLocalISODate());
   const [currency, setCurrency] = useState('INR');
   const [dueDays, setDueDays] = useState(30);
   const [invoiceAmount, setInvoiceAmount] = useState('');
+  const [invoiceQuantity, setInvoiceQuantity] = useState('');
   const [grnNo, setGrnNo] = useState('');
   const [remarks, setRemarks] = useState('');
 
@@ -82,13 +89,8 @@ export default function VendorUploadInvoicePage() {
   }, [poSearch]);
 
   const combinedPOs = useMemo(() => {
-    const map = new Map();
-    purchaseOrders.forEach(p => map.set(p.id, p));
-    apiSearchResults.forEach(p => {
-      if (!map.has(p.id)) map.set(p.id, p);
-    });
-    return Array.from(map.values());
-  }, [purchaseOrders, apiSearchResults]);
+    return purchaseOrders;
+  }, [purchaseOrders]);
 
   const filteredPOs = useMemo(() => {
     const q = poSearch.trim().toLowerCase();
@@ -168,10 +170,22 @@ export default function VendorUploadInvoicePage() {
       showToast({ title: 'Invoice Date Required', description: msg, type: 'error' });
       return;
     }
+    if (new Date(`${invoiceDate}T23:59:59`).getTime() > Date.now()) {
+      const msg = 'Invoice date cannot be in the future.';
+      setErrorMsg(msg);
+      showToast({ title: 'Invalid Invoice Date', description: msg, type: 'error' });
+      return;
+    }
     if (!currency) {
       const msg = 'Currency is required.';
       setErrorMsg(msg);
       showToast({ title: 'Currency Required', description: msg, type: 'error' });
+      return;
+    }
+    if (selectedPOObj?.currency && currency !== selectedPOObj.currency) {
+      const msg = `Invoice currency must match the Purchase Order (${selectedPOObj.currency}). Convert the invoice before submitting.`;
+      setErrorMsg(msg);
+      showToast({ title: 'Currency Mismatch', description: msg, type: 'error' });
       return;
     }
     if (!dueDays && dueDays !== 0) {
@@ -184,6 +198,30 @@ export default function VendorUploadInvoicePage() {
       const msg = 'Please enter a valid positive invoice amount.';
       setErrorMsg(msg);
       showToast({ title: 'Invoice Amount Required', description: msg, type: 'error' });
+      return;
+    }
+    if (Number(invoiceAmount) > Number(selectedPOObj?.remainingInvoiceAmount)) {
+      const msg = `Invoice amount cannot exceed the remaining PO balance (${selectedPOObj?.currency || currency} ${Number(selectedPOObj?.remainingInvoiceAmount || 0).toLocaleString('en-IN')}).`;
+      setErrorMsg(msg);
+      showToast({ title: 'Amount Exceeds PO Balance', description: msg, type: 'error' });
+      return;
+    }
+    if (Number(selectedPOObj?.totalQuantity) > 0 && (!invoiceQuantity || Number(invoiceQuantity) <= 0)) {
+      const msg = 'Invoice quantity is required and must be greater than zero.';
+      setErrorMsg(msg);
+      showToast({ title: 'Quantity Required', description: msg, type: 'error' });
+      return;
+    }
+    if (Number(selectedPOObj?.totalQuantity) > 0 && Number(invoiceQuantity) > Number(selectedPOObj?.remainingQuantity)) {
+      const msg = `Invoice quantity cannot exceed the remaining PO quantity (${selectedPOObj.remainingQuantity}).`;
+      setErrorMsg(msg);
+      showToast({ title: 'Quantity Exceeds PO', description: msg, type: 'error' });
+      return;
+    }
+    if ([cgstAmount, sgstAmount, igstAmount, advanceAdjust].some((value) => Number(value) < 0)) {
+      const msg = 'GST amounts and advance adjustment cannot be negative.';
+      setErrorMsg(msg);
+      showToast({ title: 'Invalid Adjustment', description: msg, type: 'error' });
       return;
     }
     if (!grnNo.trim()) {
@@ -207,9 +245,9 @@ export default function VendorUploadInvoicePage() {
 
     setIsSubmitting(true);
     try {
-      // Auto-generate ASN if somehow empty
-      const finalAsn = asnNumber.trim() || generateASNNumber();
-      if (!asnNumber.trim()) setAsnNumber(finalAsn);
+      // ASN applies only to Import vendors.
+      const finalAsn = isImportVendor ? (asnNumber.trim() || generateASNNumber()) : '';
+      if (isImportVendor && !asnNumber.trim()) setAsnNumber(finalAsn);
 
       await addInvoice({
         poNumber,
@@ -220,6 +258,7 @@ export default function VendorUploadInvoicePage() {
         dueDays,
         paymentDueDate: calculateDueDate(),
         invoiceAmount,
+        invoiceQuantity: Number(invoiceQuantity) || undefined,
         grnNo: grnNo.trim(),
         remarks: remarks.trim(),
         invoiceType,
@@ -342,7 +381,7 @@ export default function VendorUploadInvoicePage() {
                       <p className="text-xs text-slate-500 font-medium">
                         No pre-registered PO found matching "{poSearch}"
                       </p>
-                      {poSearch.trim() && (
+                      {false && poSearch.trim() && (
                         <button
                           type="button"
                           onClick={() => {
@@ -454,8 +493,8 @@ export default function VendorUploadInvoicePage() {
               />
             </div>
 
-            {/* ASN Number */}
-            <div className="space-y-1.5">
+            {/* ASN Number - Import vendors only */}
+            {isImportVendor && <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <label className="block text-xs font-semibold text-slate-700">
                   ASN Number
@@ -477,7 +516,7 @@ export default function VendorUploadInvoicePage() {
                 className="w-full px-3.5 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-400 focus:bg-white"
               />
               <p className="text-[10px] text-amber-600 font-semibold">Auto-generated Advance Shipment Notice number</p>
-            </div>
+            </div>}
 
             {/* Invoice Date */}
             <div className="space-y-1.5">
@@ -486,6 +525,7 @@ export default function VendorUploadInvoicePage() {
               </label>
               <input
                 type="date"
+                max={getLocalISODate()}
                 value={invoiceDate}
                 onChange={(e) => {
                   setInvoiceDate(e.target.value);
@@ -548,6 +588,8 @@ export default function VendorUploadInvoicePage() {
               <input
                 type="number"
                 step="0.01"
+                min="0.01"
+                max={selectedPOObj?.remainingInvoiceAmount || undefined}
                 value={invoiceAmount}
                 onChange={(e) => {
                   setInvoiceAmount(e.target.value);
@@ -556,6 +598,32 @@ export default function VendorUploadInvoicePage() {
                 placeholder="0.00"
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white font-mono font-bold"
               />
+              {selectedPOObj && (
+                <p className="text-[10px] font-semibold text-slate-500">
+                  Remaining PO balance: {selectedPOObj.currency || currency} {Number(selectedPOObj.remainingInvoiceAmount || 0).toLocaleString('en-IN')}
+                </p>
+              )}
+            </div>
+
+            {/* Invoice Quantity */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-slate-700">
+                Invoice Quantity {Number(selectedPOObj?.totalQuantity) > 0 && <span className="text-rose-500">*</span>}
+              </label>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                max={selectedPOObj?.remainingQuantity || undefined}
+                value={invoiceQuantity}
+                onChange={(e) => { setInvoiceQuantity(e.target.value); setErrorMsg(''); }}
+                placeholder="Enter delivered quantity"
+                disabled={!selectedPOObj || Number(selectedPOObj.totalQuantity) <= 0}
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] disabled:opacity-60"
+              />
+              {Number(selectedPOObj?.totalQuantity) > 0 && (
+                <p className="text-[10px] font-semibold text-slate-500">Remaining PO quantity: {selectedPOObj.remainingQuantity}</p>
+              )}
             </div>
 
             {/* GRN / Delivery Note No */}
@@ -782,11 +850,11 @@ export default function VendorUploadInvoicePage() {
                 <span className="text-slate-500 font-semibold">Invoice Number</span>
                 <span className="font-mono font-bold text-slate-900">{invoiceNumber}</span>
               </div>
-              {/* ASN Number highlight */}
-              <div className="flex items-center justify-between border-b border-amber-200/60 pb-2 bg-amber-50/60 -mx-4 px-4 py-2">
+              {/* ASN Number highlight - Import vendors only */}
+              {isImportVendor && <div className="flex items-center justify-between border-b border-amber-200/60 pb-2 bg-amber-50/60 -mx-4 px-4 py-2">
                 <span className="text-amber-700 font-extrabold flex items-center gap-1">📦 ASN Number</span>
                 <span className="font-mono font-bold text-amber-800 text-sm">{asnNumber}</span>
-              </div>
+              </div>}
               <div className="flex items-center justify-between border-b border-slate-200/60 pb-2">
                 <span className="text-slate-500 font-semibold">Purchase Order</span>
                 <span className="font-mono font-bold text-[#0d7676]">{poNumber || 'PO-4100005580'}</span>

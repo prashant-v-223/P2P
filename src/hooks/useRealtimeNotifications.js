@@ -148,6 +148,17 @@ export function useRealtimeNotifications() {
         dispatch(fetchPendingApprovals(user?.role));
       });
 
+      es.addEventListener('RFQ_QUOTE_SUBMITTED', (event) => {
+        let data;
+        try { data = JSON.parse(event.data); } catch { return; }
+        dispatch(addNotification({
+          actionType: 'rfq_quote_submitted',
+          title: `RFQ Quote Received: ${data.rfqNumber || data.rfqId}`,
+          message: `${data.vendorName} submitted or updated a freight quote.`,
+          approvalId: data.rfqId
+        }));
+      });
+
       es.onerror = () => {
         console.warn(`[SSE] Connection error. Reconnecting in ${reconnectDelay.current}ms...`);
         es.close();

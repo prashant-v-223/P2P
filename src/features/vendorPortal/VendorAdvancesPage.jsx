@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { useVendor } from './vendorContext';
+import { useToast } from '../../components/ui/toast';
 import { CreditCard, FileText, Plus, Filter, CheckCircle2, X } from 'lucide-react';
 
 export default function VendorAdvancesPage() {
   const { advances, purchaseOrders, addAdvanceRequest } = useVendor();
+  const { showToast } = useToast();
 
   const [statusFilter, setStatusFilter] = useState('All Statuses');
   const [showRequestModal, setShowRequestModal] = useState(false);
@@ -11,6 +13,13 @@ export default function VendorAdvancesPage() {
   const [selectedPO, setSelectedPO] = useState('');
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const selectedPurchaseOrder = purchaseOrders.find((po) => po.id === selectedPO);
+  const selectedCurrency = selectedPurchaseOrder?.currency || 'INR';
+  const eligiblePurchaseOrders = purchaseOrders.filter((po) =>
+    !['closed', 'cancelled', 'canceled', 'blocked'].includes(String(po.status || '').toLowerCase()) &&
+    Number(po.remainingAdvanceAmount) > 0
+  );
 
   const filteredAdvances = advances.filter((adv) => {
     if (statusFilter === 'All Statuses') return true;
@@ -22,21 +31,49 @@ export default function VendorAdvancesPage() {
   const approvedCount = advances.filter((a) => a.status === 'Approved').length;
   const paidCount = advances.filter((a) => a.status === 'Paid').length;
 
-  const handleCreateAdvance = (e) => {
+  const handleCreateAdvance = async (e) => {
     e.preventDefault();
-    if (!selectedPO || !amount) return;
+    if (!selectedPurchaseOrder) {
+      showToast({ type: 'error', title: 'Purchase Order Required', description: 'Select an eligible Purchase Order.' });
+      return;
+    }
+    if (!amount || Number(amount) <= 0) {
+      showToast({ type: 'error', title: 'Invalid Amount', description: 'Advance amount must be greater than zero.' });
+      return;
+    }
+    if (Number(amount) > Number(selectedPurchaseOrder.remainingAdvanceAmount)) {
+      showToast({
+        type: 'error',
+        title: 'Amount Exceeds PO Balance',
+        description: `Available advance balance: ${selectedCurrency} ${Number(selectedPurchaseOrder.remainingAdvanceAmount).toLocaleString('en-IN')}.`
+      });
+      return;
+    }
+    if (!reason.trim() || reason.trim().length < 10) {
+      showToast({ type: 'error', title: 'Justification Required', description: 'Enter at least 10 characters explaining the advance request.' });
+      return;
+    }
 
-    addAdvanceRequest({
-      poNumber: selectedPO,
-      amount: Number(amount),
-      reason,
-      requestedDate: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-    });
+    try {
+      setIsSubmitting(true);
+      await addAdvanceRequest({
+        poNumber: selectedPO,
+        amount: Number(amount),
+        currency: selectedCurrency,
+        reason,
+        requestedDate: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+      });
 
-    setShowRequestModal(false);
-    setSelectedPO('');
-    setAmount('');
-    setReason('');
+      setShowRequestModal(false);
+      setSelectedPO('');
+      setAmount('');
+      setReason('');
+      showToast({ type: 'success', title: 'Advance Request Submitted', description: 'Your request was sent for approval.' });
+    } catch (error) {
+      showToast({ type: 'error', title: 'Submission Failed', description: error.message });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -52,6 +89,7 @@ export default function VendorAdvancesPage() {
 
         <button
           onClick={() => setShowRequestModal(true)}
+          disabled={eligiblePurchaseOrders.length === 0}
           className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition uppercase tracking-wider self-start sm:self-auto"
         >
           <Plus className="w-4 h-4" />
@@ -130,7 +168,7 @@ export default function VendorAdvancesPage() {
                     <td className="p-4 text-slate-800">{adv.poNumber}</td>
                     <td className="p-4 text-slate-500">{adv.requestedDate}</td>
                     <td className="p-4 font-bold text-slate-900">
-                      USD {Number(adv.amount || 0).toLocaleString()}
+                      {new Intl.NumberFormat('en-IN', { style: 'currency', currency: adv.currency === 'USD' ? 'USD' : 'INR' }).format(Number(adv.amount) || 0)}
                     </td>
                     <td className="p-4">
                       <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800">
@@ -166,7 +204,7 @@ export default function VendorAdvancesPage() {
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676]"
                 >
                   <option value="">Select PO...</option>
-                  {purchaseOrders.map((po) => (
+                  {eligiblePurchaseOrders.map((po) => (
                     <option key={po.id} value={po.id}>
                       {po.id} — {po.amount}
                     </option>
@@ -175,22 +213,32 @@ export default function VendorAdvancesPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-slate-700">Advance Amount (USD) *</label>
+                <label className="block text-xs font-semibold text-slate-700">Advance Amount ({selectedCurrency}) *</label>
                 <input
                   type="number"
                   required
+                  min="0.01"
+                  step="0.01"
+                  max={selectedPurchaseOrder?.remainingAdvanceAmount || undefined}
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
                   placeholder="0.00"
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676]"
                 />
+                {selectedPurchaseOrder && (
+                  <p className="text-[10px] font-semibold text-slate-500">
+                    Remaining advance balance: {selectedCurrency} {Number(selectedPurchaseOrder.remainingAdvanceAmount).toLocaleString('en-IN')}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-slate-700">Reason / Justification</label>
+                <label className="block text-xs font-semibold text-slate-700">Reason / Justification *</label>
                 <textarea
                   rows={2}
                   value={reason}
+                  required
+                  minLength={10}
                   onChange={(e) => setReason(e.target.value)}
                   placeholder="Raw material procurement..."
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676]"
@@ -207,9 +255,10 @@ export default function VendorAdvancesPage() {
                 </button>
                 <button
                   type="submit"
+                  disabled={isSubmitting}
                   className="px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white text-xs font-bold uppercase tracking-wider rounded-xl"
                 >
-                  Submit Request
+                  {isSubmitting ? 'Submitting...' : 'Submit Request'}
                 </button>
               </div>
             </form>
