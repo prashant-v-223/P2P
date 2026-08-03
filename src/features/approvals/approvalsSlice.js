@@ -30,6 +30,7 @@ export const processApprovalAction = createAsyncThunk(
     try {
       const res = await apiFetch(`/api/approvals/${id}/action`, {
         method: 'POST',
+        headers: { 'Idempotency-Key': `${id}:${String(action).toLowerCase()}` },
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action })
       });

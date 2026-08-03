@@ -7,7 +7,8 @@ const actionRecordSchema = new mongoose.Schema({
   role:          { type: String },
   actionedBy:    { type: String, required: true },
   actionedAt:    { type: Date, default: Date.now },
-  remarks:       { type: String, default: '' }
+  remarks:       { type: String, default: '' },
+  idempotencyKey: String
 }, { _id: false });
 
 const approvalSchema = new mongoose.Schema({
@@ -21,6 +22,13 @@ const approvalSchema = new mongoose.Schema({
   currentSlab:    { type: String },                                  // Display name of matched slab
   poReference:    { type: String },                                  // SAP PO number
   workflowId:     { type: String },                                  // Ref to Workflow._id or Workflow.id
+  workflowVersion:{ type: Number, default: 1 },
+  workflowSnapshot: { type: mongoose.Schema.Types.Mixed },
+  transactionSnapshot: { type: mongoose.Schema.Types.Mixed },
+  requestedById: { type: String, index: true },
+  requestId: String,
+  version: { type: Number, default: 0 },
+  completedAt: Date,
   workflowSteps:  { type: String },                                  // JSON string: [{step, title, roleName, roleKey, statusKey}]
   currentStep:    { type: Number, default: 1 },                      // 1-based active step
   totalSteps:     { type: Number, default: 2 },
@@ -45,5 +53,7 @@ const approvalSchema = new mongoose.Schema({
   actionedAt:    { type: Date },
   actionHistory: [actionRecordSchema]                              // Audit log storing ALL approvals, rejections, returns
 }, { timestamps: true });
+
+approvalSchema.index({ workflowId: 1, status: 1 });
 
 export const Approval = mongoose.models.Approval || mongoose.model('Approval', approvalSchema);

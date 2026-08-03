@@ -198,20 +198,7 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
         collapsed ? "px-2 justify-center" : "px-5 justify-between"
       )}>
         <Link to="/dashboard" onClick={onNavigate} className="flex items-center gap-3 overflow-hidden">
-          <div className="w-9 h-9 rounded-xl bg-[#0d7676] flex items-center justify-center text-white font-extrabold text-sm shadow-xs flex-shrink-0">
-            <Sun className="w-5 h-5 text-amber-300 fill-amber-300" />
-          </div>
-          {!collapsed && (
-            <div className="leading-tight truncate">
-              <h1 className="font-extrabold text-slate-900 text-sm tracking-tight truncate flex items-center gap-1.5">
-                Rayzon Solar
-                <span className="text-[9px] bg-teal-50 text-[#0d7676] px-1.5 py-0.5 rounded border border-teal-200 ">
-                  P2P
-                </span>
-              </h1>
-              <p className="text-[11px] text-slate-400 font-semibold truncate">Procurement System</p>
-            </div>
-          )}
+        
         </Link>
       </header>
 

@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
+import { useToast } from '../../components/ui/toast';
 import { 
   FileSpreadsheet, 
+  FileCheck,
   Plus, 
   Search, 
   Eye, 
@@ -19,6 +21,7 @@ import {
 
 export default function RfqSourcingView() {
   const navigate = useNavigate();
+  const { showToast } = useToast();
   const [rfqs, setRfqs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -31,9 +34,9 @@ export default function RfqSourcingView() {
       const json = await res.json();
       if (res.ok && json.data) {
         setRfqs(json.data);
-      }
+      } else throw new Error(json.error || 'Unable to load RFQs.');
     } catch (e) {
-      console.error('Fetch RFQs error:', e);
+      showToast({ title: 'RFQ Load Failed', description: e.message, type: 'error' });
     } finally {
       setLoading(false);
     }
@@ -48,11 +51,12 @@ export default function RfqSourcingView() {
     if (!window.confirm('Are you sure you want to delete this RFQ record from MongoDB?')) return;
     try {
       const res = await apiFetch(`/api/p2p/rfqs/${id}`, { method: 'DELETE' });
+      const json = await res.json();
       if (res.ok) {
         setRfqs(prev => prev.filter(r => r.rfqId !== id && r._id !== id));
-      }
+      } else throw new Error(json.error || 'Unable to delete RFQ.');
     } catch (err) {
-      console.error(err);
+      showToast({ title: 'Delete Blocked', description: err.message, type: 'error' });
     }
   };
 
@@ -63,9 +67,23 @@ export default function RfqSourcingView() {
       const json = await res.json();
       if (res.ok && json.success) {
         fetchRfqs();
-      }
+        showToast({ title: 'Draft Copy Created', description: `${json.data.rfqNumber} has a new deadline and is ready for review.`, type: 'success' });
+      } else throw new Error(json.error || 'Unable to copy RFQ.');
     } catch (err) {
-      console.error(err);
+      showToast({ title: 'Copy Failed', description: err.message, type: 'error' });
+    }
+  };
+
+  const handleCreateDemo = async () => {
+    if (!window.confirm('Create a test RFQ using an existing open PO and active Freight Forwarders? No email will be sent.')) return;
+    try {
+      const res = await apiFetch('/api/p2p/rfqs/demo-workflow', { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Unable to create the test workflow.');
+      showToast({ title: 'Test Workflow Created', description: `${json.data.rfqNumber}: ${json.nextStep}`, type: 'success' });
+      navigate(`/admin/rfqs/${json.data.rfqNumber}`);
+    } catch (error) {
+      showToast({ title: 'Test Workflow Failed', description: error.message, type: 'error' });
     }
   };
 
@@ -80,6 +98,10 @@ export default function RfqSourcingView() {
           </p>
         </div>
 
+        <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={handleCreateDemo} className="inline-flex items-center gap-1.5 px-4 py-2 border border-[#0d7676] text-[#0d7676] font-bold text-xs rounded-xl hover:bg-teal-50 transition">
+          <FileCheck className="w-4 h-4" /> Test Workflow
+        </button>
         <button
           onClick={() => navigate('/admin/rfqs/create')}
           className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition uppercase tracking-wider self-start sm:self-auto cursor-pointer"
@@ -87,6 +109,7 @@ export default function RfqSourcingView() {
           <Plus className="w-4 h-4" />
           <span>Create RFQ</span>
         </button>
+        </div>
       </div>
 
       {/* Search & Filter Toolbar */}
@@ -165,19 +188,19 @@ export default function RfqSourcingView() {
                           </span>
                         )}
                       </td>
-                      <td className="py-3.5 px-4 font-mono text-slate-700">{rfq.poId || rfq.sapPoNumber || '4700000251'}</td>
+                      <td className="py-3.5 px-4 font-mono text-slate-700">{rfq.poId || rfq.sapPoNumber || '—'}</td>
                       <td className="py-3.5 px-4 text-slate-600">
-                        {rfq.closingDateFormatted || '31 Jul 2026'}
-                        <span className="block text-[10px] text-slate-400 font-normal">Expired</span>
+                        {rfq.closingDateFormatted || 'Not set'}
+                        <span className={`block text-[10px] font-semibold ${rfq.deadlinePassed ? 'text-rose-500' : 'text-emerald-600'}`}>{rfq.deadlinePassed ? 'Expired' : 'Open'}</span>
                       </td>
                       <td className="py-3.5 px-4 text-center">
                         <span className="w-6 h-6 rounded-full bg-sky-100 text-sky-800 text-[11px] font-extrabold inline-flex items-center justify-center">
-                          {rfq.invitedVendorsCount || 12}
+                          {rfq.invitedVendorsCount ?? 0}
                         </span>
                       </td>
                       <td className="py-3.5 px-4 text-center">
                         <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-extrabold inline-flex items-center justify-center">
-                          {rfq.quotesCount || 8}
+                          {rfq.quotesCount ?? 0}
                         </span>
                       </td>
                       <td className="py-3.5 px-4">

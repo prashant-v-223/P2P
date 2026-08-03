@@ -65,19 +65,20 @@ export default function RfqFormView() {
           if (resR.ok && jsonR.data) {
             const data = jsonR.data;
             setTitle(data.title || '');
-            setLinkedPoId(data.poId || data.sapPoNumber || '4700000251');
+            setLinkedPoId(data.poId || data.sapPoNumber || '');
             setDescription(data.description || '');
             if (data.closingDate) {
               setClosingDate(new Date(data.closingDate).toISOString().slice(0, 16));
             }
             const cargo = data.cargoDetails || {};
-            setShippingTerms(cargo.shippingTerms || 'FOB');
-            setCargoType(cargo.cargoType || 'SOLAR CELL');
-            setPortOfLoading(cargo.portOfOrigin || 'SHANGHAI');
-            setPortOfDischarge(cargo.portOfDestination || 'NHAVA SHEVA');
-            setContainerType(cargo.containerType || '40 FT');
+            setShippingTerms(cargo.shippingTerms || '');
+            setCargoType(cargo.cargoType || '');
+            setPortOfLoading(cargo.portOfOrigin || '');
+            setPortOfDischarge(cargo.portOfDestination || '');
+            setContainerType(cargo.containerType || '');
             setContainerCount(String(cargo.containerCount || 1));
             setWeightPerContainer(cargo.weightPerContainer || '');
+            setEstimatedReadinessDate(cargo.estimatedReadinessDate ? new Date(cargo.estimatedReadinessDate).toISOString().slice(0, 10) : '');
             setSelectedVendors((data.invitedVendors || []).map((vendor) => vendor.vendorId || vendor.sapVendorCode).filter(Boolean));
           }
         }
@@ -101,6 +102,10 @@ export default function RfqFormView() {
     v.sapVendorCode?.toLowerCase().includes(vendorSearch.toLowerCase())
   );
 
+  const normalizedLoadingPort = portOfLoading.trim().toLowerCase();
+  const normalizedDischargePort = portOfDischarge.trim().toLowerCase();
+  const portsAreSame = Boolean(normalizedLoadingPort && normalizedDischargePort && normalizedLoadingPort === normalizedDischargePort);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -108,10 +113,10 @@ export default function RfqFormView() {
       showToast({ title: 'Validation Error', description: 'RFQ Title is required.', type: 'error' });
       return;
     }
-    if (!cargoType.trim()) {
-      showToast({ title: 'Validation Error', description: 'Cargo Type is required.', type: 'error' });
-      return;
-    }
+    if (!linkedPoId.trim()) return showToast({ title: 'Validation Error', description: 'A valid linked purchase order is required.', type: 'error' });
+    if (!closingDate || new Date(closingDate) <= new Date()) return showToast({ title: 'Validation Error', description: 'Closing date and time must be in the future.', type: 'error' });
+    if (!shippingTerms.trim()) return showToast({ title: 'Validation Error', description: 'Shipping Terms are required.', type: 'error' });
+    if (!cargoType.trim()) return showToast({ title: 'Validation Error', description: 'Cargo Type is required.', type: 'error' });
     if (selectedVendors.length === 0) {
       showToast({ title: 'Validation Error', description: 'Select at least one Freight Forwarder.', type: 'error' });
       return;
@@ -124,6 +129,10 @@ export default function RfqFormView() {
       showToast({ title: 'Validation Error', description: 'Port of Discharge is required.', type: 'error' });
       return;
     }
+    if (portsAreSame) return showToast({ title: 'Select Different Ports', description: 'Change either Port of Loading or Port of Discharge. A shipment cannot start and end at the same port.', type: 'error' });
+    if (!containerType.trim()) return showToast({ title: 'Validation Error', description: 'Container Type is required.', type: 'error' });
+    if (!Number.isInteger(Number(containerCount)) || Number(containerCount) <= 0) return showToast({ title: 'Validation Error', description: 'Number of containers must be a positive whole number.', type: 'error' });
+    if (weightPerContainer !== '' && !(Number(weightPerContainer) > 0)) return showToast({ title: 'Validation Error', description: 'Weight per container must be greater than zero.', type: 'error' });
 
     setSaving(true);
     try {
@@ -273,7 +282,7 @@ export default function RfqFormView() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="block text-xs font-bold text-slate-700">Shipping Terms</label>
+              <label className="block text-xs font-bold text-slate-700">Shipping Terms <span className="text-rose-500">*</span></label>
               <input
                 type="text"
                 value={shippingTerms}
@@ -306,9 +315,11 @@ export default function RfqFormView() {
                 required
                 value={portOfLoading}
                 onChange={(e) => setPortOfLoading(e.target.value)}
+                aria-invalid={portsAreSame}
                 placeholder="e.g. SHANGHAI / NINGBO"
-                className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-[#0d7676]"
+                className={`w-full px-3.5 py-2 bg-slate-50 border rounded-xl text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-[#0d7676] ${portsAreSame ? 'border-rose-400 bg-rose-50/50' : 'border-slate-200'}`}
               />
+              {portsAreSame && <p className="flex items-center gap-1 text-[10px] font-semibold text-rose-600"><AlertCircle className="h-3 w-3" />Choose a different loading port.</p>}
             </div>
 
             <div className="space-y-1.5">
@@ -320,13 +331,15 @@ export default function RfqFormView() {
                 required
                 value={portOfDischarge}
                 onChange={(e) => setPortOfDischarge(e.target.value)}
+                aria-invalid={portsAreSame}
                 placeholder="e.g. NHAVA SHEVA / MUNDRA"
-                className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-[#0d7676]"
+                className={`w-full px-3.5 py-2 bg-slate-50 border rounded-xl text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-[#0d7676] ${portsAreSame ? 'border-rose-400 bg-rose-50/50' : 'border-slate-200'}`}
               />
+              {portsAreSame && <p className="flex items-center gap-1 text-[10px] font-semibold text-rose-600"><AlertCircle className="h-3 w-3" />Choose a destination different from the loading port.</p>}
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-bold text-slate-700">Type of Container</label>
+              <label className="block text-xs font-bold text-slate-700">Type of Container <span className="text-rose-500">*</span></label>
               <input
                 type="text"
                 value={containerType}
@@ -337,9 +350,11 @@ export default function RfqFormView() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-bold text-slate-700">No. of Containers</label>
+              <label className="block text-xs font-bold text-slate-700">No. of Containers <span className="text-rose-500">*</span></label>
               <input
                 type="number"
+                min="1"
+                step="1"
                 value={containerCount}
                 onChange={(e) => setContainerCount(e.target.value)}
                 placeholder="e.g. 1"
@@ -350,12 +365,15 @@ export default function RfqFormView() {
             <div className="space-y-1.5">
               <label className="block text-xs font-bold text-slate-700">Weight per Container (MT)</label>
               <input
-                type="text"
+                type="number"
+                min="0.01"
+                step="0.01"
                 value={weightPerContainer}
                 onChange={(e) => setWeightPerContainer(e.target.value)}
-                placeholder="e.g. 24 MT"
+                placeholder="e.g. 24"
                 className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900"
               />
+              <p className="text-[10px] text-slate-400">Enter numbers only; the unit is metric tonnes.</p>
             </div>
 
             <div className="space-y-1.5">

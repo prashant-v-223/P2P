@@ -15,6 +15,9 @@ import { broadcastEvent } from '../../services/sse.service.js';
 import { sendApprovalCreatedEmails } from '../../services/notification.service.js';
 import { authenticateToken } from '../../middleware/auth.middleware.js';
 import { sendRfqInvitationEmail } from '../../services/mail.service.js';
+import crypto from 'node:crypto';
+import { WorkflowAudit } from '../../models/WorkflowAudit.js';
+import { ensureRfqAwardWorkflows } from '../workflows/workflowDefaults.js';
 
 const router = express.Router();
 
@@ -53,6 +56,21 @@ function sameValue(left, right) {
   return String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
 }
 
+function normalizedRole(value = '') {
+  return String(value).toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+}
+
+function roleCanAct(userRole, requiredRole) {
+  const user = normalizedRole(userRole);
+  const required = normalizedRole(requiredRole);
+  if (['admin', 'system admin', 'systemadmin'].includes(user.replace(/\s+/g, ''))) return true;
+  if (!user || !required) return false;
+  if (required.includes('procurement')) return user.includes('procurement');
+  if (required.includes('finance')) return user.includes('finance');
+  if (required === 'md' || required.includes('director')) return user === 'md' || user.includes('director');
+  return user === required || user.includes(required) || required.includes(user);
+}
+
 function getPoQuantity(po) {
   return (po?.items || []).reduce((total, item) => total + (Number(item.quantity) || 0), 0);
 }
@@ -86,27 +104,59 @@ function validateOpenPo(po) {
   return Boolean(po && Number(po.totalAmount) > 0 && !['closed', 'cancelled', 'canceled', 'blocked'].includes(status));
 }
 
+function validateRfqPayload(body, { partial = false } = {}) {
+  const required = ['title', 'linkedPoId', 'closingDate', 'shippingTerms', 'cargoType', 'portOfLoading', 'portOfDischarge', 'containerType'];
+  if (!partial) {
+    const missing = required.filter((key) => !String(body[key] || '').trim());
+    if (missing.length) return `Missing required RFQ details: ${missing.join(', ')}.`;
+  }
+  const count = Number(body.containerCount);
+  if (body.containerCount !== undefined && (!Number.isInteger(count) || count <= 0)) return 'Number of containers must be a positive whole number.';
+  const weight = Number(body.weightPerContainer);
+  if (body.weightPerContainer !== undefined && body.weightPerContainer !== '' && (!Number.isFinite(weight) || weight <= 0)) return 'Weight per container must be greater than zero.';
+  if (body.portOfLoading && body.portOfDischarge && sameValue(body.portOfLoading, body.portOfDischarge)) return 'Port of loading and port of discharge must be different.';
+  if (body.closingDate) {
+    const closing = new Date(body.closingDate);
+    if (Number.isNaN(closing.getTime())) return 'Enter a valid RFQ closing date and time.';
+    if (closing <= new Date()) return 'RFQ closing date must be in the future.';
+  }
+  if (body.estimatedReadinessDate && Number.isNaN(new Date(body.estimatedReadinessDate).getTime())) return 'Enter a valid estimated readiness date.';
+  if (!partial && (!Array.isArray(body.invitedVendors) || !body.invitedVendors.length)) return 'Invite at least one active Freight Forwarder.';
+  return '';
+}
+
+async function nextRfqNumber() {
+  const year = new Date().getFullYear();
+  const latest = await RfqHeader.findOne({ rfqNumber: new RegExp(`^RFQ-${year}-`) }).sort({ rfqNumber: -1 }).select('rfqNumber').lean();
+  const sequence = Math.max(0, Number(String(latest?.rfqNumber || '').split('-').pop()) || 0) + 1;
+  return `RFQ-${year}-${String(sequence).padStart(4, '0')}`;
+}
+
 // ─── GET /api/p2p/workflows/preview ──────────────────────────────────────────
-router.get('/workflows/preview', async (req, res) => {
+router.get('/workflows/preview', authenticateToken, async (req, res) => {
   try {
     const moduleType = req.query.module || 'Advance Payment';
     const amount = Number(req.query.amount) || 0;
-    const wf = await resolveWorkflowFromDB(moduleType, amount);
+    const wf = await resolveWorkflowFromDB(moduleType, amount, req.query);
     return res.json({ success: true, workflow: wf });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
-async function resolveWorkflowFromDB(moduleType, amount) {
+async function resolveWorkflowFromDB(moduleType, amount, facts = {}) {
   try {
     const workflows = await Workflow.find({
-      status: { $in: ['active', 'Active'] }
+      status: { $in: ['active', 'Active'] },
+      $and: [
+        { $or: [{ effectiveFrom: { $exists: false } }, { effectiveFrom: { $lte: new Date() } }] },
+        { $or: [{ effectiveTo: { $exists: false } }, { effectiveTo: null }, { effectiveTo: { $gt: new Date() } }] }
+      ]
     }).lean();
 
     const numAmount = Number(amount) || 0;
 
     // Filter workflows matching the module (e.g. 'Advance Payment')
-    const categoryWfs = workflows.filter(w => {
+    let categoryWfs = workflows.filter(w => {
       const name = (w.name || '').toLowerCase();
       const cat  = (w.category || '').toLowerCase();
       const mod  = (moduleType || '').toLowerCase();
@@ -115,11 +165,26 @@ async function resolveWorkflowFromDB(moduleType, amount) {
         (mod.includes('invoice') && (name.includes('invoice') || cat.includes('invoice')));
     });
 
+    // Older databases may not contain RFQ workflow slabs. Persist the default
+    // RFQ slabs once so administrators can see, version and edit them normally.
+    if (!categoryWfs.length && String(moduleType).toLowerCase().includes('rfq')) {
+      await ensureRfqAwardWorkflows();
+      categoryWfs = await Workflow.find({ category: 'RFQ Vendor Award', status: { $in: ['active', 'Active'] } }).lean();
+    }
+
     // Find the exact workflow where minAmount <= numAmount <= maxAmount
-    const matchedWf = categoryWfs.find(w => {
+    const matchedWf = categoryWfs.sort((a, b) => Number(b.priority || 100) - Number(a.priority || 100) || Number(b.version || 1) - Number(a.version || 1)).find(w => {
       const min = Number(w.minAmount) || 0;
       const max = (w.maxAmount == null || w.maxAmount === 0) ? Infinity : Number(w.maxAmount);
-      return numAmount >= min && numAmount <= max;
+      const conditions = w.conditions || {};
+      const supportedFacts = { module: moduleType, amount: numAmount, ...facts };
+      const conditionsMatch = Object.entries(conditions).every(([key, expected]) => {
+        if (!(key in supportedFacts)) return false;
+        const actual = supportedFacts[key];
+        if (Array.isArray(expected)) return expected.map(String).includes(String(actual));
+        return sameValue(actual, expected);
+      });
+      return numAmount >= min && numAmount <= max && conditionsMatch;
     });
 
     if (matchedWf && Array.isArray(matchedWf.steps) && matchedWf.steps.length > 0) {
@@ -148,6 +213,8 @@ function buildWorkflowResult(wf, rawSteps) {
 
   return {
     workflowId:  wf._id?.toString() || wf.id,
+    workflowCode: wf.id,
+    workflowVersion: Number(wf.version || 1),
     slab:        wf.name || 'Standard',
     totalSteps:  steps.length,
     steps
@@ -156,6 +223,22 @@ function buildWorkflowResult(wf, rawSteps) {
 
 function getDefaultWorkflow(moduleType, amount) {
   const numAmount = Number(amount) || 0;
+  const moduleName = String(moduleType || 'Payment');
+  const isRfq = moduleName.toLowerCase().includes('rfq');
+  const isInvoice = moduleName.toLowerCase().includes('invoice');
+
+  if (isRfq) {
+    return buildWorkflowResult({ id: 'WF-BOOTSTRAP-RFQ', name: 'RFQ Award Standard Approval', version: 1 }, [
+      { step: 1, title: 'Procurement Head Approval', roleName: 'Procurement Head', roleKey: 'procurement_head' },
+      { step: 2, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance_lead' }
+    ]);
+  }
+
+  if (isInvoice) {
+    return buildWorkflowResult({ id: 'WF-BOOTSTRAP-INVOICE', name: 'Invoice Payment Standard Approval', version: 1 }, [
+      { step: 1, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance_lead' }
+    ]);
+  }
 
   if (numAmount >= 10000000) { // >= 1 Crore
     return buildWorkflowResult({ id: 'WF-DEFAULT-HIGH', name: 'Advance Payment (Above ₹1 Cr)' }, [
@@ -172,7 +255,7 @@ function getDefaultWorkflow(moduleType, amount) {
 }
 
 // Create Approval record from workflow result
-async function createApprovalRecord({ referenceId, type, vendorName, amountFormatted, poRef, requestedBy, wf }) {
+async function createApprovalRecord({ referenceId, type, vendorName, amountFormatted, poRef, requestedBy, requestedById, requestId, transactionSnapshot = {}, wf }) {
   const firstStep = wf.steps[0];
   const initialStatus = firstStep?.statusKey || 'Pending Procurement Head Approval';
 
@@ -186,6 +269,11 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
     requestedBy:    requestedBy || 'Finance Team',
     currentSlab:    wf.slab,
     workflowId:     wf.workflowId,
+    workflowVersion: wf.workflowVersion || 1,
+    workflowSnapshot: { workflowId: wf.workflowId, workflowCode: wf.workflowCode, version: wf.workflowVersion || 1, slab: wf.slab, steps: wf.steps },
+    transactionSnapshot: { ...transactionSnapshot, referenceId, type, vendorName, amount: amountFormatted, poReference: poRef },
+    requestedById,
+    requestId,
     poReference:    poRef || '',
     currentStep:    1,
     totalSteps:     wf.totalSteps,
@@ -194,6 +282,7 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
     submittedAt:    new Date(),
     actionHistory:  []
   });
+  await WorkflowAudit.create({ eventId: `wa-${crypto.randomUUID()}`, eventType: 'APPROVAL_SUBMITTED', actorId: requestedById || requestedBy || 'system', actorName: requestedBy, entityType: type, entityId: referenceId, workflowId: wf.workflowId, workflowVersion: wf.workflowVersion || 1, step: 1, action: 'submit', previousState: { status: 'draft' }, newState: { status: initialStatus, currentStep: 1 }, requestId });
 
   // ── Real-time SSE: notify all connected clients of the new request ─────────
   broadcastEvent('APPROVAL_CREATED', {
@@ -218,6 +307,7 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
 // SEED MASTER DATA
 // ─────────────────────────────────────────────────────────────────────────────
 async function seedMasterData() {
+  await ensureRfqAwardWorkflows();
   const poCount = await PurchaseOrder.countDocuments();
   if (poCount === 0) {
     await PurchaseOrder.insertMany([
@@ -570,7 +660,7 @@ const createAdvanceHandler = async (req, res) => {
     });
 
     // Resolve and create approval workflow
-    const wf = await resolveWorkflowFromDB('Advance Payment', numAmount);
+    const wf = await resolveWorkflowFromDB('Advance Payment', numAmount, { currency: poCurrency, vendorType: req.user?.vendorType, poType: po.poType || po.type });
     const amountFormatted = `₹${numAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
 
     await createApprovalRecord({
@@ -580,6 +670,9 @@ const createAdvanceHandler = async (req, res) => {
       amountFormatted,
       poRef,
       requestedBy: requestedBy || 'Finance Team',
+      requestedById: req.user?.id || req.user?.email,
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: { amount: numAmount, currency: poCurrency, poId: poRef, vendorId: vendorIdFinal },
       wf
     });
 
@@ -843,7 +936,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
     });
 
     // Workflow & Approval queue creation
-    const wf = await resolveWorkflowFromDB('Invoice Payment', netPayable);
+    const wf = await resolveWorkflowFromDB('Invoice Payment', netPayable, { currency: poCurrency, vendorType: vendor?.vendorType, poType: po.poType || po.type });
     const amountFormatted = `₹${netPayable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
 
     await createApprovalRecord({
@@ -853,6 +946,9 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       amountFormatted,
       poRef,
       requestedBy:    requestedBy || 'Finance Team',
+      requestedById:  req.user?.id || req.user?.email,
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: { netPayable, grossAmount: numGross, currency: poCurrency, poId: poRef, vendorId: vendorIdFinal, invoiceNumber: finalInvoiceNumber },
       wf
     });
 
@@ -993,7 +1089,7 @@ router.delete('/invoices/:id', async (req, res) => {
 });
 
 // ─── GET /api/p2p/rfqs ────────────────────────────────────────────────────────
-router.get('/rfqs', async (req, res) => {
+router.get('/rfqs', authenticateToken, async (req, res) => {
   try {
     const search = String(req.query.q || req.query.search || '').trim();
     const statusFilter = String(req.query.status || '').trim();
@@ -1004,7 +1100,10 @@ router.get('/rfqs', async (req, res) => {
       filter.$or = [{ rfqNumber: rx }, { title: rx }, { poId: rx }, { sapPoNumber: rx }];
     }
     if (statusFilter && statusFilter !== 'All Status' && statusFilter !== 'All') {
-      filter.status = statusFilter.toLowerCase().replace(' ', '_');
+      if (statusFilter.toLowerCase() === 'expired') {
+        filter.closingDate = { $lt: new Date() };
+        filter.status = 'published';
+      } else filter.status = statusFilter.toLowerCase().replace(/\s+/g, '_');
     }
 
     const rfqs = await RfqHeader.find(filter).sort({ createdAt: -1 }).lean();
@@ -1015,8 +1114,9 @@ router.get('/rfqs', async (req, res) => {
         const invitedCount = (r.invitedVendors && Array.isArray(r.invitedVendors)) ? r.invitedVendors.length : 0;
         return {
           ...r,
-          closingDateFormatted: r.closingDate ? new Date(r.closingDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Expired',
-          invitedVendorsCount: invitedCount || 5,
+          closingDateFormatted: r.closingDate ? new Date(r.closingDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Not set',
+          deadlinePassed: Boolean(r.closingDate && new Date(r.closingDate) < new Date()),
+          invitedVendorsCount: invitedCount,
           quotesCount: quoteCount
         };
       })
@@ -1192,7 +1292,7 @@ router.delete('/logistics-providers/:id', async (req, res) => {
 
 
 // ─── GET Freight Forwarders / Shipping Lines Vendor List ──────────────────────
-router.get('/rfqs/logistics-vendors', async (req, res) => {
+router.get('/rfqs/logistics-vendors', authenticateToken, async (req, res) => {
   try {
     // Strictly query only vendors explicitly marked as Freight Forwarder or Logistics category
     const realVendors = await Vendor.find({
@@ -1216,19 +1316,7 @@ router.get('/rfqs/logistics-vendors', async (req, res) => {
       });
     }
 
-    // Default curated list of known freight forwarders / shipping lines
-    const defaultLogistics = [
-      { id: 'v-ff-1', sapVendorCode: '20000215', companyName: 'Aquair International Freight Forwarders', vendorType: 'Freight Forwarder' },
-      { id: 'v-ff-2', sapVendorCode: '10002355', companyName: 'Babaji Shivram Clearing & Carriers', vendorType: 'Freight Forwarder' },
-      { id: 'v-ff-3', sapVendorCode: '11001450', companyName: 'Fairwinds Shipping Private Limited', vendorType: 'Shipping Line' },
-      { id: 'v-ff-4', sapVendorCode: '11001810', companyName: 'Fast Forward Logistics India', vendorType: 'Freight Forwarder' },
-      { id: 'v-ff-5', sapVendorCode: '11001148', companyName: 'Gef Global Logistics Pvt Ltd', vendorType: 'Freight Forwarder' },
-      { id: 'v-ff-6', sapVendorCode: '50000131', companyName: 'Globiiz Synergy Private Limited', vendorType: 'Freight Forwarder' },
-      { id: 'v-ff-7', sapVendorCode: '11001776', companyName: 'Kgl Network Pvt. Ltd.', vendorType: 'Freight Forwarder' },
-      { id: 'v-ff-8', sapVendorCode: '11001920', companyName: 'Isgfl India Pvt. Ltd.', vendorType: 'Shipping Line' },
-      { id: 'v-ff-9', sapVendorCode: '11002010', companyName: 'Seaways Shipping & Logistics Ltd', vendorType: 'Freight Forwarder' }
-    ];
-    return res.json({ success: true, data: defaultLogistics });
+    return res.json({ success: true, data: [], message: 'No active Freight Forwarder vendors are configured.' });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -1236,6 +1324,25 @@ router.get('/rfqs/logistics-vendors', async (req, res) => {
 
 
 // ─── POST Create RFQ ─────────────────────────────────────────────────────────
+// Generate a controlled test case from real PO and vendor master data. It stops
+// at Published so every later transition is tested through the normal workflow.
+router.post('/rfqs/demo-workflow', authenticateToken, async (req, res) => {
+  try {
+    if (req.user?.role === 'Vendor') return res.status(403).json({ success: false, error: 'Only procurement users can create RFQ test workflows.' });
+    const poCandidates = await PurchaseOrder.find().sort({ createdAt: -1 }).limit(50).lean();
+    const po = poCandidates.find(validateOpenPo);
+    if (!po) return res.status(409).json({ success: false, error: 'Create or sync an open purchase order before generating an RFQ workflow.' });
+    const vendors = await Vendor.find({ status: 'Active', $or: [{ category: { $in: ['Logistics', 'Freight Forwarder', 'Shipping Line'] } }, { vendorType: { $in: ['Freight Forwarder', 'Shipping Line', 'Logistics Provider'] } }] }).limit(3).lean();
+    if (!vendors.length) return res.status(409).json({ success: false, error: 'Create at least one active Freight Forwarder before generating an RFQ workflow.' });
+    const rfqNumber = await nextRfqNumber();
+    const poNumber = po.poId || po.sapPoNumber || po.poNumber;
+    const containerCount = 5;
+    const rfq = await RfqHeader.create({ rfqId: rfqNumber, rfqNumber, title: `Freight sourcing test — ${poNumber}`, poId: poNumber, sapPoNumber: poNumber, description: 'Controlled RFQ workflow test: quotation, full award allocation, BL, EXIM, customs clearance, and logistics invoice.', cargoDetails: { shippingTerms: 'FOB', cargoType: 'SOLAR MATERIAL', containerType: '40 HC', containerCount, portOfOrigin: 'SHANGHAI', portOfDestination: 'NHAVA SHEVA', weightPerContainer: 24, estimatedReadinessDate: new Date(Date.now() + 3 * 86400000) }, invitedVendors: vendors.map((vendor) => ({ vendorId: vendor.id || String(vendor._id), sapVendorCode: vendor.sapVendorCode || vendor.supplierId, companyName: vendor.companyName })), closingDate: new Date(Date.now() + 7 * 86400000), status: 'published', totalQuantity: containerCount, allocatedQuantity: 0, pendingAllocation: containerCount, isDemoWorkflow: true, createdBy: req.user?.id || req.user?.email });
+    broadcastEvent('RFQ_INVITED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, title: rfq.title, closingDate: rfq.closingDate, vendorIds: vendors.flatMap((vendor) => [vendor.id, vendor.sapVendorCode]).filter(Boolean), demo: true });
+    return res.status(201).json({ success: true, message: 'RFQ test workflow created without sending email.', data: rfq, nextStep: 'Sign in as an invited Freight Forwarder and submit a quotation.' });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
 router.post('/rfqs', authenticateToken, async (req, res) => {
   try {
     const {
@@ -1245,36 +1352,36 @@ router.post('/rfqs', authenticateToken, async (req, res) => {
       invitedVendors
     } = req.body;
 
-    if (!title || !cargoType || !portOfLoading || !portOfDischarge) {
-      return res.status(400).json({
-        success: false,
-        error: 'Title, Cargo Type, Port of Loading, and Port of Discharge are required fields.'
-      });
-    }
-
-    const nextIdNum = Math.floor(10 + Math.random() * 90);
-    const rfqNumber = `RFQ-2026-00${nextIdNum}`;
+    const validationError = validateRfqPayload(req.body);
+    if (validationError) return res.status(400).json({ success: false, error: validationError });
+    const po = await PurchaseOrder.findOne({ $or: [{ poId: linkedPoId }, { sapPoNumber: linkedPoId }, { poNumber: linkedPoId }] }).lean();
+    if (!validateOpenPo(po)) return res.status(400).json({ success: false, error: 'Linked purchase order does not exist or is not open.' });
+    const vendorKeys = invitedVendors.flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).filter(Boolean);
+    const activeVendorCount = await Vendor.countDocuments({ status: 'Active', $or: [{ id: { $in: vendorKeys } }, { sapVendorCode: { $in: vendorKeys } }, { supplierId: { $in: vendorKeys } }] });
+    if (activeVendorCount !== new Set(vendorKeys.map(String)).size && activeVendorCount < invitedVendors.length) return res.status(400).json({ success: false, error: 'One or more invited Freight Forwarders are invalid or inactive.' });
+    const rfqNumber = await nextRfqNumber();
 
     const newRfq = await RfqHeader.create({
       rfqId: rfqNumber,
       rfqNumber,
       title: title.trim(),
-      poId: linkedPoId || '4700000251',
-      sapPoNumber: linkedPoId || '4700000251',
+      poId: linkedPoId,
+      sapPoNumber: linkedPoId,
+      description: String(description || '').trim(),
       cargoDetails: {
-        containerType: containerType || '40 FT',
-        containerCount: Number(containerCount) || 1,
+        containerType,
+        containerCount: Number(containerCount),
         portOfOrigin: portOfLoading,
         portOfDestination: portOfDischarge,
         cargoType: cargoType,
-        shippingTerms: shippingTerms || 'FOB',
-        weightPerContainer: Number(weightPerContainer) || 0,
-        estimatedReadinessDate: estimatedReadinessDate || new Date()
+        shippingTerms,
+        weightPerContainer: weightPerContainer === '' ? undefined : Number(weightPerContainer),
+        estimatedReadinessDate: estimatedReadinessDate || undefined
       },
       totalQuantity: Number(containerCount) || 1,
       allocatedQuantity: 0,
       pendingAllocation: Number(containerCount) || 1,
-      closingDate: closingDate ? new Date(closingDate) : new Date(Date.now() + 7*24*60*60*1000),
+      closingDate: new Date(closingDate),
       status: 'published',
       invitedVendors: Array.isArray(invitedVendors) ? invitedVendors : []
     });
@@ -1300,21 +1407,6 @@ router.post('/rfqs', authenticateToken, async (req, res) => {
         closingDate: newRfq.closingDate
       })
     )).catch(() => {});
-
-    const wf = await Workflow.findOne({ module: 'RfqHeader', isActive: true }).lean().catch(() => null);
-    if (wf) {
-      await Approval.create({
-        id: rfqNumber,
-        module: 'RfqHeader',
-        requestedBy: 'System Admin',
-        roleRequired: 'Procurement Head',
-        status: 'Pending Procurement Head Approval',
-        details: `${title} (${cargoType} from ${portOfLoading} to ${portOfDischarge})`,
-        amount: 0,
-        currency: 'INR',
-        requestedAt: new Date()
-      }).catch(() => {});
-    }
 
     return res.status(201).json({ success: true, data: newRfq });
   } catch (err) {
@@ -1377,14 +1469,28 @@ function getVendorAward(rfq, vendor) {
   };
 }
 
+async function getRfqAwardApproval(rfq) {
+  if (!rfq.awardApprovalId) return { required: false, approved: true, approval: null };
+  const approval = await Approval.findOne({ id: rfq.awardApprovalId }).lean();
+  return {
+    required: true,
+    approved: approval?.status === 'Approved & Dispatched',
+    approval
+  };
+}
+
 async function resolveVendorAwardedRfq(req) {
   const vendor = await getFreightVendorFromRequest(req);
   if (!vendor) return { error: 'Freight Forwarder access is required.', status: 403 };
   const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
   if (!rfq || !isFreightVendorInvited(rfq.toObject(), vendor)) return { error: 'Assigned RFQ not found.', status: 404 };
+  const awardApproval = await getRfqAwardApproval(rfq.toObject());
   const allocation = getVendorAward(rfq.toObject(), vendor);
+  if (!awardApproval.approved) {
+    return { error: `Bill of Lading access is locked until the RFQ award approval is completed. Current approval status: ${awardApproval.approval?.status || 'Pending'}.`, status: 403 };
+  }
   if (String(rfq.status).toLowerCase() !== 'awarded' || !allocation) {
-    return { error: 'Only an awarded vendor can manage Bill of Lading entries.', status: 403 };
+    return { error: 'Only a fully approved awarded vendor can manage Bill of Lading entries.', status: 403 };
   }
   return { vendor, rfq, allocation };
 }
@@ -1414,7 +1520,14 @@ router.get('/vendor-rfqs', authenticateToken, async (req, res) => {
       .filter((rfq) => isFreightVendorInvited(rfq, vendor));
     const ids = [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean);
     const quotes = await RfqQuote.find({ vendorId: { $in: ids } }).lean();
-    return res.json({ success: true, data: rfqs.map((rfq) => ({ ...rfq, myQuote: quotes.find((q) => q.rfqId === rfq.rfqId) || null })) });
+    const approvalIds = rfqs.map((rfq) => rfq.awardApprovalId).filter(Boolean);
+    const approvals = approvalIds.length ? await Approval.find({ id: { $in: approvalIds } }).select('id status').lean() : [];
+    const approvalById = new Map(approvals.map((approval) => [approval.id, approval]));
+    return res.json({ success: true, data: rfqs.map((rfq) => {
+      const approval = rfq.awardApprovalId ? approvalById.get(rfq.awardApprovalId) : null;
+      const approvalPending = Boolean(rfq.awardApprovalId && approval?.status !== 'Approved & Dispatched');
+      return { ...rfq, status: approvalPending ? 'pending_approval' : rfq.status, awardApprovalStatus: approval?.status || null, myQuote: quotes.find((q) => q.rfqId === rfq.rfqId) || null };
+    }) });
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -1426,7 +1539,10 @@ router.get('/vendor-rfqs/:id', authenticateToken, async (req, res) => {
     if (!rfq || !isFreightVendorInvited(rfq, vendor)) return res.status(404).json({ success: false, error: 'Assigned RFQ not found.' });
     const ids = [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean);
     const myQuote = await RfqQuote.findOne({ rfqId: rfq.rfqId, vendorId: { $in: ids } }).lean();
-    return res.json({ success: true, data: { ...rfq, myQuote, myAllocation: getVendorAward(rfq, vendor) } });
+    const awardApproval = await getRfqAwardApproval(rfq);
+    const allocation = getVendorAward(rfq, vendor);
+    const awardReady = String(rfq.status).toLowerCase() === 'awarded' && awardApproval.approved;
+    return res.json({ success: true, data: { ...rfq, status: awardApproval.required && !awardApproval.approved ? 'pending_approval' : rfq.status, myQuote, myAllocation: awardReady ? allocation : null, awardPending: Boolean(allocation && !awardReady), awardApprovalStatus: awardApproval.approval?.status || null } });
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -1561,7 +1677,7 @@ router.post('/vendor-rfqs/:id/bl-entries/:blId/invoices', authenticateToken, asy
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.get('/rfqs/:id', async (req, res) => {
+router.get('/rfqs/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] }).lean();
@@ -1571,13 +1687,54 @@ router.get('/rfqs/:id', async (req, res) => {
 
     const quotes = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 }).lean();
     const blEntries = await RfqBlEntry.find({ rfqId: rfq.rfqId }).lean();
+    const approval = rfq.awardApprovalId ? await Approval.findOne({ id: rfq.awardApprovalId }).lean() : null;
+    let approvalProgress = null;
+    if (approval) {
+      let steps = [];
+      try { steps = JSON.parse(approval.workflowSteps || '[]'); } catch (_) {}
+      steps = steps.sort((left, right) => Number(left.step) - Number(right.step));
+      const approvedSteps = new Set((approval.actionHistory || []).filter((item) => item.action === 'approve').map((item) => Number(item.step)));
+      const terminalApproved = approval.status === 'Approved & Dispatched';
+      const terminalRejected = approval.status === 'Rejected';
+      const activeStep = steps.find((step) => Number(step.step) === Number(approval.currentStep || 1));
+      const requesterValues = [approval.requestedById, approval.requestedBy].filter(Boolean).map((value) => String(value).trim().toLowerCase());
+      const userValues = [req.user?.id, req.user?.userId, req.user?.email, req.user?.name].filter(Boolean).map((value) => String(value).trim().toLowerCase());
+      const isOwnRequest = requesterValues.some((value) => userValues.includes(value));
+      const requiredRole = activeStep?.roleName || activeStep?.roleKey || '';
+      approvalProgress = {
+        id: approval.id,
+        status: approval.status,
+        slab: approval.currentSlab,
+        currentStep: Number(approval.currentStep || 1),
+        totalSteps: steps.length || Number(approval.totalSteps || 0),
+        requiredRole,
+        canCurrentUserAct: !terminalApproved && !terminalRejected && !isOwnRequest && roleCanAct(req.user?.role, requiredRole),
+        blockedReason: terminalApproved ? 'Approval completed.' : terminalRejected ? 'Approval rejected.' : isOwnRequest ? 'The requester cannot approve their own request.' : roleCanAct(req.user?.role, requiredRole) ? '' : `Waiting for a user with the ${requiredRole || 'required'} role.`,
+        submittedAt: approval.submittedAt,
+        actionHistory: approval.actionHistory || [],
+        steps: steps.map((step) => ({
+          ...step,
+          state: terminalApproved || approvedSteps.has(Number(step.step)) ? 'completed' : terminalRejected && Number(step.step) === Number(approval.currentStep) ? 'rejected' : Number(step.step) === Number(approval.currentStep) ? 'current' : 'upcoming'
+        }))
+      };
+    }
 
     return res.json({
       success: true,
       data: {
         ...rfq,
         quotes,
-        blEntries
+        blEntries,
+        workflow: {
+          current: rfq.status,
+          deadlinePassed: Boolean(rfq.closingDate && new Date(rfq.closingDate) < new Date()),
+          invited: (rfq.invitedVendors || []).length,
+          quotes: quotes.length,
+          awardedContainers: Number(rfq.allocatedQuantity) || 0,
+          blContainers: blEntries.reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0),
+          customsClearedContainers: blEntries.filter((entry) => ['custom_cleared', 'invoice_pending', 'payment_requested', 'payment_approved', 'payment_paid', 'closed'].includes(entry.status)).reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0)
+        },
+        approvalProgress
       }
     });
   } catch (err) {
@@ -1598,6 +1755,9 @@ router.put('/rfqs/:id', authenticateToken, async (req, res) => {
 
     const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
     if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
+    if (['pending_approval', 'awarded', 'closed', 'cancelled'].includes(rfq.status)) return res.status(409).json({ success: false, error: `An RFQ in ${rfq.status.replace('_', ' ')} status cannot be edited.` });
+    const validationError = validateRfqPayload(req.body, { partial: true });
+    if (validationError) return res.status(400).json({ success: false, error: validationError });
 
     if (title) rfq.title = title.trim();
     if (linkedPoId) {
@@ -1606,7 +1766,11 @@ router.put('/rfqs/:id', authenticateToken, async (req, res) => {
     }
     if (description !== undefined) rfq.description = description;
     if (closingDate) rfq.closingDate = new Date(closingDate);
-    if (status) rfq.status = status;
+    if (status) {
+      const nextStatus = String(status).toLowerCase().replace(/\s+/g, '_');
+      if (!['draft', 'published', 'closed', 'cancelled'].includes(nextStatus)) return res.status(400).json({ success: false, error: 'This RFQ status transition is not allowed from the edit form.' });
+      rfq.status = nextStatus;
+    }
 
     if (!rfq.cargoDetails) rfq.cargoDetails = {};
     if (shippingTerms) rfq.cargoDetails.shippingTerms = shippingTerms;
@@ -1651,11 +1815,13 @@ router.put('/rfqs/:id', authenticateToken, async (req, res) => {
 });
 
 // ─── DELETE RFQ ──────────────────────────────────────────────────────────────
-router.delete('/rfqs/:id', async (req, res) => {
+router.delete('/rfqs/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
     if (rfq) {
+      const [quoteCount, blCount] = await Promise.all([RfqQuote.countDocuments({ rfqId: rfq.rfqId }), RfqBlEntry.countDocuments({ rfqId: rfq.rfqId })]);
+      if (quoteCount || blCount || ['pending_approval', 'awarded', 'closed'].includes(rfq.status)) return res.status(409).json({ success: false, error: 'RFQ cannot be deleted after quotation, approval, award, or shipment activity has started.' });
       await RfqHeader.deleteOne({ _id: rfq._id });
       await RfqQuote.deleteMany({ rfqId: rfq.rfqId }).catch(() => {});
     }
@@ -1666,14 +1832,13 @@ router.delete('/rfqs/:id', async (req, res) => {
 });
 
 // ─── POST Copy/Duplicate RFQ ──────────────────────────────────────────────────
-router.post('/rfqs/:id/copy', async (req, res) => {
+router.post('/rfqs/:id/copy', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const sourceRfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] }).lean();
     if (!sourceRfq) return res.status(404).json({ success: false, error: 'Source RFQ not found' });
 
-    const nextIdNum = Math.floor(10 + Math.random() * 90);
-    const newRfqNumber = `RFQ-2026-00${nextIdNum}`;
+    const newRfqNumber = await nextRfqNumber();
 
     const newRfq = await RfqHeader.create({
       ...sourceRfq,
@@ -1681,13 +1846,16 @@ router.post('/rfqs/:id/copy', async (req, res) => {
       rfqId: newRfqNumber,
       rfqNumber: newRfqNumber,
       title: `COPY - ${sourceRfq.title}`,
-      status: 'published',
+      status: 'draft',
+      closingDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       totalQuantity: Number(sourceRfq.cargoDetails?.containerCount) || Number(sourceRfq.totalQuantity) || 1,
       allocatedQuantity: 0,
       pendingAllocation: Number(sourceRfq.cargoDetails?.containerCount) || Number(sourceRfq.totalQuantity) || 1,
       awardedVendorId: undefined,
       awardedVendorName: undefined,
       awardedQuoteId: undefined,
+      awardAllocations: undefined,
+      awardApprovalId: undefined,
       createdAt: new Date(),
       updatedAt: new Date()
     });
@@ -1699,17 +1867,35 @@ router.post('/rfqs/:id/copy', async (req, res) => {
 });
 
 // ─── POST Submit Vendor Quote with Auto L1..L5 Ranking ────────────────────────
-router.post('/rfqs/:id/quote', async (req, res) => {
+router.post('/rfqs/:id/quote', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { vendorId, vendorName, shippingLine, oceanFreightUsd, stChargesInr, otherChargesInr, transitDays } = req.body;
 
     const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
     if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
+    if (rfq.status !== 'published' || (rfq.closingDate && new Date(rfq.closingDate) < new Date())) return res.status(409).json({ success: false, error: 'Quotes can only be submitted to an open, published RFQ before its deadline.' });
+    if (!vendorId || !vendorName || !shippingLine) return res.status(400).json({ success: false, error: 'Vendor, shipping line, and quote amounts are required.' });
 
-    const oceanUsd = Number(oceanFreightUsd) || 15000;
-    const stInr = Number(stChargesInr) || 25000;
-    const othInr = Number(otherChargesInr) || 0;
+    const invitedVendor = (rfq.invitedVendors || []).find((vendor) =>
+      [vendor.vendorId, vendor.sapVendorCode, vendor.companyName].some((value) => normaliseInviteValue(value) === normaliseInviteValue(vendorId)) ||
+      normaliseInviteValue(vendor.companyName) === normaliseInviteValue(vendorName)
+    );
+    if (!invitedVendor) return res.status(403).json({ success: false, error: 'Only a vendor invited to this RFQ can submit a quote.' });
+    const existingQuote = await RfqQuote.findOne({
+      rfqId: rfq.rfqId,
+      $or: [
+        { vendorId: { $in: [vendorId, invitedVendor.vendorId, invitedVendor.sapVendorCode].filter(Boolean) } },
+        { vendorName: invitedVendor.companyName }
+      ]
+    }).lean();
+    if (existingQuote) return res.status(409).json({ success: false, error: 'This vendor has already submitted a quote. Update the existing vendor quote instead.' });
+
+    const oceanUsd = Number(oceanFreightUsd);
+    const stInr = Number(stChargesInr);
+    const othInr = Number(otherChargesInr || 0);
+    const transit = Number(transitDays);
+    if (!(oceanUsd > 0) || !Number.isFinite(stInr) || stInr < 0 || !Number.isFinite(othInr) || othInr < 0 || !Number.isInteger(transit) || transit <= 0) return res.status(400).json({ success: false, error: 'Enter valid positive freight and transit values; INR charges may be zero but not negative.' });
     const usdRate = 92.5; // Exchange rate calculation
     const totalInr = Math.round(oceanUsd * usdRate + stInr + othInr);
 
@@ -1717,16 +1903,16 @@ router.post('/rfqs/:id/quote', async (req, res) => {
     await RfqQuote.create({
       quoteId,
       rfqId: rfq.rfqId,
-      vendorId: vendorId || 'VEND-10029',
-      vendorName: vendorName || 'Dummy FF',
-      shippingLine: shippingLine || 'MSC',
+      vendorId: invitedVendor.vendorId || invitedVendor.sapVendorCode || vendorId,
+      vendorName: invitedVendor.companyName || vendorName,
+      shippingLine,
       oceanFreightUsd: oceanUsd,
       stChargesInr: stInr,
       otherChargesInr: othInr,
       totalInr,
       freightAmount: oceanUsd,
       destinationCharges: stInr,
-      transitDays: Number(transitDays) || 14,
+      transitDays: transit,
       status: 'submitted'
     });
 
@@ -1752,6 +1938,7 @@ router.post('/rfqs/:id/award', authenticateToken, async (req, res) => {
 
     const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
     if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
+    if (rfq.status !== 'published') return res.status(409).json({ success: false, error: `RFQ cannot be awarded while it is ${rfq.status.replace('_', ' ')}.` });
 
     if (submitForApproval && Array.isArray(allocations)) {
       const totalContainers = Number(rfq.cargoDetails?.containerCount) || Number(rfq.totalQuantity) || 0;
@@ -1766,11 +1953,16 @@ router.post('/rfqs/:id/award', authenticateToken, async (req, res) => {
         return { quoteId: quote.quoteId, vendorId: quote.vendorId, vendorName: quote.vendorName, vendorCode: quote.vendorId, containers, ratePerContainer: Number(quote.totalInr) || 0, allocationAmount: (Number(quote.totalInr) || 0) * containers, remark: String(item.remark || '').trim() };
       });
       const allocated = normalized.reduce((sum, item) => sum + item.containers, 0);
-      if (allocated > totalContainers) return res.status(400).json({ success: false, error: `Allocation exceeds RFQ quantity. Available: ${totalContainers} containers.` });
+      if (allocated !== totalContainers) return res.status(400).json({ success: false, error: `Allocate exactly all ${totalContainers} RFQ containers before submitting the award.` });
       if (new Set(normalized.map((item) => item.quoteId)).size !== normalized.length) return res.status(400).json({ success: false, error: 'A vendor quote can only be allocated once.' });
       const totalAmount = normalized.reduce((sum, item) => sum + item.allocationAmount, 0);
       const approvalId = `RFQ-AWARD-${rfq.rfqNumber}-${Date.now().toString().slice(-5)}`;
-      await Approval.create({ id: approvalId, type: 'RFQ Vendor Award', vendorName: normalized.map((item) => item.vendorName).join(', '), amountOriginal: `INR ${totalAmount}`, amountINR: String(totalAmount), currency: 'INR', requestedBy: req.user?.name || req.user?.email || 'System Admin', poReference: rfq.poId, status: 'Pending Procurement Head Approval', containersCount: allocated, allocations: normalized, remarks: `Container allocation for ${rfq.rfqNumber}` });
+      const awardWorkflow = await resolveWorkflowFromDB('RFQ Vendor Award', totalAmount, { currency: 'INR', cargoType: rfq.cargoDetails?.cargoType });
+      const approval = await createApprovalRecord({ referenceId: approvalId, type: 'RFQ Vendor Award', vendorName: normalized.map((item) => item.vendorName).join(', '), amountFormatted: `INR ${totalAmount}`, poRef: rfq.poId, requestedBy: req.user?.name || req.user?.email || 'System Admin', requestedById: req.user?.id || req.user?.email, requestId: req.headers['x-request-id'], transactionSnapshot: { rfqId: rfq.rfqId, containers: allocated, allocations: normalized, totalAmount }, wf: awardWorkflow });
+      approval.containersCount = allocated;
+      approval.allocations = normalized;
+      approval.remarks = `Container allocation for ${rfq.rfqNumber}`;
+      await approval.save();
       rfq.status = 'pending_approval';
       rfq.totalQuantity = totalContainers;
       rfq.allocatedQuantity = 0;
@@ -1778,25 +1970,10 @@ router.post('/rfqs/:id/award', authenticateToken, async (req, res) => {
       rfq.set('awardAllocations', normalized);
       rfq.set('awardApprovalId', approvalId);
       await rfq.save();
-      broadcastEvent('APPROVAL_CREATED', { approvalId, approvalType: 'RFQ Vendor Award', amount: `INR ${totalAmount.toLocaleString('en-IN')}`, requestedBy: req.user?.name || 'System Admin', firstStepTitle: 'Procurement Head' });
       return res.json({ success: true, message: 'Vendor allocations submitted for approval.', data: rfq, approvalId });
     }
 
-    rfq.status = 'awarded';
-    rfq.awardedVendorId = vendorId;
-    rfq.awardedVendorName = vendorName;
-    rfq.awardedQuoteId = quoteId;
-    rfq.allocatedQuantity = rfq.cargoDetails?.containerCount || 1;
-    rfq.pendingAllocation = 0;
-    await rfq.save();
-
-    if (quoteId) {
-      await RfqQuote.updateOne({ quoteId }, { status: 'awarded' });
-    }
-
-    broadcastEvent('RFQ_AWARDED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, vendorId, vendorName, awardedAt: new Date() });
-
-    return res.json({ success: true, message: 'RFQ awarded successfully in MongoDB.', data: rfq });
+    return res.status(400).json({ success: false, error: 'RFQ awards must be submitted through the configured approval workflow.' });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }

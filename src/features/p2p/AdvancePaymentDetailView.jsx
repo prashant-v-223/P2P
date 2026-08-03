@@ -132,6 +132,7 @@ export default function AdvancePaymentDetailView() {
     try {
       const res = await apiFetch(`/api/approvals/${id}/action`, {
         method: 'POST',
+        headers: { 'Idempotency-Key': `${id}:approve:${approval?.currentStep || 1}` },
         body: JSON.stringify({ action: 'Approve', remarks: remarksText.trim() || 'Approved' })
       });
       const data = await res.json();
@@ -157,6 +158,7 @@ export default function AdvancePaymentDetailView() {
     try {
       const res = await apiFetch(`/api/approvals/${id}/action`, {
         method: 'POST',
+        headers: { 'Idempotency-Key': `${id}:return:${approval?.currentStep || 1}` },
         body: JSON.stringify({ action: 'Return', remarks: remarksText.trim() || 'Returned for changes' })
       });
       const data = await res.json();
@@ -181,6 +183,7 @@ export default function AdvancePaymentDetailView() {
     try {
       const res = await apiFetch(`/api/approvals/${id}/action`, {
         method: 'POST',
+        headers: { 'Idempotency-Key': `${id}:reject:${approval?.currentStep || 1}` },
         body: JSON.stringify({ action: 'Reject', remarks: remarksText.trim() })
       });
       const data = await res.json();

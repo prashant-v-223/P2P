@@ -152,12 +152,11 @@ export default function PendingApprovalsView() {
       setProcessingId(id);
       const res = await apiFetch(`/api/approvals/${id}/action`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${id}:${action.toLowerCase()}:${approvals.find((item) => item.id === id)?.currentStep || 1}` },
         body: JSON.stringify({
           action,
           remarks: remarks[id]?.trim() || '',
-          role: currentUserRole,
-          actionedBy: user?.name || user?.email || currentUserRole
+          idempotencyKey: `${id}:${action.toLowerCase()}:${approvals.find((item) => item.id === id)?.currentStep || 1}`
         })
       });
       const data = await res.json();

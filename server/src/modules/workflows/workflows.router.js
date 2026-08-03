@@ -11,7 +11,7 @@ import { asyncHandler } from '../../utils/asyncHandler.js';
 
 const router = Router();
 
-router.get('/', asyncHandler(getWorkflows));
+router.get('/', authenticateToken, authorizePermission('workflows', 'read'), asyncHandler(getWorkflows));
 router.post('/', authenticateToken, authorizePermission('workflows', 'create'), asyncHandler(createWorkflowSlab));
 router.put('/:id', authenticateToken, authorizePermission('workflows', 'update'), asyncHandler(updateWorkflowSlab));
 router.delete('/:id', authenticateToken, authorizePermission('workflows', 'delete'), asyncHandler(deleteWorkflowSlab));

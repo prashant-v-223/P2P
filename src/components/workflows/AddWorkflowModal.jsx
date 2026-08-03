@@ -172,7 +172,7 @@ export default function AddWorkflowModal({ isOpen, onClose, editingSlab, onSucce
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Workflow Category <span className="text-rose-500" aria-hidden="true">*</span></label>
-              <SearchableSelect value={category} onChange={(value) => { setCategory(value); setErrors({ ...errors, category: '' }); }} error={errors.category} options={['Advance Payment', 'Invoice Payment', 'Custom Duty', 'Logistics Payments', 'Purchase Orders']} searchPlaceholder="Search workflow categories..." />
+              <SearchableSelect value={category} onChange={(value) => { setCategory(value); setErrors({ ...errors, category: '' }); }} error={errors.category} options={['Advance Payment', 'Invoice Payment', 'RFQ Vendor Award', 'Custom Duty', 'Logistics Payments', 'Purchase Orders']} searchPlaceholder="Search workflow categories..." />
             </div>
 
             <div>

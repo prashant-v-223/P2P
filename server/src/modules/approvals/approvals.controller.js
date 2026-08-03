@@ -1,6 +1,8 @@
 import { Approval } from '../../models/Approval.js';
 import { sendApprovalEmails } from '../../services/notification.service.js';
 import { broadcastEvent } from '../../services/sse.service.js';
+import crypto from 'node:crypto';
+import { WorkflowAudit } from '../../models/WorkflowAudit.js';
 
 const escapeRegex = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -104,7 +106,7 @@ function canActOnStep(userRole, approval) {
   const ur = (userRole || '').toLowerCase().replace(/[\s_-]+/g, ' ').trim();
   // System Admin / Admin bypass only for VIEWING — NOT for acting on steps
   // (We allow Admin to act only if approval is stuck or explicitly escalated)
-  if (ur === 'system admin' || ur === 'admin') return true; // Admin can always act (super user)
+  if (ur === 'admin' || ur.replace(/\s+/g, '') === 'systemadmin') return true; // Admin can always act (super user)
 
   const requiredRole = getCurrentStepRole(approval);
   if (!requiredRole) return true; // no restriction defined → allow
@@ -125,7 +127,7 @@ export const getPendingApprovals = async (req, res) => {
     const type = String(req.query.type || '').trim();
 
     // role comes from query param (sent by frontend based on logged-in user)
-    const roleFilter = String(req.query.role || '').trim();
+    const roleFilter = String(req.user?.role || '').trim();
 
     const TERMINAL = ['Approved & Dispatched', 'Rejected', 'Returned for changes'];
     const filter = { status: { $nin: TERMINAL } };
@@ -156,7 +158,7 @@ export const getPendingApprovals = async (req, res) => {
     // ── Role-based filtering ─────────────────────────────────────────────
     // Admin / System Admin sees ALL approvals
     const roleNorm = roleFilter.toLowerCase().replace(/[\s_-]+/g, ' ').trim();
-    const isAdmin = roleNorm === 'admin' || roleNorm === 'system admin' || !roleFilter;
+    const isAdmin = roleNorm === 'admin' || roleNorm.replace(/\s+/g, '') === 'systemadmin' || !roleFilter;
 
     if (!isAdmin) {
       approvals = approvals.filter(a => isApprovalForRole(a, roleFilter));
@@ -243,14 +245,22 @@ export const processApprovalAction = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Action must be Approve, Return, or Reject.' });
     }
 
-    const approval = await Approval.findOne({ id: req.params.id });
+    let approval = await Approval.findOne({ id: req.params.id });
     if (!approval) {
       return res.status(404).json({ success: false, error: 'Approval not found.' });
     }
+    if (['Approved & Dispatched', 'Rejected', 'Cancelled'].includes(approval.status)) return res.status(409).json({ success: false, error: `This request is already ${approval.status.toLowerCase()}.` });
 
     // ── Role Authorization Check ──────────────────────────────────────────
-    const actingUser = req.user?.name || req.body.actionedBy || req.body.user || 'Unknown User';
-    const actingRole = req.user?.role || req.body.role || '';
+    const actingUserId = req.user?.id || req.user?.userId || req.user?.email;
+    const actingUser = req.user?.name || req.user?.email || actingUserId;
+    const actingRole = req.user?.role || '';
+    if (!actingUserId) return res.status(401).json({ success: false, error: 'A verified user identity is required.' });
+    const requester = String(approval.requestedById || approval.requestedBy || '').trim().toLowerCase();
+    if (requester && [actingUserId, req.user?.email, req.user?.name].filter(Boolean).some((value) => requester === String(value).trim().toLowerCase())) return res.status(403).json({ success: false, error: 'You cannot approve, return, or reject your own request.' });
+    if (['reject', 'return'].includes(rawAction) && !String(req.body.remarks || '').trim()) return res.status(400).json({ success: false, error: 'A reason is required when returning or rejecting a request.' });
+    const idempotencyKey = String(req.headers['idempotency-key'] || req.body.idempotencyKey || '').trim();
+    if (idempotencyKey && approval.actionHistory?.some((record) => record.idempotencyKey === idempotencyKey)) return res.json({ success: true, message: 'This approval action was already processed.', data: { id: approval.id, status: approval.status, currentStep: approval.currentStep, actionHistory: approval.actionHistory } });
 
     if (!canActOnStep(actingRole, approval)) {
       const requiredRole = getCurrentStepRole(approval);
@@ -281,6 +291,7 @@ export const processApprovalAction = async (req, res) => {
     const actionRemarks = (req.body.remarks || '').trim() || `${rawAction.charAt(0).toUpperCase() + rawAction.slice(1)} by ${actingUser}`;
 
     // ── Audit History Log ─────────────────────────────────────────────────
+    const previousState = { status: approval.status, currentStep: approval.currentStep, version: approval.version || 0 };
     const actionRecord = {
       action:         rawAction,
       step:           approval.currentStep || 1,
@@ -288,18 +299,23 @@ export const processApprovalAction = async (req, res) => {
       role:           actingRole,
       actionedBy:     actingUser,
       actionedAt:     new Date(),
-      remarks:        actionRemarks
+      remarks:        actionRemarks,
+      idempotencyKey: idempotencyKey || undefined
     };
 
-    if (!Array.isArray(approval.actionHistory)) approval.actionHistory = [];
-    approval.actionHistory.push(actionRecord);
-
-    approval.status      = newStatus;
-    approval.currentStep = newStep;
-    approval.remarks     = actionRemarks;
-    approval.actionedBy  = actingUser;
-    approval.actionedAt  = new Date();
-    await approval.save();
+    const expectedVersion = Number(approval.version || 0);
+    const actionTime = new Date();
+    approval = await Approval.findOneAndUpdate(
+      { _id: approval._id, version: expectedVersion, status: previousState.status, currentStep: previousState.currentStep },
+      {
+        $set: { status: newStatus, currentStep: newStep, remarks: actionRemarks, actionedBy: actingUser, actionedAt: actionTime, ...(['Approved & Dispatched', 'Rejected'].includes(newStatus) ? { completedAt: actionTime } : {}) },
+        $inc: { version: 1 },
+        $push: { actionHistory: actionRecord }
+      },
+      { new: true, runValidators: true }
+    );
+    if (!approval) return res.status(409).json({ success: false, error: 'This approval changed while you were reviewing it. Refresh and try again.' });
+    await WorkflowAudit.create({ eventId: `wa-${crypto.randomUUID()}`, eventType: `APPROVAL_${rawAction.toUpperCase()}`, actorId: actingUserId, actorName: actingUser, actorRole: actingRole, entityType: approval.type, entityId: approval.id, workflowId: approval.workflowId, workflowVersion: approval.workflowVersion || 1, step: actionRecord.step, action: rawAction, previousState, newState: { status: newStatus, currentStep: newStep, version: approval.version }, reason: actionRemarks, requestId: req.headers['x-request-id'], source: req.headers['x-client-source'] || 'web' });
 
     // ── Fire-and-forget email notifications ───────────────────────────────
     sendApprovalEmails({ approval: approval.toObject(), action: rawAction, newStatus, actingUser });
@@ -394,12 +410,14 @@ export const getApprovalHistory = async (req, res) => {
     if (!approval) {
       return res.status(404).json({ success: false, error: 'Approval not found' });
     }
+    const audit = await WorkflowAudit.find({ entityId: approval.id }).sort({ occurredAt: 1 }).lean();
     return res.json({
       success: true,
       approvalId: approval.id,
       status: approval.status,
       currentStep: approval.currentStep,
-      history: approval.actionHistory || []
+      history: approval.actionHistory || [],
+      audit
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

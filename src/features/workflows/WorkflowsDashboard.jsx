@@ -57,6 +57,7 @@ export default function WorkflowsDashboard() {
     'All',
     'Advance Payment',
     'Invoice Payment',
+    'RFQ Vendor Award',
     'Custom Duty',
     'Logistics Payments',
     'Purchase Orders'
