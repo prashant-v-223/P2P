@@ -1,21 +1,21 @@
 import React, { useMemo, useCallback } from 'react';
 import { NavLink, Link } from 'react-router-dom';
 import { useSelector } from 'react-redux';
-import { 
-  LayoutDashboard, 
-  FileText, 
-  Wallet, 
-  Receipt, 
-  ShieldCheck, 
-  Truck, 
-  FileSpreadsheet, 
-  Anchor, 
-  Package, 
-  CheckSquare, 
-  Store, 
-  Shield, 
-  Users, 
-  Lock, 
+import {
+  LayoutDashboard,
+  FileText,
+  Wallet,
+  Receipt,
+  ShieldCheck,
+  Truck,
+  FileSpreadsheet,
+  Anchor,
+  Package,
+  CheckSquare,
+  Store,
+  Shield,
+  Users,
+  Lock,
   RefreshCw,
   Cloud,
   GitFork,
@@ -96,8 +96,8 @@ const NavItem = React.memo(({ item, collapsed, onNavigate, badgeValue }) => {
       className={({ isActive }) =>
         cn(
           "group relative w-full flex items-center transition-all outline-none rounded-xl text-xs font-semibold",
-          collapsed 
-            ? "justify-center py-2" 
+          collapsed
+            ? "justify-center py-2"
             : "justify-between px-3 py-2.5",
           isActive
             ? "bg-[#e8f5f5] text-[#0d7676] font-bold shadow-2xs border-l-4 border-[#0d7676] rounded-l-none"
@@ -184,7 +184,7 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
   const { user } = useSelector((state) => state.auth);
 
   return (
-    <aside 
+    <aside
       className={cn(
         "bg-white border-r border-slate-200 h-screen flex flex-col transition-all duration-300 flex-shrink-0 select-none z-40 shadow-xs",
         collapsed ? "w-16 overflow-visible" : "w-64 overflow-hidden",
@@ -192,13 +192,29 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
         mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       )}
     >
-      {/* Brand Header */}
+      {/* Brand Header with Improved Logo */}
       <header className={cn(
-        "border-b border-slate-100 flex items-center h-16 flex-shrink-0 bg-white",
-        collapsed ? "px-2 justify-center" : "px-5 justify-between"
+        "border-b border-slate-100 flex items-center h-16 flex-shrink-0 bg-gradient-to-br from-white to-slate-50/30",
+        collapsed ? "px-2 justify-center" : "px-4 justify-start"
       )}>
-        <Link to="/dashboard" onClick={onNavigate} className="flex items-center gap-3 overflow-hidden">
-        
+        <Link to="/dashboard" onClick={onNavigate} className="flex items-center gap-2.5 overflow-hidden transition-all duration-300 hover:scale-105">
+          {collapsed ? (
+            /* Collapsed Logo - Icon Only */
+            <img src="/favicon.ico" alt="Logo" className="w-8 h-8" />
+          ) : (
+            /* Full Logo with Company Name */
+            <>
+            <img src="/favicon.ico" alt="Logo" className="w-8 h-8" />
+              <div className="flex flex-col -space-y-0.5">
+                <span className="text-[17px] font-extrabold text-slate-900 tracking-tight leading-tight">
+                  RAYZON
+                </span>
+                <span className="text-[11px] font-bold text-[#0d7676] tracking-wide leading-tight">
+                  SOLAR
+                </span>
+              </div>
+            </>
+          )}
         </Link>
       </header>
 
