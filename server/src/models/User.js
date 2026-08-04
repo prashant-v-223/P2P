@@ -24,7 +24,7 @@ const userSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
   passwordHash: { type: String, required: true, select: false },
-  role: { type: String, default: 'Procurement Head', trim: true },
+  role: { type: String, default: 'procurement_head', trim: true },
   department: { type: String, default: 'Procurement', trim: true },
   status: { type: String, enum: ['Active', 'Inactive', 'Suspended'], default: 'Active' },
   avatar: { type: String, default: 'NA' },
@@ -32,7 +32,13 @@ const userSchema = new mongoose.Schema({
   passwordResetExpiresAt: { type: Date, select: false },
   twoFactorEnabled: { type: Boolean, default: false },
   twoFactorCodeHash: { type: String, select: false },
-  twoFactorCodeExpiresAt: { type: Date, select: false }
+  twoFactorCodeExpiresAt: { type: Date, select: false },
+  // Delegation / Parent-user feature
+  parentUserId: { type: String, default: null, index: true },  // ID of the user who acts on behalf
+  delegationActive: { type: Boolean, default: false },          // When true, parent can act for this user
+  delegationStartAt: { type: Date, default: null },
+  delegationEndAt: { type: Date, default: null },
+  delegationNote: { type: String, default: '', maxlength: 240 } // e.g. "Annual leave until Aug 15"
 }, {
   timestamps: true,
   toJSON: {

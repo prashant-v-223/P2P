@@ -44,7 +44,6 @@ async function auditConfiguration(req, slab, eventType, previousState = null) {
 }
 
 export const getWorkflows = async (req, res) => {
-  await ensureRfqAwardWorkflows();
   const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
   const size = Math.min(100, Math.max(1, Number.parseInt(req.query.size, 10) || 10));
   const query = String(req.query.q || '').trim();

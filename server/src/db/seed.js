@@ -1,101 +1,348 @@
 import { Role } from '../models/Role.js';
 import { Permission } from '../models/Permission.js';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ALL 49 PERMISSIONS (matching the user's reference spec + system needs)
+// ─────────────────────────────────────────────────────────────────────────────
 export const DEFAULT_PERMISSIONS = [
-  { id: 'perm-1', key: 'users.read', name: 'View Users', module: 'User Management', action: 'read', description: 'View user directory and account details.', type: 'System', status: 'Active' },
-  { id: 'perm-2', key: 'users.create', name: 'Provision User', module: 'User Management', action: 'create', description: 'Create new user accounts.', type: 'System', status: 'Active' },
-  { id: 'perm-3', key: 'users.update', name: 'Edit User', module: 'User Management', action: 'update', description: 'Update existing user profile and roles.', type: 'System', status: 'Active' },
-  { id: 'perm-4', key: 'users.delete', name: 'Delete User', module: 'User Management', action: 'delete', description: 'Remove user accounts.', type: 'System', status: 'Active' },
+  // ── Dashboard ──────────────────────────────────────────────────────────────
+  { id: 'perm-001', key: 'dashboard.view', name: 'View Dashboard', module: 'Dashboard', action: 'view', description: 'Access the main overview dashboard.', type: 'System', status: 'Active' },
 
-  { id: 'perm-5', key: 'vendors.read', name: 'View Vendors', module: 'Vendor Management', action: 'read', description: 'View vendor directory and profile details.', type: 'System', status: 'Active' },
-  { id: 'perm-6', key: 'vendors.create', name: 'Add Vendor', module: 'Vendor Management', action: 'create', description: 'Create new vendor accounts.', type: 'System', status: 'Active' },
-  { id: 'perm-7', key: 'vendors.update', name: 'Edit Vendor', module: 'Vendor Management', action: 'update', description: 'Modify vendor profile details and bank info.', type: 'System', status: 'Active' },
-  { id: 'perm-8', key: 'vendors.delete', name: 'Delete Vendor', module: 'Vendor Management', action: 'delete', description: 'Delete vendor records.', type: 'System', status: 'Active' },
+  // ── Purchase Orders ─────────────────────────────────────────────────────────
+  { id: 'perm-002', key: 'purchase-orders.view', name: 'View Purchase Orders', module: 'Purchase Orders', action: 'view', description: 'View purchase order list and detail.', type: 'System', status: 'Active' },
 
-  { id: 'perm-9', key: 'workflows.read', name: 'View Workflows', module: 'Workflow Slabs', action: 'read', description: 'View workflow slab routing rules.', type: 'System', status: 'Active' },
-  { id: 'perm-10', key: 'workflows.create', name: 'Add Workflow', module: 'Workflow Slabs', action: 'create', description: 'Create new workflow approval slabs.', type: 'System', status: 'Active' },
-  { id: 'perm-11', key: 'workflows.update', name: 'Edit Workflow', module: 'Workflow Slabs', action: 'update', description: 'Modify workflow slab rules and stages.', type: 'System', status: 'Active' },
-  { id: 'perm-12', key: 'workflows.delete', name: 'Delete Workflow', module: 'Workflow Slabs', action: 'delete', description: 'Remove workflow slabs.', type: 'System', status: 'Active' },
+  // ── Advance Payments ────────────────────────────────────────────────────────
+  { id: 'perm-003', key: 'advance-payments.view', name: 'View Advance Payments', module: 'Advance Payments', action: 'view', description: 'View advance payment records.', type: 'System', status: 'Active' },
+  { id: 'perm-004', key: 'advance-payments.create', name: 'Create Advance Payment', module: 'Advance Payments', action: 'create', description: 'Create new advance payment requests.', type: 'System', status: 'Active' },
+  { id: 'perm-005', key: 'advance-payments.delete', name: 'Delete Advance Payment', module: 'Advance Payments', action: 'delete', description: 'Delete advance payment records.', type: 'System', status: 'Active' },
+  { id: 'perm-006', key: 'advance-payments.mark-paid', name: 'Mark Advance Paid', module: 'Advance Payments', action: 'mark-paid', description: 'Mark advance payments as paid.', type: 'System', status: 'Active' },
 
-  { id: 'perm-13', key: 'exchange-rates.read', name: 'View Rates', module: 'Exchange Rates', action: 'read', description: 'View currency exchange rates.', type: 'System', status: 'Active' },
-  { id: 'perm-14', key: 'exchange-rates.update', name: 'Manage Rates', module: 'Exchange Rates', action: 'update', description: 'Update FX rates used for INR conversion.', type: 'System', status: 'Active' },
+  // ── Invoice Payments ────────────────────────────────────────────────────────
+  { id: 'perm-007', key: 'invoice-payments.view', name: 'View Invoice Payments', module: 'Invoice Payments', action: 'view', description: 'View invoice payment records.', type: 'System', status: 'Active' },
+  { id: 'perm-008', key: 'invoice-payments.create', name: 'Create Invoice Payment', module: 'Invoice Payments', action: 'create', description: 'Create new invoice payment entries.', type: 'System', status: 'Active' },
+  { id: 'perm-009', key: 'invoice-payments.delete', name: 'Delete Invoice Payment', module: 'Invoice Payments', action: 'delete', description: 'Delete invoice payment records.', type: 'System', status: 'Active' },
+  { id: 'perm-010', key: 'invoice-payments.mark-paid', name: 'Mark Invoice Paid', module: 'Invoice Payments', action: 'mark-paid', description: 'Mark invoice payments as paid.', type: 'System', status: 'Active' },
 
-  { id: 'perm-15', key: 'approvals.read', name: 'View Approvals', module: 'Approvals', action: 'read', description: 'View pending and completed approval requests.', type: 'System', status: 'Active' },
-  { id: 'perm-16', key: 'approvals.approve', name: 'Approve Request', module: 'Approvals', action: 'approve', description: 'Approve payment or PO requests.', type: 'System', status: 'Active' },
-  { id: 'perm-17', key: 'approvals.reject', name: 'Reject Request', module: 'Approvals', action: 'reject', description: 'Reject requests with remarks.', type: 'System', status: 'Active' },
+  // ── Logistics Payments ──────────────────────────────────────────────────────
+  { id: 'perm-011', key: 'logistics-payments.view', name: 'View Logistics Payments', module: 'Logistics Payments', action: 'view', description: 'View logistics payment records.', type: 'System', status: 'Active' },
+  { id: 'perm-012', key: 'logistics-payments.create', name: 'Create Logistics Payment', module: 'Logistics Payments', action: 'create', description: 'Create new logistics payment entries.', type: 'System', status: 'Active' },
+  { id: 'perm-013', key: 'logistics-payments.delete', name: 'Delete Logistics Payment', module: 'Logistics Payments', action: 'delete', description: 'Delete logistics payment records.', type: 'System', status: 'Active' },
+  { id: 'perm-014', key: 'logistics-payments.mark-paid', name: 'Mark Logistics Paid', module: 'Logistics Payments', action: 'mark-paid', description: 'Mark logistics payments as paid.', type: 'System', status: 'Active' },
 
-  { id: 'perm-18', key: 'roles.read', name: 'View Roles', module: 'Roles & Permissions', action: 'read', description: 'View system roles and permission matrix.', type: 'System', status: 'Active' },
-  { id: 'perm-19', key: 'roles.update', name: 'Manage Permissions', module: 'Roles & Permissions', action: 'update', description: 'Assign permissions to system roles.', type: 'System', status: 'Active' }
+  // ── Custom Duty ─────────────────────────────────────────────────────────────
+  { id: 'perm-015', key: 'custom-duty.view', name: 'View Custom Duty', module: 'Custom Duty', action: 'view', description: 'View custom duty payment records.', type: 'System', status: 'Active' },
+  { id: 'perm-016', key: 'custom-duty.create', name: 'Create Custom Duty', module: 'Custom Duty', action: 'create', description: 'Create custom duty payment entries.', type: 'System', status: 'Active' },
+  { id: 'perm-017', key: 'custom-duty.delete', name: 'Delete Custom Duty', module: 'Custom Duty', action: 'delete', description: 'Delete custom duty records.', type: 'System', status: 'Active' },
+  { id: 'perm-018', key: 'custom-duty.mark-paid', name: 'Mark Custom Duty Paid', module: 'Custom Duty', action: 'mark-paid', description: 'Mark custom duty as paid.', type: 'System', status: 'Active' },
+
+  // ── BI / Blank Invoices ─────────────────────────────────────────────────────
+  { id: 'perm-019', key: 'blank-invoices.view', name: 'View BI Invoices', module: 'BI Invoices', action: 'view', description: 'View blank invoice records.', type: 'System', status: 'Active' },
+  { id: 'perm-020', key: 'blank-invoices.action', name: 'BI Invoice Actions', module: 'BI Invoices', action: 'action', description: 'Perform actions on blank invoices.', type: 'System', status: 'Active' },
+  { id: 'perm-021', key: 'blank-invoices.mark-paid', name: 'Mark BI Invoice Paid', module: 'BI Invoices', action: 'mark-paid', description: 'Mark blank invoices as paid.', type: 'System', status: 'Active' },
+
+  // ── Approvals ───────────────────────────────────────────────────────────────
+  { id: 'perm-022', key: 'approvals.view', name: 'View Approvals', module: 'Approvals', action: 'view', description: 'View pending and completed approval requests.', type: 'System', status: 'Active' },
+  { id: 'perm-023', key: 'approvals.action', name: 'Perform Approval Action', module: 'Approvals', action: 'action', description: 'Approve, reject, or return requests.', type: 'System', status: 'Active' },
+
+  // ── RFQ ─────────────────────────────────────────────────────────────────────
+  { id: 'perm-024', key: 'rfq.view', name: 'View RFQ', module: 'Rfq', action: 'view', description: 'View RFQ list and detail.', type: 'System', status: 'Active' },
+  { id: 'perm-025', key: 'rfq.create', name: 'Create RFQ', module: 'Rfq', action: 'create', description: 'Create new RFQ sourcing events.', type: 'System', status: 'Active' },
+  { id: 'perm-026', key: 'rfq.delete', name: 'Delete RFQ', module: 'Rfq', action: 'delete', description: 'Delete RFQ records.', type: 'System', status: 'Active' },
+  { id: 'perm-027', key: 'rfq.award', name: 'Award RFQ', module: 'Rfq', action: 'award', description: 'Award RFQ to selected vendor.', type: 'System', status: 'Active' },
+
+  // ── BL (Bill of Lading) ─────────────────────────────────────────────────────
+  { id: 'perm-028', key: 'bl.view', name: 'View BL', module: 'Bl', action: 'view', description: 'View Bill of Lading records.', type: 'System', status: 'Active' },
+  { id: 'perm-029', key: 'bl.manage', name: 'Manage BL', module: 'Bl', action: 'manage', description: 'Create and manage BL entries.', type: 'System', status: 'Active' },
+
+  // ── Exim ─────────────────────────────────────────────────────────────────────
+  { id: 'perm-030', key: 'exim.view', name: 'View EXIM', module: 'Exim', action: 'view', description: 'View EXIM / import review records.', type: 'System', status: 'Active' },
+  { id: 'perm-031', key: 'exim.manage', name: 'Manage EXIM', module: 'Exim', action: 'manage', description: 'Perform EXIM review and clearance actions.', type: 'System', status: 'Active' },
+
+  // ── Logistics Providers ──────────────────────────────────────────────────────
+  { id: 'perm-032', key: 'logistics-providers.view', name: 'View Logistics Providers', module: 'Logistics Providers', action: 'view', description: 'View logistics provider directory.', type: 'System', status: 'Active' },
+  { id: 'perm-033', key: 'logistics-providers.manage', name: 'Manage Logistics Providers', module: 'Logistics Providers', action: 'manage', description: 'Create, edit and deactivate logistics providers.', type: 'System', status: 'Active' },
+
+  // ── Custom Agents ────────────────────────────────────────────────────────────
+  { id: 'perm-034', key: 'custom-agents.view', name: 'View Custom Agents', module: 'Custom Agents', action: 'view', description: 'View customs agent directory.', type: 'System', status: 'Active' },
+  { id: 'perm-035', key: 'custom-agents.manage', name: 'Manage Custom Agents', module: 'Custom Agents', action: 'manage', description: 'Create and manage customs agents.', type: 'System', status: 'Active' },
+
+  // ── Vendors ──────────────────────────────────────────────────────────────────
+  { id: 'perm-036', key: 'vendors.view', name: 'View Vendors', module: 'Vendors', action: 'view', description: 'View vendor directory and profile.', type: 'System', status: 'Active' },
+  { id: 'perm-037', key: 'vendors.manage', name: 'Manage Vendors', module: 'Vendors', action: 'manage', description: 'Create, edit and manage vendors.', type: 'System', status: 'Active' },
+
+  // ── Exchange Rates ───────────────────────────────────────────────────────────
+  { id: 'perm-038', key: 'exchange-rates.view', name: 'View Exchange Rates', module: 'Exchange Rates', action: 'view', description: 'View currency exchange rates.', type: 'System', status: 'Active' },
+  { id: 'perm-039', key: 'exchange-rates.manage', name: 'Manage Exchange Rates', module: 'Exchange Rates', action: 'manage', description: 'Update FX rates used for INR conversion.', type: 'System', status: 'Active' },
+
+  // ── SAP Sync ─────────────────────────────────────────────────────────────────
+  { id: 'perm-040', key: 'sap.view', name: 'View SAP Sync', module: 'Sap', action: 'view', description: 'View SAP sync run logs.', type: 'System', status: 'Active' },
+  { id: 'perm-041', key: 'sap.sync', name: 'Trigger SAP Sync', module: 'Sap', action: 'sync', description: 'Manually trigger SAP data sync.', type: 'System', status: 'Active' },
+
+  // ── Workflows ────────────────────────────────────────────────────────────────
+  { id: 'perm-042', key: 'workflows.view', name: 'View Workflows', module: 'Workflows', action: 'view', description: 'View workflow slab routing rules.', type: 'System', status: 'Active' },
+  { id: 'perm-043', key: 'workflows.manage', name: 'Manage Workflows', module: 'Workflows', action: 'manage', description: 'Create, edit and delete workflow slabs.', type: 'System', status: 'Active' },
+
+  // ── Users ────────────────────────────────────────────────────────────────────
+  { id: 'perm-044', key: 'users.view', name: 'View Users', module: 'Users', action: 'view', description: 'View user directory and account details.', type: 'System', status: 'Active' },
+  { id: 'perm-045', key: 'users.manage', name: 'Manage Users', module: 'Users', action: 'manage', description: 'Create, edit and deactivate user accounts.', type: 'System', status: 'Active' },
+
+  // ── Roles & Permissions ──────────────────────────────────────────────────────
+  { id: 'perm-046', key: 'roles.view', name: 'View Roles', module: 'Roles & Permissions', action: 'view', description: 'View system roles and permission matrix.', type: 'System', status: 'Active' },
+  { id: 'perm-047', key: 'roles.manage', name: 'Manage Roles', module: 'Roles & Permissions', action: 'manage', description: 'Create, edit roles and assign permissions.', type: 'System', status: 'Active' },
+  { id: 'perm-048', key: 'permissions.view', name: 'View Permissions', module: 'Roles & Permissions', action: 'view-perms', description: 'View the permission registry.', type: 'System', status: 'Active' },
+  { id: 'perm-049', key: 'permissions.create', name: 'Create Permissions', module: 'Roles & Permissions', action: 'create-perms', description: 'Create new permission keys.', type: 'System', status: 'Active' },
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ALL 10 ROLES (matching the user's reference spec)
+// ─────────────────────────────────────────────────────────────────────────────
 export const DEFAULT_ROLES = [
   {
-    id: 'role-1',
-    roleName: 'System Admin',
-    description: 'Full database and administrative control across all modules.',
+    id: 'role-accounts',
+    roleName: 'accounts',
+    description: 'Accounts team — financial record views, payment tracking and basic dashboard access.',
     type: 'System',
     status: 'Active',
     permissions: {
-      users: ['read', 'create', 'update', 'delete'],
-      vendors: ['read', 'create', 'update', 'delete'],
-      workflows: ['read', 'create', 'update', 'delete'],
-      'exchange-rates': ['read', 'update'],
-      approvals: ['read', 'approve', 'reject'],
-      roles: ['read', 'update']
+      'dashboard': ['view'],
+      'purchase-orders': ['view'],
+      'advance-payments': ['view'],
+      'invoice-payments': ['view'],
+      'logistics-payments': ['view'],
+      'custom-duty': ['view'],
+      'approvals': ['view'],
+      'blank-invoices': ['view'],
+      'exchange-rates': ['view'],
+      'sap': ['view']
     }
   },
   {
-    id: 'role-2',
-    roleName: 'Finance Lead',
-    description: 'Financial approval authority, rate maintenance, and vendor oversight.',
+    id: 'role-admin',
+    roleName: 'admin',
+    description: 'Full administrative control across all modules and settings.',
     type: 'System',
     status: 'Active',
     permissions: {
-      users: ['read'],
-      vendors: ['read', 'update'],
-      workflows: ['read', 'update'],
-      'exchange-rates': ['read', 'update'],
-      approvals: ['read', 'approve', 'reject'],
-      roles: ['read']
+      'dashboard': ['view'],
+      'purchase-orders': ['view'],
+      'advance-payments': ['view', 'create', 'delete', 'mark-paid'],
+      'invoice-payments': ['view', 'create', 'delete', 'mark-paid'],
+      'logistics-payments': ['view', 'create', 'delete', 'mark-paid'],
+      'custom-duty': ['view', 'create', 'delete', 'mark-paid'],
+      'blank-invoices': ['view', 'action', 'mark-paid'],
+      'approvals': ['view', 'action'],
+      'rfq': ['view', 'create', 'delete', 'award'],
+      'bl': ['view', 'manage'],
+      'exim': ['view', 'manage'],
+      'logistics-providers': ['view', 'manage'],
+      'custom-agents': ['view', 'manage'],
+      'vendors': ['view', 'manage'],
+      'exchange-rates': ['view', 'manage'],
+      'sap': ['view', 'sync'],
+      'workflows': ['view', 'manage'],
+      'users': ['view', 'manage'],
+      'roles': ['view', 'manage'],
+      'permissions': ['view-perms', 'create-perms']
     }
   },
   {
-    id: 'role-3',
-    roleName: 'Procurement Head',
-    description: 'Procurement operations, supplier provisioning, and PO approvals.',
+    id: 'role-cfo',
+    roleName: 'cfo',
+    description: 'Chief Financial Officer — full financial visibility and approval authority.',
     type: 'System',
     status: 'Active',
     permissions: {
-      users: ['read'],
-      vendors: ['read', 'create', 'update'],
-      workflows: ['read'],
-      approvals: ['read', 'approve', 'reject']
+      'dashboard': ['view'],
+      'purchase-orders': ['view'],
+      'advance-payments': ['view', 'mark-paid'],
+      'invoice-payments': ['view', 'mark-paid'],
+      'logistics-payments': ['view', 'mark-paid'],
+      'custom-duty': ['view', 'mark-paid'],
+      'approvals': ['view', 'action'],
+      'exchange-rates': ['view', 'manage'],
+      'vendors': ['view'],
+      'workflows': ['view']
     }
   },
   {
-    id: 'role-4',
-    roleName: 'MD',
-    description: 'Executive tier approval authority for high-value threshold payments.',
+    id: 'role-exim',
+    roleName: 'exim',
+    description: 'EXIM team — handles import/export clearance, logistics, customs and BL tracking.',
     type: 'System',
     status: 'Active',
     permissions: {
-      workflows: ['read'],
-      approvals: ['read', 'approve', 'reject']
+      'dashboard': ['view'],
+      'purchase-orders': ['view'],
+      'advance-payments': ['view'],
+      'invoice-payments': ['view'],
+      'logistics-payments': ['view', 'create'],
+      'custom-duty': ['view', 'create'],
+      'blank-invoices': ['view', 'action'],
+      'approvals': ['view', 'action'],
+      'rfq': ['view', 'create'],
+      'bl': ['view', 'manage'],
+      'exim': ['view', 'manage'],
+      'logistics-providers': ['view', 'manage'],
+      'custom-agents': ['view', 'manage'],
+      'exchange-rates': ['view'],
+      'sap': ['view'],
+      'vendors': ['view'],
+      'workflows': ['view']
     }
   },
   {
-    id: 'role-5',
-    roleName: 'Logistics Lead',
-    description: 'Logistics payment verification and supplier coordination.',
+    id: 'role-exim-manager',
+    roleName: 'exim-manager',
+    description: 'EXIM Manager — oversight of EXIM operations with approval and RFQ award authority.',
+    type: 'Custom',
+    status: 'Active',
+    permissions: {
+      'dashboard': ['view'],
+      'advance-payments': ['view'],
+      'rfq': ['view', 'create', 'award'],
+      'bl': ['view', 'manage'],
+      'exim': ['view', 'manage'],
+      'logistics-providers': ['view', 'manage'],
+      'custom-agents': ['view', 'manage'],
+      'logistics-payments': ['view', 'create'],
+      'custom-duty': ['view'],
+      'blank-invoices': ['view', 'action'],
+      'approvals': ['view', 'action'],
+      'exchange-rates': ['view'],
+      'vendors': ['view'],
+      'workflows': ['view'],
+      'users': ['view']
+    }
+  },
+  {
+    id: 'role-finance',
+    roleName: 'finance',
+    description: 'Finance team — payment marking, vendor oversight and financial approvals.',
     type: 'System',
     status: 'Active',
     permissions: {
-      vendors: ['read'],
-      approvals: ['read', 'approve']
+      'dashboard': ['view'],
+      'logistics-payments': ['view', 'mark-paid'],
+      'advance-payments': ['view', 'mark-paid'],
+      'invoice-payments': ['view', 'mark-paid'],
+      'custom-duty': ['view', 'mark-paid'],
+      'blank-invoices': ['view', 'mark-paid'],
+      'approvals': ['view', 'action'],
+      'exchange-rates': ['view', 'manage'],
+      'vendors': ['view', 'manage'],
+      'purchase-orders': ['view'],
+      'rfq': ['view'],
+      'sap': ['view'],
+      'users': ['view'],
+      'workflows': ['view'],
+      'roles': ['view'],
+      'permissions': ['view-perms']
+    }
+  },
+  {
+    id: 'role-logistics',
+    roleName: 'logistics',
+    description: 'Logistics team — logistics provider management and logistics payment visibility.',
+    type: 'System',
+    status: 'Active',
+    permissions: {
+      'logistics-providers': ['view', 'manage'],
+      'logistics-payments': ['view', 'create'],
+      'rfq': ['view'],
+      'bl': ['view'],
+      'exim': ['view']
+    }
+  },
+  {
+    id: 'role-md',
+    roleName: 'md',
+    description: 'Managing Director — executive-tier authority for final approvals and full visibility.',
+    type: 'Custom',
+    status: 'Active',
+    permissions: {
+      'dashboard': ['view'],
+      'logistics-providers': ['view', 'manage'],
+      'logistics-payments': ['view', 'mark-paid'],
+      'advance-payments': ['view', 'mark-paid'],
+      'invoice-payments': ['view', 'mark-paid'],
+      'purchase-orders': ['view'],
+      'rfq': ['view', 'award'],
+      'bl': ['view', 'manage'],
+      'exim': ['view', 'manage'],
+      'custom-duty': ['view', 'mark-paid'],
+      'blank-invoices': ['view', 'action', 'mark-paid'],
+      'approvals': ['view', 'action'],
+      'exchange-rates': ['view', 'manage'],
+      'vendors': ['view', 'manage'],
+      'workflows': ['view', 'manage'],
+      'users': ['view'],
+      'roles': ['view'],
+      'sap': ['view'],
+      'custom-agents': ['view'],
+      'permissions': ['view-perms']
+    }
+  },
+  {
+    id: 'role-procurement',
+    roleName: 'procurement',
+    description: 'Procurement team — purchase orders, advance payments, invoice and RFQ management.',
+    type: 'System',
+    status: 'Active',
+    permissions: {
+      'dashboard': ['view'],
+      'purchase-orders': ['view'],
+      'advance-payments': ['view', 'create'],
+      'invoice-payments': ['view', 'create'],
+      'logistics-payments': ['view', 'create'],
+      'custom-duty': ['view'],
+      'blank-invoices': ['view'],
+      'approvals': ['view', 'action'],
+      'rfq': ['view', 'create'],
+      'exchange-rates': ['view'],
+      'vendors': ['view', 'manage'],
+      'workflows': ['view'],
+      'users': ['view'],
+      'sap': ['view'],
+      'custom-agents': ['view'],
+      'logistics-providers': ['view'],
+      'roles': ['view'],
+      'permissions': ['view-perms']
+    }
+  },
+  {
+    id: 'role-procurement-head',
+    roleName: 'procurement_head',
+    description: 'Procurement Head — senior procurement authority with approval and team oversight.',
+    type: 'Custom',
+    status: 'Active',
+    permissions: {
+      'dashboard': ['view'],
+      'purchase-orders': ['view'],
+      'advance-payments': ['view', 'create', 'mark-paid'],
+      'invoice-payments': ['view', 'create', 'mark-paid'],
+      'logistics-payments': ['view', 'create', 'mark-paid'],
+      'custom-duty': ['view', 'create'],
+      'blank-invoices': ['view', 'action'],
+      'approvals': ['view', 'action'],
+      'rfq': ['view', 'create', 'award'],
+      'bl': ['view'],
+      'exim': ['view'],
+      'exchange-rates': ['view'],
+      'vendors': ['view', 'manage'],
+      'custom-agents': ['view', 'manage'],
+      'logistics-providers': ['view', 'manage'],
+      'workflows': ['view'],
+      'users': ['view'],
+      'sap': ['view'],
+      'roles': ['view'],
+      'permissions': ['view-perms']
     }
   }
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// IMPORTS FOR FULL SEED
+// ─────────────────────────────────────────────────────────────────────────────
 import { ApprovalWorkflow, ApprovalInstance, ApprovalAction } from '../models/ApprovalEngine.js';
 import { AdvancePayment } from '../models/AdvancePayment.js';
 import { InvoicePayment } from '../models/InvoicePayment.js';
@@ -105,425 +352,189 @@ import { Document } from '../models/Document.js';
 import { User } from '../models/User.js';
 import { Vendor } from '../models/Vendor.js';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DUMMY USERS — 15+ users across all 10 roles
+// ─────────────────────────────────────────────────────────────────────────────
+const DUMMY_USERS = [
+  // ── Super Admin ────────────────────────────────────────────────────────────
+  { id: 'usr-001', name: 'Prashant Vadhvana', email: 'prashantvadhvana@gmail.com', role: 'admin', department: 'Executive Administration', avatar: 'PV', status: 'Active' },
+
+  // ── Accounts (role: accounts) ───────────────────────────────────────────────
+  { id: 'usr-002', name: 'Kavya Mehta', email: 'kavya.mehta@rayzon.com', role: 'accounts', department: 'Accounts & Finance', avatar: 'KM', status: 'Active' },
+
+  // ── CFO ────────────────────────────────────────────────────────────────────
+  { id: 'usr-003', name: 'Rajesh Patel', email: 'rajesh.patel@rayzon.com', role: 'cfo', department: 'Finance & Treasury', avatar: 'RP', status: 'Active' },
+
+  // ── EXIM Team (role: exim) ──────────────────────────────────────────────────
+  { id: 'usr-004', name: 'Sneha Sharma', email: 'sneha.sharma@rayzon.com', role: 'exim', department: 'EXIM & Logistics', avatar: 'SS', status: 'Active' },
+  { id: 'usr-005', name: 'Deepak Nair', email: 'deepak.nair@rayzon.com', role: 'exim', department: 'EXIM & Logistics', avatar: 'DN', status: 'Active' },
+  { id: 'usr-006', name: 'Priya Joshi', email: 'priya.joshi@rayzon.com', role: 'exim', department: 'EXIM & Logistics', avatar: 'PJ', status: 'Active' },
+  { id: 'usr-007', name: 'Amit Kulkarni', email: 'amit.kulkarni@rayzon.com', role: 'exim', department: 'EXIM & Logistics', avatar: 'AK', status: 'Active' },
+  { id: 'usr-008', name: 'Riya Desai', email: 'riya.desai@rayzon.com', role: 'exim', department: 'EXIM & Logistics', avatar: 'RD', status: 'Active' },
+
+  // ── EXIM Manager ────────────────────────────────────────────────────────────
+  { id: 'usr-009', name: 'Manish Thakkar', email: 'manish.thakkar@rayzon.com', role: 'exim-manager', department: 'EXIM & Logistics', avatar: 'MT', status: 'Active' },
+
+  // ── Finance ─────────────────────────────────────────────────────────────────
+  { id: 'usr-010', name: 'Suresh Kumar', email: 'suresh.kumar@rayzon.com', role: 'finance', department: 'Finance & Treasury', avatar: 'SK', status: 'Active' },
+  { id: 'usr-011', name: 'Anita Verma', email: 'anita.verma@rayzon.com', role: 'finance', department: 'Finance & Treasury', avatar: 'AV', status: 'Active' },
+
+  // ── Logistics ───────────────────────────────────────────────────────────────
+  { id: 'usr-012', name: 'Vikram Singh', email: 'vikram.singh@rayzon.com', role: 'logistics', department: 'Logistics & Supply Chain', avatar: 'VS', status: 'Active' },
+
+  // ── MD ──────────────────────────────────────────────────────────────────────
+  { id: 'usr-013', name: 'Arjun Shah', email: 'arjun.shah@rayzon.com', role: 'md', department: 'Executive Board', avatar: 'AS', status: 'Active' },
+
+  // ── Procurement ─────────────────────────────────────────────────────────────
+  { id: 'usr-014', name: 'Neha Gupta', email: 'neha.gupta@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'NG', status: 'Active' },
+  { id: 'usr-015', name: 'Rohit Pandey', email: 'rohit.pandey@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'RP', status: 'Active' },
+  { id: 'usr-016', name: 'Pooja Agarwal', email: 'pooja.agarwal@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'PA', status: 'Active' },
+  { id: 'usr-017', name: 'Rahul Mehta', email: 'rahul.mehta@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'RM', status: 'Active' },
+  { id: 'usr-018', name: 'Sanjay Bhatt', email: 'sanjay.bhatt@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'SB', status: 'Active' },
+  { id: 'usr-019', name: 'Divya Rao', email: 'divya.rao@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'DR', status: 'Active' },
+  { id: 'usr-020', name: 'Karan Patel', email: 'karan.patel@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'KP', status: 'Active' },
+  { id: 'usr-021', name: 'Monika Trivedi', email: 'monika.trivedi@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'MT', status: 'Active' },
+
+  // ── Procurement Head ────────────────────────────────────────────────────────
+  { id: 'usr-022', name: 'Harish Solanki', email: 'harish.solanki@rayzon.com', role: 'procurement_head', department: 'Procurement', avatar: 'HS', status: 'Active',
+    // Example: Harish is on leave, parent is Arjun Shah (MD)
+    parentUserId: 'usr-013', delegationActive: false, delegationNote: 'Annual leave delegation' }
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN SEED FUNCTION
+// ─────────────────────────────────────────────────────────────────────────────
 export const seedDatabase = async () => {
   try {
+    // ── Permissions ──────────────────────────────────────────────────────────
     const permCount = await Permission.countDocuments();
-    if (permCount === 0) {
-      console.log('[DB] Seeding default system permissions...');
-      await Permission.insertMany(DEFAULT_PERMISSIONS);
+    if (permCount < DEFAULT_PERMISSIONS.length) {
+      console.log('[DB] Seeding/updating system permissions...');
+      for (const perm of DEFAULT_PERMISSIONS) {
+        await Permission.updateOne({ id: perm.id }, { $setOnInsert: perm }, { upsert: true });
+      }
     }
 
-    const roleCount = await Role.countDocuments();
-    if (roleCount === 0) {
-      console.log('[DB] Seeding default system roles...');
-      await Role.insertMany(DEFAULT_ROLES);
-    } else {
-      // Ensure existing roles have permissions object populated
-      for (const defRole of DEFAULT_ROLES) {
-        const existing = await Role.findOne({ roleName: defRole.roleName });
-        if (existing && (!existing.permissions || Object.keys(existing.permissions).length === 0)) {
-          existing.permissions = defRole.permissions;
-          existing.markModified('permissions');
+    // ── Roles ────────────────────────────────────────────────────────────────
+    console.log('[DB] Seeding/updating system roles...');
+    for (const defRole of DEFAULT_ROLES) {
+      await Role.updateOne(
+        { id: defRole.id },
+        { $set: { ...defRole } },
+        { upsert: true }
+      );
+    }
+
+    // ── Users ────────────────────────────────────────────────────────────────
+    console.log('[DB] Seeding/updating system users...');
+    const defaultPassHash = await User.hashPassword('Rayzon@2026');
+    for (const u of DUMMY_USERS) {
+      const existing = await User.findOne({ email: u.email });
+      if (!existing) {
+        await User.create({ ...u, passwordHash: defaultPassHash });
+      } else {
+        // Update role if admin
+        if (u.email === 'prashantvadhvana@gmail.com') {
+          existing.role = 'admin';
           await existing.save();
         }
       }
     }
 
-    // --- Seed System Users ---
-    const userCount = await User.countDocuments();
-    if (userCount === 0) {
-      console.log('[DB] Seeding default system users...');
-      const defaultPassHash = await User.hashPassword('Rayzon@2026');
-      await User.insertMany([
-        {
-          id: 'usr-001',
-          name: 'Prashant Vadhvana',
-          email: 'prashantvadhvana@gmail.com',
-          passwordHash: defaultPassHash,
-          role: 'System Admin',
-          department: 'Executive Administration',
-          status: 'Active',
-          avatar: 'PV'
-        },
-        {
-          id: 'usr-002',
-          name: 'Procurement Head User',
-          email: 'procurement@rayzon.com',
-          passwordHash: defaultPassHash,
-          role: 'Procurement Head',
-          department: 'Procurement',
-          status: 'Active',
-          avatar: 'PH'
-        },
-        {
-          id: 'usr-003',
-          name: 'Finance Manager',
-          email: 'finance@rayzon.com',
-          passwordHash: defaultPassHash,
-          role: 'Finance Lead',
-          department: 'Finance & Treasury',
-          status: 'Active',
-          avatar: 'FM'
-        },
-        {
-          id: 'usr-004',
-          name: 'Managing Director',
-          email: 'md@rayzon.com',
-          passwordHash: defaultPassHash,
-          role: 'MD',
-          department: 'Executive Board',
-          status: 'Active',
-          avatar: 'MD'
-        },
-        {
-          id: 'usr-005',
-          name: 'Logistics Manager',
-          email: 'logistics@rayzon.com',
-          passwordHash: defaultPassHash,
-          role: 'Logistics Lead',
-          department: 'Logistics & EXIM',
-          status: 'Active',
-          avatar: 'LM'
-        }
-      ]);
-    }
-
-    // --- Seed Freight Forwarder / Logistics Vendors ---
-    const ffVendorCount = await Vendor.countDocuments({ 
-      vendorType: { $in: ['Freight Forwarder', 'Shipping Line', 'Logistics Provider'] } 
+    // ── Freight Forwarder / Logistics Vendors ─────────────────────────────────
+    const ffVendorCount = await Vendor.countDocuments({
+      vendorType: { $in: ['Freight Forwarder', 'Shipping Line', 'Logistics Provider'] }
     });
     if (ffVendorCount === 0) {
       console.log('[DB] Seeding Freight Forwarder / Shipping Line vendors...');
       const ffPassHash = await User.hashPassword('Rayzon@2026');
       await Vendor.insertMany([
-        {
-          id: 'v-ff-1', supplierId: 'FF-20000215', sapVendorCode: '20000215',
-          companyName: 'Aquair International Freight Forwarders',
-          contactPerson: 'Customs Manager', phone: '+91 22 2345 6789',
-          email: 'customs@aquairintl.com', vendorType: 'Freight Forwarder',
-          category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days',
-          gstin: '27AAACA9081F1Z1', pan: 'AAACA9081F',
-          bankName: 'HDFC Bank', branch: 'Mumbai', accountNumber: '**** 0011', ifscCode: 'HDFC0000101',
-          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
-        },
-        {
-          id: 'v-ff-2', supplierId: 'FF-10002355', sapVendorCode: '10002355',
-          companyName: 'Babaji Shivram Clearing & Carriers',
-          contactPerson: 'Clearing Manager', phone: '+91 99 8877 6655',
-          email: 'clearing@babajishivram.in', vendorType: 'Freight Forwarder',
-          category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days',
-          gstin: '24AAACB0001B1Z1', pan: 'AAACB0001B',
-          bankName: 'SBI Bank', branch: 'Gandhidham', accountNumber: '**** 1122', ifscCode: 'SBIN0001234',
-          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
-        },
-        {
-          id: 'v-ff-3', supplierId: 'FF-11001450', sapVendorCode: '11001450',
-          companyName: 'Fairwinds Shipping Private Limited',
-          contactPerson: 'Shipping Manager', phone: '+91 22 4455 6677',
-          email: 'ops@fairwindsshipping.com', vendorType: 'Shipping Line',
-          category: 'Shipping Line', status: 'Active', paymentTerms: '45 Days',
-          gstin: '27AAACF0002F1Z1', pan: 'AAACF0002F',
-          bankName: 'ICICI Bank', branch: 'Mumbai', accountNumber: '**** 2233', ifscCode: 'ICIC0000456',
-          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
-        },
-        {
-          id: 'v-ff-4', supplierId: 'FF-11001810', sapVendorCode: '11001810',
-          companyName: 'Fast Forward Logistics India',
-          contactPerson: 'Magnesh Phapale', phone: '+91 98765 43210',
-          email: 'magnesh@fflindia.com', vendorType: 'Freight Forwarder',
-          category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days',
-          gstin: '27AAACF0003F1Z1', pan: 'AAACF0003F',
-          bankName: 'Axis Bank', branch: 'Mumbai', accountNumber: '**** 3344', ifscCode: 'UTIB0000789',
-          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
-        },
-        {
-          id: 'v-ff-5', supplierId: 'FF-11001148', sapVendorCode: '11001148',
-          companyName: 'Gef Global Logistics Pvt Ltd',
-          contactPerson: 'Operations Head', phone: '+91 22 3344 5566',
-          email: 'ops@gefglobal.com', vendorType: 'Freight Forwarder',
-          category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days',
-          gstin: '27AAACG0004G1Z1', pan: 'AAACG0004G',
-          bankName: 'Kotak Bank', branch: 'Mumbai', accountNumber: '**** 4455', ifscCode: 'KKBK0000012',
-          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
-        },
-        {
-          id: 'v-ff-6', supplierId: 'FF-50000131', sapVendorCode: '50000131',
-          companyName: 'Globiiz Synergy Private Limited',
-          contactPerson: 'Freight Manager', phone: '+91 22 5566 7788',
-          email: 'freight@globiiz.com', vendorType: 'Freight Forwarder',
-          category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days',
-          gstin: '27AAACG0005G1Z1', pan: 'AAACG0005G',
-          bankName: 'PNB', branch: 'Mumbai', accountNumber: '**** 5566', ifscCode: 'PUNB0001234',
-          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
-        },
-        {
-          id: 'v-ff-7', supplierId: 'FF-11001776', sapVendorCode: '11001776',
-          companyName: 'Kgl Network Pvt. Ltd.',
-          contactPerson: 'Network Manager', phone: '+91 22 6677 8899',
-          email: 'ops@kglnetwork.com', vendorType: 'Freight Forwarder',
-          category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days',
-          gstin: '27AAACK0006K1Z1', pan: 'AAACK0006K',
-          bankName: 'HDFC Bank', branch: 'Navi Mumbai', accountNumber: '**** 6677', ifscCode: 'HDFC0001001',
-          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
-        },
-        {
-          id: 'v-ff-8', supplierId: 'FF-11001920', sapVendorCode: '11001920',
-          companyName: 'Isgfl India Pvt. Ltd.',
-          contactPerson: 'Shipping Head', phone: '+91 22 7788 9900',
-          email: 'shipping@isgfl.com', vendorType: 'Shipping Line',
-          category: 'Shipping Line', status: 'Active', paymentTerms: '45 Days',
-          gstin: '27AAACI0007I1Z1', pan: 'AAACI0007I',
-          bankName: 'Citibank', branch: 'Mumbai', accountNumber: '**** 7788', ifscCode: 'CITI0000001',
-          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
-        },
-        {
-          id: 'v-ff-9', supplierId: 'FF-11002010', sapVendorCode: '11002010',
-          companyName: 'Seaways Shipping & Logistics Ltd',
-          contactPerson: 'Logistics Head', phone: '+91 22 8899 0011',
-          email: 'ops@seawaysshipping.com', vendorType: 'Freight Forwarder',
-          category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days',
-          gstin: '27AAACS0008S1Z1', pan: 'AAACS0008S',
-          bankName: 'HDFC Bank', branch: 'Nhava Sheva', accountNumber: '**** 8899', ifscCode: 'HDFC0002001',
-          portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash
-        }
+        { id: 'v-ff-1', supplierId: 'FF-20000215', sapVendorCode: '20000215', companyName: 'Aquair International Freight Forwarders', contactPerson: 'Customs Manager', phone: '+91 22 2345 6789', email: 'customs@aquairintl.com', vendorType: 'Freight Forwarder', category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days', gstin: '27AAACA9081F1Z1', pan: 'AAACA9081F', bankName: 'HDFC Bank', branch: 'Mumbai', accountNumber: '**** 0011', ifscCode: 'HDFC0000101', portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash },
+        { id: 'v-ff-2', supplierId: 'FF-10002355', sapVendorCode: '10002355', companyName: 'Babaji Shivram Clearing & Carriers', contactPerson: 'Clearing Manager', phone: '+91 99 8877 6655', email: 'clearing@babajishivram.in', vendorType: 'Freight Forwarder', category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days', gstin: '24AAACB0001B1Z1', pan: 'AAACB0001B', bankName: 'SBI Bank', branch: 'Gandhidham', accountNumber: '**** 1122', ifscCode: 'SBIN0001234', portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash },
+        { id: 'v-ff-3', supplierId: 'FF-11001450', sapVendorCode: '11001450', companyName: 'Fairwinds Shipping Private Limited', contactPerson: 'Shipping Manager', phone: '+91 22 4455 6677', email: 'ops@fairwindsshipping.com', vendorType: 'Shipping Line', category: 'Shipping Line', status: 'Active', paymentTerms: '45 Days', gstin: '27AAACF0002F1Z1', pan: 'AAACF0002F', bankName: 'ICICI Bank', branch: 'Mumbai', accountNumber: '**** 2233', ifscCode: 'ICIC0000456', portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash },
+        { id: 'v-ff-4', supplierId: 'FF-11001810', sapVendorCode: '11001810', companyName: 'Fast Forward Logistics India', contactPerson: 'Magnesh Phapale', phone: '+91 98765 43210', email: 'magnesh@fflindia.com', vendorType: 'Freight Forwarder', category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days', gstin: '27AAACF0003F1Z1', pan: 'AAACF0003F', bankName: 'Axis Bank', branch: 'Mumbai', accountNumber: '**** 3344', ifscCode: 'UTIB0000789', portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash },
+        { id: 'v-ff-5', supplierId: 'FF-11001148', sapVendorCode: '11001148', companyName: 'Gef Global Logistics Pvt Ltd', contactPerson: 'Operations Head', phone: '+91 22 3344 5566', email: 'ops@gefglobal.com', vendorType: 'Freight Forwarder', category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days', gstin: '27AAACG0004G1Z1', pan: 'AAACG0004G', bankName: 'Kotak Bank', branch: 'Mumbai', accountNumber: '**** 4455', ifscCode: 'KKBK0000012', portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash },
+        { id: 'v-ff-6', supplierId: 'FF-50000131', sapVendorCode: '50000131', companyName: 'Globiiz Synergy Private Limited', contactPerson: 'Freight Manager', phone: '+91 22 5566 7788', email: 'freight@globiiz.com', vendorType: 'Freight Forwarder', category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days', gstin: '27AAACG0005G1Z1', pan: 'AAACG0005G', bankName: 'PNB', branch: 'Mumbai', accountNumber: '**** 5566', ifscCode: 'PUNB0001234', portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash },
+        { id: 'v-ff-7', supplierId: 'FF-11001776', sapVendorCode: '11001776', companyName: 'Kgl Network Pvt. Ltd.', contactPerson: 'Network Manager', phone: '+91 22 6677 8899', email: 'ops@kglnetwork.com', vendorType: 'Freight Forwarder', category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days', gstin: '27AAACK0006K1Z1', pan: 'AAACK0006K', bankName: 'HDFC Bank', branch: 'Navi Mumbai', accountNumber: '**** 6677', ifscCode: 'HDFC0001001', portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash },
+        { id: 'v-ff-8', supplierId: 'FF-11001920', sapVendorCode: '11001920', companyName: 'Isgfl India Pvt. Ltd.', contactPerson: 'Shipping Head', phone: '+91 22 7788 9900', email: 'shipping@isgfl.com', vendorType: 'Shipping Line', category: 'Shipping Line', status: 'Active', paymentTerms: '45 Days', gstin: '27AAACI0007I1Z1', pan: 'AAACI0007I', bankName: 'Citibank', branch: 'Mumbai', accountNumber: '**** 7788', ifscCode: 'CITI0000001', portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash },
+        { id: 'v-ff-9', supplierId: 'FF-11002010', sapVendorCode: '11002010', companyName: 'Seaways Shipping & Logistics Ltd', contactPerson: 'Logistics Head', phone: '+91 22 8899 0011', email: 'ops@seawaysshipping.com', vendorType: 'Freight Forwarder', category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days', gstin: '27AAACS0008S1Z1', pan: 'AAACS0008S', bankName: 'HDFC Bank', branch: 'Nhava Sheva', accountNumber: '**** 8899', ifscCode: 'HDFC0002001', portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash },
       ]);
     }
 
-    // --- Seed Approval Workflows ---
+    // ── Approval Workflows ────────────────────────────────────────────────────
     const workflowCount = await ApprovalWorkflow.countDocuments();
     if (workflowCount === 0) {
-
       console.log('[DB] Seeding P2P Approval Workflows...');
       await ApprovalWorkflow.insertMany([
-        {
-          workflowId: 'WF-001',
-          name: 'Advance Payment (Up to ₹50K)',
-          module: 'advance_payment',
-          minAmount: 0,
-          maxAmount: 50000,
-          status: 'Active',
-          steps: [
-            { stepNumber: 1, stepName: 'Procurement Head Approval', approverRole: 'procurement_head', escalationHours: 24 }
-          ]
-        },
-        {
-          workflowId: 'WF-002',
-          name: 'Advance Payment (> ₹50K)',
-          module: 'advance_payment',
-          minAmount: 50001,
-          maxAmount: 1000000,
-          status: 'Active',
-          steps: [
-            { stepNumber: 1, stepName: 'Procurement Head Approval', approverRole: 'procurement_head', escalationHours: 24 },
-            { stepNumber: 2, stepName: 'Finance Approval', approverRole: 'finance', escalationHours: 24 }
-          ]
-        },
-        {
-          workflowId: 'WF-003',
-          name: 'Invoice Payment (Up to ₹1CR)',
-          module: 'invoice_payment',
-          minAmount: 0,
-          maxAmount: 10000000,
-          status: 'Active',
-          steps: [
-            { stepNumber: 1, stepName: 'Procurement Head Review', approverRole: 'procurement_head', escalationHours: 24 },
-            { stepNumber: 2, stepName: 'Finance Head Approval', approverRole: 'finance', escalationHours: 48 }
-          ]
-        },
-        {
-          workflowId: 'WF-009',
-          name: 'RFQ Vendor Allocation Approval',
-          module: 'rfq',
-          minAmount: 0,
-          maxAmount: 50000000,
-          status: 'Active',
-          steps: [
-            { stepNumber: 1, stepName: 'Procurement Head Review', approverRole: 'procurement_head', escalationHours: 24 },
-            { stepNumber: 2, stepName: 'EXIM Manager Signoff', approverRole: 'exim-manager', escalationHours: 24 },
-            { stepNumber: 3, stepName: 'MD Final Approval', approverRole: 'md', escalationHours: 72 }
-          ]
-        }
+        { workflowId: 'WF-001', name: 'Advance Payment (Up to ₹50K)', module: 'advance_payment', minAmount: 0, maxAmount: 50000, status: 'Active', steps: [{ stepNumber: 1, stepName: 'Procurement Head Approval', approverRole: 'procurement_head', escalationHours: 24 }] },
+        { workflowId: 'WF-002', name: 'Advance Payment (> ₹50K)', module: 'advance_payment', minAmount: 50001, maxAmount: 1000000, status: 'Active', steps: [{ stepNumber: 1, stepName: 'Procurement Head Approval', approverRole: 'procurement_head', escalationHours: 24 }, { stepNumber: 2, stepName: 'Finance Approval', approverRole: 'finance', escalationHours: 24 }] },
+        { workflowId: 'WF-003', name: 'Invoice Payment (Up to ₹1CR)', module: 'invoice_payment', minAmount: 0, maxAmount: 10000000, status: 'Active', steps: [{ stepNumber: 1, stepName: 'Procurement Head Review', approverRole: 'procurement_head', escalationHours: 24 }, { stepNumber: 2, stepName: 'Finance Head Approval', approverRole: 'finance', escalationHours: 48 }] },
+        { workflowId: 'WF-009', name: 'RFQ Vendor Allocation Approval', module: 'rfq', minAmount: 0, maxAmount: 50000000, status: 'Active', steps: [{ stepNumber: 1, stepName: 'Procurement Head Review', approverRole: 'procurement_head', escalationHours: 24 }, { stepNumber: 2, stepName: 'EXIM Manager Signoff', approverRole: 'exim-manager', escalationHours: 24 }, { stepNumber: 3, stepName: 'MD Final Approval', approverRole: 'md', escalationHours: 72 }] }
       ]);
     }
 
-    // --- Seed Invoice Payments ---
+    // ── Invoice Payments ──────────────────────────────────────────────────────
     const invCount = await InvoicePayment.countDocuments();
     if (invCount === 0) {
       console.log('[DB] Seeding Invoice Payment trace data...');
-      await InvoicePayment.create({
-        invoicePaymentId: 'INV-PAY-007',
-        poId: 'PO-2026-9901',
-        sapPoNumber: '31094582',
-        vendorId: 'VEND-001',
-        vendorName: 'Solar Tech Industries',
-        invoiceNumber: 'INV-20260713-0001',
-        asnNumber: '', // ASN only for Import vendors, not seeded here
-        grossAmount: 219497.36,
-        gstAmount: 39509.52,
-        tdsAmount: 4389.95,
-        netPayable: 254616.93,
-        status: 'approved',
-        approvalInstanceId: 'INST-11'
-      });
+      await InvoicePayment.create({ invoicePaymentId: 'INV-PAY-007', poId: 'PO-2026-9901', sapPoNumber: '31094582', vendorId: 'VEND-001', vendorName: 'Solar Tech Industries', invoiceNumber: 'INV-20260713-0001', asnNumber: '', grossAmount: 219497.36, gstAmount: 39509.52, tdsAmount: 4389.95, netPayable: 254616.93, status: 'approved', approvalInstanceId: 'INST-11' });
     }
 
-    // --- Seed Advance Payments ---
+    // ── Advance Payments ──────────────────────────────────────────────────────
     const advCount = await AdvancePayment.countDocuments();
     if (advCount === 0) {
       console.log('[DB] Seeding Advance Payment trace data...');
       await AdvancePayment.insertMany([
-        {
-          advanceId: 'ADV-PAY-001',
-          poId: 'PO-2026-8801',
-          sapPoNumber: '21094581',
-          vendorId: 'VEND-002',
-          vendorName: 'Global Silicon Supplies',
-          amount: 50000,
-          gstBreakup: { cgst: 41.325, sgst: 41.325, igst: 0, totalGst: 82.65 },
-          paymentMode: 'RTGS',
-          status: 'approved',
-          approvalInstanceId: 'INST-01'
-        },
-        {
-          advanceId: 'ADV-PAY-002',
-          poId: 'PO-2026-8802',
-          sapPoNumber: '21094582',
-          vendorId: 'VEND-003',
-          vendorName: 'Alpha Logistics & Materials',
-          amount: 2194.80,
-          gstBreakup: { cgst: 0, sgst: 0, igst: 0, totalGst: 0 },
-          paymentMode: 'RTGS',
-          status: 'draft',
-          approvalInstanceId: 'INST-02'
-        }
+        { advanceId: 'ADV-PAY-001', poId: 'PO-2026-8801', sapPoNumber: '21094581', vendorId: 'VEND-002', vendorName: 'Global Silicon Supplies', amount: 50000, gstBreakup: { cgst: 41.325, sgst: 41.325, igst: 0, totalGst: 82.65 }, paymentMode: 'RTGS', status: 'approved', approvalInstanceId: 'INST-01' },
+        { advanceId: 'ADV-PAY-002', poId: 'PO-2026-8802', sapPoNumber: '21094582', vendorId: 'VEND-003', vendorName: 'Alpha Logistics & Materials', amount: 2194.80, gstBreakup: { cgst: 0, sgst: 0, igst: 0, totalGst: 0 }, paymentMode: 'RTGS', status: 'draft', approvalInstanceId: 'INST-02' }
       ]);
     }
 
-    // --- Seed Custom Duty Payments ---
+    // ── Custom Duty Payments ──────────────────────────────────────────────────
     const customCount = await CustomDutyPayment.countDocuments();
     if (customCount === 0) {
       console.log('[DB] Seeding Custom Duty Payment trace data...');
-      await CustomDutyPayment.create({
-        customDutyId: 'CD-PAY-001',
-        referenceNumber: 'CD-20260713-0001',
-        boeNumber: 'BOE-994812',
-        boeDate: new Date('2026-07-13'),
-        portCode: 'INNSA1',
-        dutyAmount: 45000,
-        fineInterestAmount: 0,
-        totalAmount: 45000,
-        status: 'draft'
-      });
+      await CustomDutyPayment.create({ customDutyId: 'CD-PAY-001', referenceNumber: 'CD-20260713-0001', boeNumber: 'BOE-994812', boeDate: new Date('2026-07-13'), portCode: 'INNSA1', dutyAmount: 45000, fineInterestAmount: 0, totalAmount: 45000, status: 'draft' });
     }
 
-    // --- Seed Logistics Payments ---
+    // ── Logistics Payments ────────────────────────────────────────────────────
     const logCount = await LogisticsPayment.countDocuments();
     if (logCount === 0) {
       console.log('[DB] Seeding Logistics Payment trace data...');
-      await LogisticsPayment.create({
-        logisticsPaymentId: 'LOG-PAY-001',
-        referenceNumber: 'LOG-20260713-0001',
-        vendorId: 'VEND-102',
-        vendorName: 'Oceanic Freight Systems',
-        invoiceNumber: 'OFS-98471',
-        blNumber: 'BL-98471209',
-        freightCharges: 12000,
-        terminalHandlingCharges: 3000,
-        totalAmount: 15000,
-        status: 'draft'
-      });
+      await LogisticsPayment.create({ logisticsPaymentId: 'LOG-PAY-001', referenceNumber: 'LOG-20260713-0001', vendorId: 'VEND-102', vendorName: 'Oceanic Freight Systems', invoiceNumber: 'OFS-98471', blNumber: 'BL-98471209', freightCharges: 12000, terminalHandlingCharges: 3000, totalAmount: 15000, status: 'draft' });
     }
 
-    // --- Seed Approval Instances & Audit Actions ---
+    // ── Approval Instances & Actions ──────────────────────────────────────────
     const instCount = await ApprovalInstance.countDocuments();
     if (instCount === 0) {
       console.log('[DB] Seeding Approval Instances & Actions trace data...');
       await ApprovalInstance.insertMany([
-        {
-          instanceId: 'INST-11',
-          approvableType: 'InvoicePayment',
-          approvableId: 'INV-PAY-007',
-          workflowId: 'WF-003',
-          currentStep: 2,
-          totalSteps: 2,
-          assignedApproverRole: 'finance',
-          status: 'approved'
-        },
-        {
-          instanceId: 'INST-19',
-          approvableType: 'RfqHeader',
-          approvableId: 'RFQ-005',
-          workflowId: 'WF-009',
-          currentStep: 3,
-          totalSteps: 3,
-          assignedApproverRole: 'md',
-          status: 'returned'
-        }
+        { instanceId: 'INST-11', approvableType: 'InvoicePayment', approvableId: 'INV-PAY-007', workflowId: 'WF-003', currentStep: 2, totalSteps: 2, assignedApproverRole: 'finance', status: 'approved' },
+        { instanceId: 'INST-19', approvableType: 'RfqHeader', approvableId: 'RFQ-005', workflowId: 'WF-009', currentStep: 3, totalSteps: 3, assignedApproverRole: 'md', status: 'returned' }
       ]);
-
       await ApprovalAction.insertMany([
-        {
-          actionId: 'ACT-10',
-          instanceId: 'INST-11',
-          stepIndex: 1,
-          action: 'approve',
-          performedBy: 'USER-001',
-          performedByName: 'Procurement Head User',
-          comments: 'Invoice verified against GRN.'
-        },
-        {
-          actionId: 'ACT-11',
-          instanceId: 'INST-11',
-          stepIndex: 2,
-          action: 'approve',
-          performedBy: 'USER-002',
-          performedByName: 'Finance Manager',
-          comments: 'Approved for disbursement.'
-        },
-        {
-          actionId: 'ACT-21',
-          instanceId: 'INST-19',
-          stepIndex: 3,
-          action: 'return',
-          performedBy: 'USER-003',
-          performedByName: 'Managing Director',
-          comments: 'Re-negotiate freight terms with vendor.'
-        }
+        { actionId: 'ACT-10', instanceId: 'INST-11', stepIndex: 1, action: 'approve', performedBy: 'usr-022', performedByName: 'Harish Solanki', comments: 'Invoice verified against GRN.' },
+        { actionId: 'ACT-11', instanceId: 'INST-11', stepIndex: 2, action: 'approve', performedBy: 'usr-010', performedByName: 'Suresh Kumar', comments: 'Approved for disbursement.' },
+        { actionId: 'ACT-21', instanceId: 'INST-19', stepIndex: 3, action: 'return', performedBy: 'usr-013', performedByName: 'Arjun Shah', comments: 'Re-negotiate freight terms with vendor.' }
       ]);
     }
 
-    // --- Seed Documents ---
+    // ── Documents ─────────────────────────────────────────────────────────────
     const docCount = await Document.countDocuments();
     if (docCount === 0) {
       console.log('[DB] Seeding Document Attachments trace data...');
       await Document.insertMany([
-        {
-          documentId: 'DOC-101',
-          title: 'Vendor Tax Invoice copy',
-          documentType: 'vendor_invoice',
-          fileUrl: '/uploads/invoices/inv_20260713_0001.pdf',
-          fileName: 'inv_20260713_0001.pdf',
-          fileSize: 1024500,
-          documentableType: 'InvoicePayment',
-          documentableId: 'INV-PAY-007',
-          uploadedBy: 'Finance User'
-        },
-        {
-          documentId: 'DOC-102',
-          title: 'RFQ Terms & Vendor Quotes',
-          documentType: 'rfq_document',
-          fileUrl: '/uploads/rfq/rfq_005_specs.pdf',
-          fileName: 'rfq_005_specs.pdf',
-          fileSize: 2048000,
-          documentableType: 'RfqHeader',
-          documentableId: 'RFQ-005',
-          uploadedBy: 'Procurement User'
-        }
+        { documentId: 'DOC-101', title: 'Vendor Tax Invoice copy', documentType: 'vendor_invoice', fileUrl: '/uploads/invoices/inv_20260713_0001.pdf', fileName: 'inv_20260713_0001.pdf', fileSize: 1024500, documentableType: 'InvoicePayment', documentableId: 'INV-PAY-007', uploadedBy: 'Suresh Kumar' },
+        { documentId: 'DOC-102', title: 'RFQ Terms & Vendor Quotes', documentType: 'rfq_document', fileUrl: '/uploads/rfq/rfq_005_specs.pdf', fileName: 'rfq_005_specs.pdf', fileSize: 2048000, documentableType: 'RfqHeader', documentableId: 'RFQ-005', uploadedBy: 'Harish Solanki' }
       ]);
     }
+
+    // ── Workflow Slabs ────────────────────────────────────────────────────────
+    console.log('[DB] Ensuring default workflow slabs...');
+    const { ensureAllWorkflows } = await import('../modules/workflows/workflowDefaults.js');
+    await ensureAllWorkflows();
 
   } catch (err) {
     console.warn('[DB] Seeding error:', err.message);
   }
 };
-

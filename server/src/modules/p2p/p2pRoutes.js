@@ -11,6 +11,7 @@ import { LogisticsPayment } from '../../models/LogisticsPayment.js';
 import { Vendor } from '../../models/Vendor.js';
 import { LogisticsProvider } from '../../models/LogisticsProvider.js';
 import { CustomAgent } from '../../models/CustomAgent.js';
+import { User } from '../../models/User.js';
 import { broadcastEvent } from '../../services/sse.service.js';
 import { sendApprovalCreatedEmails } from '../../services/notification.service.js';
 import { authenticateToken } from '../../middleware/auth.middleware.js';
@@ -61,14 +62,18 @@ function normalizedRole(value = '') {
 }
 
 function roleCanAct(userRole, requiredRole) {
-  const user = normalizedRole(userRole);
-  const required = normalizedRole(requiredRole);
-  if (['admin', 'system admin', 'systemadmin'].includes(user.replace(/\s+/g, ''))) return true;
-  if (!user || !required) return false;
-  if (required.includes('procurement')) return user.includes('procurement');
-  if (required.includes('finance')) return user.includes('finance');
-  if (required === 'md' || required.includes('director')) return user === 'md' || user.includes('director');
-  return user === required || user.includes(required) || required.includes(user);
+  const roles = Array.isArray(userRole) ? userRole : [userRole];
+  for (const r of roles) {
+    const user = normalizedRole(r);
+    const required = normalizedRole(requiredRole);
+    if (['admin', 'system admin', 'systemadmin'].includes(user.replace(/\s+/g, ''))) return true;
+    if (!user || !required) continue;
+    if (required.includes('procurement') && user.includes('procurement')) return true;
+    if (required.includes('finance') && user.includes('finance')) return true;
+    if ((required === 'md' || required.includes('director')) && (user === 'md' || user.includes('director'))) return true;
+    if (user === required || user.includes(required) || required.includes(user)) return true;
+  }
+  return false;
 }
 
 function getPoQuantity(po) {
@@ -136,7 +141,8 @@ async function nextRfqNumber() {
 }
 
 // ─── GET /api/p2p/workflows/preview ──────────────────────────────────────────
-router.get('/workflows/preview', authenticateToken, async (req, res) => {
+// Public endpoint - no authentication required for workflow preview
+router.get('/workflows/preview', async (req, res) => {
   try {
     const moduleType = req.query.module || 'Advance Payment';
     const amount = Number(req.query.amount) || 0;
@@ -1713,6 +1719,16 @@ router.get('/rfqs/:id', authenticateToken, async (req, res) => {
       const userValues = [req.user?.id, req.user?.userId, req.user?.email, req.user?.name].filter(Boolean).map((value) => String(value).trim().toLowerCase());
       const isOwnRequest = requesterValues.some((value) => userValues.includes(value));
       const requiredRole = activeStep?.roleName || activeStep?.roleKey || '';
+
+      const userRoles = [req.user?.role].filter(Boolean);
+      if (req.user?.id) {
+        const delegators = await User.find({ parentUserId: req.user.id, status: 'Active' }, { role: 1 }).lean();
+        for (const d of delegators) {
+          if (d.role && !userRoles.includes(d.role)) userRoles.push(d.role);
+        }
+      }
+
+      const canAct = roleCanAct(userRoles, requiredRole);
       approvalProgress = {
         id: approval.id,
         status: approval.status,
@@ -1720,8 +1736,8 @@ router.get('/rfqs/:id', authenticateToken, async (req, res) => {
         currentStep: Number(approval.currentStep || 1),
         totalSteps: steps.length || Number(approval.totalSteps || 0),
         requiredRole,
-        canCurrentUserAct: !terminalApproved && !terminalRejected && !isOwnRequest && roleCanAct(req.user?.role, requiredRole),
-        blockedReason: terminalApproved ? 'Approval completed.' : terminalRejected ? 'Approval rejected.' : isOwnRequest ? 'The requester cannot approve their own request.' : roleCanAct(req.user?.role, requiredRole) ? '' : `Waiting for a user with the ${requiredRole || 'required'} role.`,
+        canCurrentUserAct: !terminalApproved && !terminalRejected && !isOwnRequest && canAct,
+        blockedReason: terminalApproved ? 'Approval completed.' : terminalRejected ? 'Approval rejected.' : isOwnRequest ? 'The requester cannot approve their own request.' : canAct ? '' : `Waiting for a user with the ${requiredRole || 'required'} role.`,
         submittedAt: approval.submittedAt,
         actionHistory: approval.actionHistory || [],
         steps: steps.map((step) => ({

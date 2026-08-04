@@ -23,6 +23,7 @@ import {
   Building2
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { userCanAccessRoute, getFirstAllowedRoute } from '../../lib/permissions';
 
 // Exact Sidebar Menu Structure matching User Screenshots
 const NAV_SECTIONS = [
@@ -192,12 +193,19 @@ const UserProfile = React.memo(({ user, collapsed, onNavigate }) => {
 
 export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigate }) {
   const { user } = useSelector((state) => state.auth);
+  const userRole = user?.role || 'admin';
+  const homePath = getFirstAllowedRoute(userRole);
+
+  const allowedSections = NAV_SECTIONS.map((section) => {
+    const allowedItems = section.items.filter((item) => userCanAccessRoute(userRole, item.path));
+    return { ...section, items: allowedItems };
+  }).filter((section) => section.items.length > 0);
 
   return (
     <aside
       className={cn(
         "bg-white border-r border-slate-200 h-screen flex flex-col transition-all duration-300 flex-shrink-0 select-none z-40",
-        collapsed ? "w-[68px] overflow-visible" : "w-[220px] overflow-hidden",
+        collapsed ? "w-[68px] overflow-visible" : "w-[250px] ",
         "fixed inset-y-0 left-0 lg:static lg:translate-x-0",
         mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       )}
@@ -207,7 +215,7 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
         "border-b border-slate-200 flex items-center h-[64px] flex-shrink-0 bg-white",
         collapsed ? "px-3 justify-center" : "px-4 justify-start"
       )}>
-        <Link to="/dashboard" onClick={onNavigate} className="flex items-center gap-3 overflow-hidden transition-all duration-200">
+        <Link to={homePath} onClick={onNavigate} className="flex items-center gap-3 overflow-hidden transition-all duration-200">
           {collapsed ? (
             /* Collapsed Logo - Icon Only */
             <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-[#0d9488] to-[#0f766e] shadow-sm">
@@ -234,7 +242,7 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
 
       {/* Navigation List */}
       <nav className={cn("flex-1 py-3 space-y-1", collapsed ? "px-2 overflow-visible" : "px-3 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent")}>
-        {NAV_SECTIONS.map((section) => (
+        {allowedSections.map((section) => (
           <div key={section.id} className={cn("space-y-0.5", section.id !== 'core' && 'mt-5')}>
             {section.title && !collapsed && (
               <div className="px-3 pt-2 pb-2">
@@ -261,9 +269,9 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
 
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="hidden lg:flex absolute -right-3 top-1/2 transform -translate-y-1/2 w-6 h-6 rounded-full bg-white border border-slate-200 shadow-xs items-center justify-center hover:bg-slate-50 transition-colors"
+        className="hidden lg:flex absolute -right-3 top-1/2 transform -translate-y-1/2 w-8 h-8 rounded-full bg-white border border-slate-200 shadow-xs items-center justify-center hover:bg-slate-50 transition-colors"
       >
-        <ChevronRight className={cn("w-3 h-3 text-slate-500 transition-transform", collapsed ? "rotate-180" : "")} />
+        <ChevronRight className={cn("w-4 h-4 ml-0.5 text-slate-500 transition-transform", collapsed ? "rotate-180" : "")} />
       </button>
     </aside>
   );

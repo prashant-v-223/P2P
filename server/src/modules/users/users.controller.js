@@ -41,9 +41,21 @@ export const getUsers = async (req, res) => {
     .limit(size)
     .lean();
 
+  // Populate parent user names for display
+  const parentIds = [...new Set(users.map((u) => u.parentUserId).filter(Boolean))];
+  let parentMap = {};
+  if (parentIds.length) {
+    const parents = await User.find({ id: { $in: parentIds } }, { id: 1, name: 1, avatar: 1, role: 1 }).lean();
+    parentMap = Object.fromEntries(parents.map((p) => [p.id, p]));
+  }
+  const enriched = users.map((u) => ({
+    ...u,
+    parentUser: u.parentUserId ? (parentMap[u.parentUserId] || null) : null
+  }));
+
   return res.json({
     success: true,
-    users,
+    users: enriched,
     total,
     page,
     size,
@@ -72,7 +84,7 @@ export const createUser = async (req, res) => {
     name: cleanName,
     email: normalizedEmail,
     passwordHash: await User.hashPassword(password),
-    role: role || 'Procurement Head',
+    role: role || 'procurement',
     department: department || 'Procurement',
     avatar: cleanName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()
   });
@@ -80,9 +92,27 @@ export const createUser = async (req, res) => {
 };
 
 export const updateUser = async (req, res) => {
-  const allowed = ['name', 'email', 'role', 'department', 'status', 'avatar'];
+  const allowed = ['name', 'email', 'role', 'department', 'status', 'avatar', 'parentUserId', 'delegationActive', 'delegationStartAt', 'delegationEndAt', 'delegationNote'];
   const updates = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
   if (updates.email) updates.email = updates.email.trim().toLowerCase();
+
+  // Validate parentUserId
+  if (updates.parentUserId) {
+    if (updates.parentUserId === req.params.id) {
+      return res.status(400).json({ success: false, error: 'A user cannot delegate to themselves.' });
+    }
+    const parentExists = await User.exists({ id: updates.parentUserId, status: 'Active' });
+    if (!parentExists) {
+      return res.status(404).json({ success: false, error: 'Parent/delegate user not found or not active.' });
+    }
+  }
+  if (updates.parentUserId === null || updates.parentUserId === '') {
+    updates.parentUserId = null;
+    updates.delegationActive = false;
+  }
+  if (updates.delegationStartAt) updates.delegationStartAt = new Date(updates.delegationStartAt);
+  if (updates.delegationEndAt) updates.delegationEndAt = new Date(updates.delegationEndAt);
+
   const user = await User.findOneAndUpdate({ id: req.params.id }, updates, {
     new: true,
     runValidators: true
@@ -94,5 +124,26 @@ export const updateUser = async (req, res) => {
 export const deleteUser = async (req, res) => {
   const user = await User.findOneAndDelete({ id: req.params.id });
   if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+  // Clear any delegations pointing to this user
+  await User.updateMany({ parentUserId: req.params.id }, { parentUserId: null, delegationActive: false });
   return res.json({ success: true, message: 'User deleted.', id: req.params.id });
+};
+
+// Admin: get delegation info for a specific user
+export const getUserDelegation = async (req, res) => {
+  const user = await User.findOne({ id: req.params.id }).lean();
+  if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+
+  let parentUser = null;
+  if (user.parentUserId) {
+    parentUser = await User.findOne({ id: user.parentUserId }, { id: 1, name: 1, email: 1, role: 1, avatar: 1 }).lean();
+  }
+  const delegatingTo = await User.find({ parentUserId: req.params.id }, { id: 1, name: 1, email: 1, role: 1, avatar: 1, delegationActive: 1, delegationNote: 1 }).lean();
+
+  return res.json({
+    success: true,
+    user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    delegation: { parentUserId: user.parentUserId, parentUser, delegationActive: user.delegationActive, delegationStartAt: user.delegationStartAt, delegationEndAt: user.delegationEndAt, delegationNote: user.delegationNote },
+    delegatingTo
+  });
 };

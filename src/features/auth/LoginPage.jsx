@@ -7,6 +7,7 @@ import ForgotPasswordModal from './ForgotPasswordModal';
 import AuthShell from './AuthShell';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { getFirstAllowedRoute } from '../../lib/permissions';
 
 export default function LoginPage() {
   const dispatch = useDispatch();
@@ -21,15 +22,18 @@ export default function LoginPage() {
   const { twoFactorRequired, twoFactorEmail } = useSelector((state) => state.auth);
 
   const signIn = (credentials) => dispatch(loginUser(credentials)).unwrap().then((data) => {
-    if (!data.requiresTwoFactor) navigate('/dashboard');
+    if (!data.requiresTwoFactor) {
+      const targetPath = getFirstAllowedRoute(data.user?.role);
+      navigate(targetPath);
+    }
     return data;
   });
   const submit = (event) => { event.preventDefault(); signIn({ email, password, rememberMe }).catch(() => {}); };
   const demoLogin = (demoEmail) => {
     dispatch(clearAuthError());
     setEmail(demoEmail);
-    setPassword('password123');
-    signIn({ email: demoEmail, password: 'password123', rememberMe }).catch(() => {});
+    setPassword('Rayzon@2026');
+    signIn({ email: demoEmail, password: 'Rayzon@2026', rememberMe }).catch(() => {});
   };
 
   return (
@@ -69,9 +73,12 @@ export default function LoginPage() {
         <summary className="cursor-pointer list-none text-center text-xs font-semibold text-slate-400 hover:text-teal-700">Development demo accounts</summary>
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
           {[
-            ['Admin', 'Full system access', 'admin@rayzon.one'],
-            ['Finance', 'Rates & approvals', 'nikunj@rayzon.one'],
-            ['Procurement', 'Workflow review', 'aarav@rayzon.one']
+            ['Admin', 'Full System Admin', 'prashantvadhvana@gmail.com'],
+            ['Logistics Lead', 'Logistics & Providers', 'vikram.singh@rayzon.com'],
+            ['Procurement Head', 'PO & RFQ Approvals', 'harish.solanki@rayzon.com'],
+            ['Managing Director', 'Executive Approvals', 'arjun.shah@rayzon.com'],
+            ['CFO', 'Financial Oversight', 'rajesh.patel@rayzon.com'],
+            ['Accounts', 'Payments & SAP View', 'kavya.mehta@rayzon.com']
           ].map(([label, description, value]) => (
             <button key={value} type="button" disabled={loading} onClick={() => demoLogin(value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition hover:border-teal-200 hover:bg-teal-50">
               <span className="block text-xs font-bold text-slate-800">{label}</span>

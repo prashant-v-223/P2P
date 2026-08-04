@@ -106,11 +106,19 @@ export default function CreateAdvancePaymentWizard() {
     apiFetch(`/api/p2p/workflows/preview?module=Advance Payment&amount=${amt}`)
       .then(res => res.json())
       .then(data => {
-        if (active && data.workflow) {
-          setDynamicWorkflow(data.workflow);
+        if (active) {
+          if (data.success && data.workflow) {
+            setDynamicWorkflow(data.workflow);
+          } else {
+            // Silently fail - workflow preview is optional
+            console.log('[Workflow Preview] Not available:', data.error || 'No workflow data');
+          }
         }
       })
-      .catch(() => { });
+      .catch((err) => {
+        // Silently handle errors - workflow preview is not critical
+        console.log('[Workflow Preview] Failed to fetch:', err.message);
+      });
     return () => { active = false; };
   }, [grandTotal, calculatedAmount]);
 

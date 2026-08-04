@@ -14,7 +14,8 @@ import {
   Building2,
   Check,
   RotateCcw,
-  XCircle
+  XCircle,
+  ArrowRightLeft
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../ui/toast';
@@ -304,6 +305,12 @@ export default function PendingApprovalsView() {
                     <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
                       {approval.type}
                     </span>
+                    {approval.delegatedFrom && (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1">
+                        <ArrowRightLeft className="w-3 h-3 text-amber-600" />
+                        Delegated from {approval.delegatedFrom.name} ({approval.delegatedFrom.role})
+                      </span>
+                    )}
                     <span className="text-slate-300">·</span>
                     <span className="text-xs text-slate-500 font-medium flex items-center gap-1">
                       <Clock className="w-3.5 h-3.5 text-slate-400" />

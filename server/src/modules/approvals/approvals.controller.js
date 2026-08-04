@@ -1,4 +1,5 @@
 import { Approval } from '../../models/Approval.js';
+import { User } from '../../models/User.js';
 import { sendApprovalEmails } from '../../services/notification.service.js';
 import { broadcastEvent } from '../../services/sse.service.js';
 import crypto from 'node:crypto';
@@ -20,30 +21,34 @@ function getRoleKeywords(role = '') {
   return [r];
 }
 
-// ── Check if an approval's ACTIVE STEP is meant for this role ─────────────
+// ── Check if an approval's ACTIVE STEP is meant for this role / roles ───────
 function isApprovalForRole(approval, roleFilter) {
-  const keywords = getRoleKeywords(roleFilter);
-  const statusLower = (approval.status || '').toLowerCase();
+  const roles = Array.isArray(roleFilter) ? roleFilter : [roleFilter];
+  
+  for (const role of roles) {
+    const keywords = getRoleKeywords(role);
+    const statusLower = (approval.status || '').toLowerCase();
 
-  // Primary: does current status contain the role keyword?
-  for (const kw of keywords) {
-    if (statusLower.includes(kw)) return true;
-  }
+    // Primary: does current status contain the role keyword?
+    for (const kw of keywords) {
+      if (statusLower.includes(kw)) return true;
+    }
 
-  // Secondary: check workflowSteps for activeStep role match
-  if (approval.workflowSteps) {
-    try {
-      const steps = JSON.parse(approval.workflowSteps);
-      const activeStepObj = steps.find(s => s.step === (approval.currentStep || 1));
-      if (activeStepObj) {
-        const roleName = (activeStepObj.roleName || '').toLowerCase();
-        const roleKey  = (activeStepObj.roleKey  || '').toLowerCase();
-        const title    = (activeStepObj.title    || '').toLowerCase();
-        for (const kw of keywords) {
-          if (roleName.includes(kw) || roleKey.includes(kw) || title.includes(kw)) return true;
+    // Secondary: check workflowSteps for activeStep role match
+    if (approval.workflowSteps) {
+      try {
+        const steps = JSON.parse(approval.workflowSteps);
+        const activeStepObj = steps.find(s => s.step === (approval.currentStep || 1));
+        if (activeStepObj) {
+          const roleName = (activeStepObj.roleName || '').toLowerCase();
+          const roleKey  = (activeStepObj.roleKey  || '').toLowerCase();
+          const title    = (activeStepObj.title    || '').toLowerCase();
+          for (const kw of keywords) {
+            if (roleName.includes(kw) || roleKey.includes(kw) || title.includes(kw)) return true;
+          }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
   }
 
   return false;
@@ -101,20 +106,23 @@ function getCurrentStepRole(approval) {
   return '';
 }
 
-// ── Check if user role can act on current step ────────────────────────────
+// ── Check if user role(s) can act on current step ────────────────────────────
 function canActOnStep(userRole, approval) {
-  const ur = (userRole || '').toLowerCase().replace(/[\s_-]+/g, ' ').trim();
-  // System Admin / Admin bypass only for VIEWING — NOT for acting on steps
-  // (We allow Admin to act only if approval is stuck or explicitly escalated)
-  if (ur === 'admin' || ur.replace(/\s+/g, '') === 'systemadmin') return true; // Admin can always act (super user)
+  const roles = Array.isArray(userRole) ? userRole : [userRole];
+  
+  for (const role of roles) {
+    const ur = (role || '').toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+    if (ur === 'admin' || ur.replace(/\s+/g, '') === 'systemadmin') return true;
 
-  const requiredRole = getCurrentStepRole(approval);
-  if (!requiredRole) return true; // no restriction defined → allow
+    const requiredRole = getCurrentStepRole(approval);
+    if (!requiredRole) return true;
 
-  const keywords = getRoleKeywords(userRole);
-  for (const kw of keywords) {
-    if (requiredRole.includes(kw)) return true;
+    const keywords = getRoleKeywords(role);
+    for (const kw of keywords) {
+      if (requiredRole.includes(kw)) return true;
+    }
   }
+
   return false;
 }
 
@@ -126,8 +134,22 @@ export const getPendingApprovals = async (req, res) => {
     const query = String(req.query.q || '').trim();
     const type = String(req.query.type || '').trim();
 
-    // role comes from query param (sent by frontend based on logged-in user)
-    const roleFilter = String(req.user?.role || '').trim();
+    // Primary role from JWT
+    const primaryRole = String(req.user?.role || '').trim();
+    const effectiveRoles = [primaryRole];
+    const delegatorMap = {}; // role -> array of delegator users
+
+    // Find all users who delegated to this user (so both delegator and delegate can see & act)
+    if (req.user?.id) {
+      const delegators = await User.find({ parentUserId: req.user.id, status: 'Active' }, { id: 1, name: 1, email: 1, role: 1, delegationActive: 1, delegationNote: 1 }).lean();
+      for (const d of delegators) {
+        if (d.role) {
+          if (!effectiveRoles.includes(d.role)) effectiveRoles.push(d.role);
+          if (!delegatorMap[d.role]) delegatorMap[d.role] = [];
+          delegatorMap[d.role].push(d);
+        }
+      }
+    }
 
     const TERMINAL = ['Approved & Dispatched', 'Rejected', 'Returned for changes'];
     const filter = { status: { $nin: TERMINAL } };
@@ -155,33 +177,30 @@ export const getPendingApprovals = async (req, res) => {
 
     let approvals = await Approval.find(filter).sort(sort).lean();
 
-    // ── Role-based filtering ─────────────────────────────────────────────
-    // Admin / System Admin sees ALL approvals
-    const roleNorm = roleFilter.toLowerCase().replace(/[\s_-]+/g, ' ').trim();
-    const isAdmin = roleNorm === 'admin' || roleNorm.replace(/\s+/g, '') === 'systemadmin' || !roleFilter;
+    // ── Role-based filtering across effectiveRoles ─────────────────────────
+    const isSuperUser = effectiveRoles.some((r) => {
+      const rNorm = r.toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+      return rNorm === 'admin' || rNorm.replace(/\s+/g, '') === 'systemadmin';
+    });
 
-    if (!isAdmin) {
-      approvals = approvals.filter(a => isApprovalForRole(a, roleFilter));
+    if (!isSuperUser) {
+      approvals = approvals.filter(a => isApprovalForRole(a, effectiveRoles));
     }
 
     // ── Self-submission exclusion ────────────────────────────────────────
-    // A user must never see (or approve) requests THEY submitted themselves.
-    // Use the name from the JWT (req.user.name) OR the 'me' query param as fallback.
     const currentUserName  = (req.user?.name  || req.query.me  || '').toLowerCase().trim();
     const currentUserEmail = (req.user?.email || req.query.meEmail || '').toLowerCase().trim();
 
     if (currentUserName || currentUserEmail) {
       approvals = approvals.filter(a => {
         const submitter = (a.requestedBy || '').toLowerCase().trim();
-        if (!submitter) return true; // no submitter info → show it
-        // Exclude if submitter matches by name OR by email prefix (user@domain → user)
+        if (!submitter) return true;
         const matchesName  = currentUserName  && submitter === currentUserName;
         const matchesEmail = currentUserEmail && (submitter === currentUserEmail || submitter === currentUserEmail.split('@')[0]);
         return !matchesName && !matchesEmail;
       });
     }
 
-    // FIX: Calculate total AFTER all filtering (not before)
     const total      = approvals.length;
     const totalPages = Math.max(1, Math.ceil(total / size));
     const safePage   = Math.min(page, totalPages);
@@ -192,10 +211,23 @@ export const getPendingApprovals = async (req, res) => {
       if (a.workflowSteps) {
         try { parsedSteps = JSON.parse(a.workflowSteps); } catch (_) {}
       }
+      const stepRole = getCurrentStepRole(a);
+      // Check if this approval was matched via delegation
+      let matchedDelegator = null;
+      if (delegatorMap[stepRole] && !isApprovalForRole(a, primaryRole)) {
+        matchedDelegator = delegatorMap[stepRole][0];
+      }
+
       return {
         ...a,
         parsedSteps,
-        currentStepRole: getCurrentStepRole(a)
+        currentStepRole: stepRole,
+        delegatedFrom: matchedDelegator ? {
+          id: matchedDelegator.id,
+          name: matchedDelegator.name,
+          role: matchedDelegator.role,
+          note: matchedDelegator.delegationNote
+        } : null
       };
     });
 
@@ -252,10 +284,12 @@ export const processApprovalAction = async (req, res) => {
     }
     if (['Approved & Dispatched', 'Rejected', 'Cancelled'].includes(approval.status)) return res.status(409).json({ success: false, error: `This request is already ${approval.status.toLowerCase()}.` });
 
-    // ── Role Authorization Check ──────────────────────────────────────────
+    // ── Role Authorization Check with Effective Delegated Roles ───────────
     const actingUserId = req.user?.id || req.user?.userId || req.user?.email;
     const actingUser = req.user?.name || req.user?.email || actingUserId;
-    const actingRole = req.user?.role || '';
+    const primaryRole = req.user?.role || '';
+    const actingRole = primaryRole; // The role of the user performing the action
+    
     if (!actingUserId) return res.status(401).json({ success: false, error: 'A verified user identity is required.' });
     const requester = String(approval.requestedById || approval.requestedBy || '').trim().toLowerCase();
     if (requester && [actingUserId, req.user?.email, req.user?.name].filter(Boolean).some((value) => requester === String(value).trim().toLowerCase())) return res.status(403).json({ success: false, error: 'You cannot approve, return, or reject your own request.' });
@@ -263,13 +297,22 @@ export const processApprovalAction = async (req, res) => {
     const idempotencyKey = String(req.headers['idempotency-key'] || req.body.idempotencyKey || '').trim();
     if (idempotencyKey && approval.actionHistory?.some((record) => record.idempotencyKey === idempotencyKey)) return res.json({ success: true, message: 'This approval action was already processed.', data: { id: approval.id, status: approval.status, currentStep: approval.currentStep, actionHistory: approval.actionHistory } });
 
-    if (!canActOnStep(actingRole, approval)) {
+    // Gather user's effective roles (own role + delegated roles)
+    const effectiveRoles = [primaryRole];
+    if (req.user?.id) {
+      const delegators = await User.find({ parentUserId: req.user.id, status: 'Active' }, { role: 1 }).lean();
+      for (const d of delegators) {
+        if (d.role && !effectiveRoles.includes(d.role)) effectiveRoles.push(d.role);
+      }
+    }
+
+    if (!canActOnStep(effectiveRoles, approval)) {
       const requiredRole = getCurrentStepRole(approval);
       return res.status(403).json({
         success: false,
-        error: `Access denied. This step requires "${requiredRole}" role. Your role is "${actingRole}".`,
+        error: `Access denied. This step requires "${requiredRole}" role. Your role is "${primaryRole}".`,
         requiredRole,
-        yourRole: actingRole
+        yourRole: primaryRole
       });
     }
 

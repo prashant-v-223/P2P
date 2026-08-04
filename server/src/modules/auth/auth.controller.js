@@ -240,3 +240,74 @@ export const logout = (req, res) => {
   if (req.body.refreshToken && tokens) tokens.delete(req.body.refreshToken);
   return res.json({ success: true, message: 'Signed out successfully.' });
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DELEGATION CONTROLLERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getDelegationStatus = async (req, res) => {
+  const user = await User.findOne({ id: req.user.id }).lean();
+  if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+
+  let parentUser = null;
+  if (user.parentUserId) {
+    parentUser = await User.findOne({ id: user.parentUserId }, { id: 1, name: 1, email: 1, role: 1, avatar: 1 }).lean();
+  }
+
+  // Find all users who have delegated TO this user
+  const delegatingTo = await User.find({ parentUserId: req.user.id }, { id: 1, name: 1, email: 1, role: 1, avatar: 1, delegationActive: 1, delegationStartAt: 1, delegationEndAt: 1, delegationNote: 1 }).lean();
+
+  return res.json({
+    success: true,
+    delegation: {
+      parentUserId: user.parentUserId,
+      parentUser,
+      delegationActive: user.delegationActive || false,
+      delegationStartAt: user.delegationStartAt,
+      delegationEndAt: user.delegationEndAt,
+      delegationNote: user.delegationNote || ''
+    },
+    delegatingTo
+  });
+};
+
+export const setDelegation = async (req, res) => {
+  const { parentUserId, delegationActive, delegationStartAt, delegationEndAt, delegationNote } = req.body;
+
+  // Validate parentUserId if provided
+  if (parentUserId) {
+    if (parentUserId === req.user.id) {
+      return res.status(400).json({ success: false, error: 'You cannot delegate to yourself.' });
+    }
+    const parentExists = await User.exists({ id: parentUserId, status: 'Active' });
+    if (!parentExists) {
+      return res.status(404).json({ success: false, error: 'Parent/delegate user not found or not active.' });
+    }
+  }
+
+  const updates = {};
+  if (parentUserId !== undefined) updates.parentUserId = parentUserId || null;
+  if (typeof delegationActive === 'boolean') updates.delegationActive = delegationActive;
+  if (delegationStartAt !== undefined) updates.delegationStartAt = delegationStartAt ? new Date(delegationStartAt) : null;
+  if (delegationEndAt !== undefined) updates.delegationEndAt = delegationEndAt ? new Date(delegationEndAt) : null;
+  if (delegationNote !== undefined) updates.delegationNote = String(delegationNote || '').slice(0, 240);
+
+  const user = await User.findOneAndUpdate({ id: req.user.id }, updates, { new: true, runValidators: true });
+  if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+
+  return res.json({
+    success: true,
+    message: updates.delegationActive ? 'Delegation activated. Your delegate can now act on your pending approvals.' : 'Delegation settings saved.',
+    user
+  });
+};
+
+export const removeDelegation = async (req, res) => {
+  const user = await User.findOneAndUpdate(
+    { id: req.user.id },
+    { parentUserId: null, delegationActive: false, delegationStartAt: null, delegationEndAt: null, delegationNote: '' },
+    { new: true }
+  );
+  if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+  return res.json({ success: true, message: 'Delegation removed. No one can act on your behalf.', user });
+};

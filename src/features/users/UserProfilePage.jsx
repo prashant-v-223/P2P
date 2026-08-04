@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import {
   User, Mail, Building2, LockKeyhole, ShieldCheck, Laptop,
-  CheckCircle2, AlertCircle, Eye, EyeOff, LogOut, KeyRound, Shield
+  CheckCircle2, AlertCircle, Eye, EyeOff, LogOut, KeyRound, Shield,
+  ArrowRightLeft, UserCheck, UserX
 } from 'lucide-react';
 import { updateCurrentUser, revokeAllSessions } from '../auth/authSlice';
 import { apiFetch } from '../../services/api';
@@ -48,6 +49,13 @@ export default function UserProfilePage() {
   const [twoFactorPassword, setTwoFactorPassword] = useState('');
   const [twoFactorState, setTwoFactorState] = useState({ saving: false, error: '', success: '' });
 
+  // Delegation state
+  const [delegation, setDelegation] = useState({ parentUserId: '', delegationActive: false, delegationNote: '' });
+  const [delegatingTo, setDelegatingTo] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
+  const [delegationState, setDelegationState] = useState({ saving: false, loading: true, error: '', success: '' });
+  const [parentUserName, setParentUserName] = useState('');
+
   useEffect(() => {
     setProfile({
       name: user?.name || '',
@@ -55,6 +63,75 @@ export default function UserProfilePage() {
       department: user?.department || ''
     });
   }, [user]);
+
+  // Load delegation status
+  useEffect(() => {
+    const loadDelegation = async () => {
+      try {
+        setDelegationState((s) => ({ ...s, loading: true }));
+        const [delegRes, usersRes] = await Promise.all([
+          apiFetch('/api/auth/delegation'),
+          apiFetch('/api/users?size=100')
+        ]);
+        if (delegRes.ok) {
+          const data = await delegRes.json();
+          setDelegation({
+            parentUserId: data.delegation?.parentUserId || '',
+            delegationActive: data.delegation?.delegationActive || false,
+            delegationNote: data.delegation?.delegationNote || ''
+          });
+          setDelegatingTo(data.delegatingTo || []);
+          if (data.delegation?.parentUser) {
+            setParentUserName(data.delegation.parentUser.name);
+          }
+        }
+        if (usersRes.ok) {
+          const usersData = await usersRes.json();
+          setAllUsers((usersData.users || []).filter((u) => u.id !== user?.id && u.status === 'Active'));
+        }
+      } catch (err) {
+        console.error('Failed to load delegation:', err);
+      } finally {
+        setDelegationState((s) => ({ ...s, loading: false }));
+      }
+    };
+    if (user?.id) loadDelegation();
+  }, [user?.id]);
+
+  const saveDelegation = async () => {
+    setDelegationState((s) => ({ ...s, saving: true, error: '', success: '' }));
+    try {
+      const res = await apiFetch('/api/auth/delegation', {
+        method: 'PUT',
+        body: JSON.stringify(delegation)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save delegation.');
+      showToast({ title: 'Delegation saved', description: data.message });
+      setDelegationState((s) => ({ ...s, saving: false, success: data.message }));
+      const found = allUsers.find((u) => u.id === delegation.parentUserId);
+      if (found) setParentUserName(found.name);
+    } catch (err) {
+      showToast({ type: 'error', title: 'Delegation not saved', description: err.message });
+      setDelegationState((s) => ({ ...s, saving: false, error: err.message }));
+    }
+  };
+
+  const removeDelegation = async () => {
+    setDelegationState((s) => ({ ...s, saving: true, error: '', success: '' }));
+    try {
+      const res = await apiFetch('/api/auth/delegation', { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to remove delegation.');
+      setDelegation({ parentUserId: '', delegationActive: false, delegationNote: '' });
+      setParentUserName('');
+      showToast({ title: 'Delegation removed', description: 'No one can act on your behalf.' });
+      setDelegationState((s) => ({ ...s, saving: false, success: 'Delegation removed successfully.' }));
+    } catch (err) {
+      showToast({ type: 'error', title: 'Remove failed', description: err.message });
+      setDelegationState((s) => ({ ...s, saving: false, error: err.message }));
+    }
+  };
 
   const saveProfile = async (event) => {
     event.preventDefault();

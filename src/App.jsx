@@ -66,6 +66,14 @@ import { FreightBlEntriesPage, FreightBlCreatePage, FreightBlDetailPage } from '
 import { CustomAgentProvider } from './features/customAgentPortal/customAgentContext';
 import CustomAgentLoginPage from './features/customAgentPortal/CustomAgentLoginPage';
 
+import { getFirstAllowedRoute } from './lib/permissions';
+
+function HomeRedirect() {
+  const { user } = useSelector((state) => state.auth);
+  const homePath = getFirstAllowedRoute(user?.role);
+  return <Navigate to={homePath} replace />;
+}
+
 export default function App() {
   const dispatch = useDispatch();
   const { isAuthenticated, user } = useSelector((state) => state.auth);
@@ -143,7 +151,7 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route index element={<HomeRedirect />} />
             <Route path="dashboard" element={<OverviewDashboard />} />
             
             {/* PAYMENTS Group Routes */}
@@ -247,7 +255,7 @@ export default function App() {
             <Route path="profile" element={<UserProfilePage />} />
           </Route>
 
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<HomeRedirect />} />
         </Routes>
         </CustomAgentProvider>
       </VendorProvider>
