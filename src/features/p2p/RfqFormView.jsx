@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
+import FileUploadZone from '../../components/shared/FileUploadZone';
 import { 
   ArrowLeft, 
   Ship, 
@@ -12,7 +13,8 @@ import {
   Calendar,
   Layers,
   Building2,
-  FileCheck
+  FileCheck,
+  FileText
 } from 'lucide-react';
 
 export default function RfqFormView() {
@@ -47,6 +49,9 @@ export default function RfqFormView() {
   const [logisticsVendors, setLogisticsVendors] = useState([]);
   const [selectedVendors, setSelectedVendors] = useState([]);
   const [vendorSearch, setVendorSearch] = useState('');
+
+  // Documents
+  const [documents, setDocuments] = useState([]);
 
   // Fetch logistics vendors (filtered to Freight Forwarders only) & load existing RFQ for edit
   useEffect(() => {
@@ -168,21 +173,75 @@ export default function RfqFormView() {
       });
       const json = await res.json();
 
-      setSaving(false);
-      if (res.ok && json.success) {
-        showToast({
-          title: isEdit ? 'RFQ Updated' : 'RFQ Created & Published',
-          description: `RFQ ${json.data?.rfqNumber || id} saved to MongoDB.`,
-          type: 'success'
-        });
-        navigate('/admin/rfqs');
-      } else {
+      if (!res.ok || !json.success) {
         throw new Error(json.error || 'Failed to save RFQ');
       }
+
+      const rfqId = json.data?.rfqId || json.data?.rfqNumber || id;
+
+      // Step 2: Upload documents if any are attached (only for new RFQs)
+      if (!isEdit && documents.length > 0 && rfqId) {
+        const formData = new FormData();
+        documents.forEach(doc => {
+          formData.append('files', doc.file);
+        });
+        formData.append('documentType', 'rfq_document');
+        formData.append('documentableType', 'RfqHeader');
+        formData.append('documentableId', rfqId);
+
+        try {
+          const docRes = await apiFetch('/api/documents/upload-multiple', {
+            method: 'POST',
+            body: formData
+          });
+          const docJson = await docRes.json();
+          
+          if (!docRes.ok) {
+            console.error('Document upload failed:', docJson.error);
+            showToast({
+              title: isEdit ? 'RFQ Updated' : 'RFQ Created',
+              description: `RFQ ${rfqId} saved but documents failed to upload. You can add them later from the detail view.`,
+              type: 'warning',
+              duration: 5000
+            });
+          } else {
+            showToast({
+              title: isEdit ? 'RFQ Updated' : 'RFQ Created & Published',
+              description: `RFQ ${rfqId} with ${docJson.data?.uploaded?.length || documents.length} document(s) saved successfully.`,
+              type: 'success'
+            });
+          }
+        } catch (docError) {
+          console.error('Document upload error:', docError);
+          showToast({
+            title: isEdit ? 'RFQ Updated' : 'RFQ Created',
+            description: `RFQ ${rfqId} saved but documents failed to upload. You can add them later from the detail view.`,
+            type: 'warning',
+            duration: 5000
+          });
+        }
+      } else {
+        showToast({
+          title: isEdit ? 'RFQ Updated' : 'RFQ Created & Published',
+          description: `RFQ ${rfqId} saved successfully.`,
+          type: 'success'
+        });
+      }
+
+      navigate('/admin/rfqs');
     } catch (err) {
-      setSaving(false);
       showToast({ title: 'Error', description: err.message, type: 'error' });
+    } finally {
+      setSaving(false);
     }
+  };
+
+  const handleFilesSelected = (newFiles) => {
+    setDocuments(prev => [...prev, ...newFiles]);
+  };
+
+  const handleFileRemove = (index) => {
+    setDocuments(docs => docs.filter((_, i) => i !== index));
   };
 
   return (
@@ -465,6 +524,35 @@ export default function RfqFormView() {
 
           </div>
         </div>
+
+        {/* Card 4: RFQ Documents (Optional) */}
+        {!isEdit && (
+          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-2xs space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-[#0d7676]" />
+                  RFQ Documents
+                </h2>
+                <p className="text-[11px] text-slate-400 font-medium mt-0.5">
+                  Optional: Attach technical specs, drawings, or requirements for vendors
+                </p>
+              </div>
+              <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
+                Optional
+              </span>
+            </div>
+
+            <FileUploadZone
+              multiple={true}
+              accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx,.xls,.csv,.zip"
+              maxSize={25}
+              onFilesSelected={handleFilesSelected}
+              selectedFiles={documents}
+              onFileRemove={handleFileRemove}
+            />
+          </div>
+        )}
 
         {/* Bottom Actions */}
         <div className="flex items-center justify-end gap-3 pt-2">

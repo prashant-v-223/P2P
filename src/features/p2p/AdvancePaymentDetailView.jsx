@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
+import DocumentUploader from '../../components/shared/DocumentUploader';
 import {
   ChevronLeft, Trash2, Edit3, Send, CheckCircle2, XCircle,
   Clock, Plus, Loader2, AlertTriangle, RotateCcw, Lock
@@ -75,6 +76,7 @@ export default function AdvancePaymentDetailView() {
   const [approval, setApproval]       = useState(null);
   const [steps, setSteps]             = useState([]);
   const [docs, setDocs]               = useState([]);
+  const [remarksText, setRemarksText] = useState(''); // Added for approval actions
 
   useEffect(() => { fetchData(); }, [id]);
 
@@ -386,32 +388,14 @@ export default function AdvancePaymentDetailView() {
           <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-3">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="font-bold text-slate-900 text-sm">Documents</h3>
-              {!isLocked && (
-                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1 bg-teal-700 hover:bg-teal-800 text-white px-3 py-1 rounded-lg text-xs font-bold transition-colors">
-                  <Plus className="w-3.5 h-3.5" /> Upload
-                </button>
-              )}
             </div>
-            <div className="space-y-2">
-              {docs.map((doc, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-base">📄</div>
-                    <div>
-                      <p className="font-bold text-slate-900">{doc.name}</p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">{doc.type} · {doc.version} · by {doc.uploadedBy}</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => showToast({ title: 'Downloading...', description: doc.name, type: 'info' })}
-                    className="px-3 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-colors"
-                  >
-                    Download
-                  </button>
-                </div>
-              ))}
-              {docs.length === 0 && <p className="text-xs text-center text-slate-400 py-4">No documents attached.</p>}
-            </div>
+            
+            <DocumentUploader
+              documentableType="AdvancePayment"
+              documentableId={id}
+              documentType="advance_request"
+              multiple={true}
+            />
           </div>
         </div>
 

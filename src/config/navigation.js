@@ -103,7 +103,7 @@ export const routeMeta = {
     icon: Wallet,
     eyebrow: 'Payments',
     title: 'New Advance Payment',
-    description: 'Create a new advance payment request against a purchase order.',
+    description: 'Create a new advance payment request against a purchase order.', 
   },
   '/p2p/invoices': {
     icon: Receipt,

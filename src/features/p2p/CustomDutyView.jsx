@@ -3,6 +3,7 @@ import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import { ServerPagination } from '../../components/ui/server-pagination';
 import { ShieldCheck, CheckCircle2, Plus, FileCheck2, Loader2, X } from 'lucide-react';
+import DocumentUploader from '../../components/shared/DocumentUploader';
 
 export default function CustomDutyView() {
   const { showToast } = useToast();
@@ -35,6 +36,7 @@ export default function CustomDutyView() {
 
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [selectedDutyId, setSelectedDutyId] = useState('');
 
   useEffect(() => {
     fetchDuties();
@@ -178,6 +180,43 @@ export default function CustomDutyView() {
           </table>
         </div>
       </div>
+
+      {/* Document Upload Section */}
+      {duties.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <h3 className="text-sm font-bold text-slate-900">Supporting Documents</h3>
+            <p className="text-xs text-slate-500">Attach customs clearance documents, BOE receipts, and ICEGATE confirmations</p>
+          </div>
+
+          <div className="space-y-3">
+            <label className="block text-xs font-semibold text-slate-700">Select Duty Payment</label>
+            <select
+              value={selectedDutyId}
+              onChange={(e) => setSelectedDutyId(e.target.value)}
+              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-[#0d7676] focus:border-[#0d7676]"
+            >
+              <option value="">-- Select a duty payment to upload documents --</option>
+              {duties.map(duty => (
+                <option key={duty.dutyId} value={duty.dutyId}>
+                  {duty.dutyId} · {duty.boeNumber} · ₹{duty.dutyAmount.toLocaleString('en-IN')}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {selectedDutyId && (
+            <div className="pt-3">
+              <DocumentUploader
+                documentableType="CustomDutyPayment"
+                documentableId={selectedDutyId}
+                documentType="custom_duty_receipt"
+                multiple={true}
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* New Custom Duty Modal with Auto-Population of Cleared BL / BOE */}
       {showCreateModal && (

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
+import DocumentUploader from '../../components/shared/DocumentUploader';
 import { 
   ArrowLeft, 
   Pencil, 
@@ -131,25 +132,58 @@ export default function RfqDetailView() {
     setShowAwardModal(true);
   };
 
+  const handleReassignRfq = () => {
+    // Allow reassignment for awarded RFQs
+    const quantity = Number(rfq?.cargoDetails?.containerCount) || Number(rfq?.totalQuantity) || 1;
+    const existingQuote = (rfq.quotes || [])[0];
+    if (existingQuote) {
+      setAwardRows([{ quoteId: existingQuote.quoteId, containers: quantity, remark: 'Reassignment' }]);
+    } else {
+      setAwardRows([{ quoteId: '', containers: quantity, remark: 'Reassignment' }]);
+    }
+    setShowAwardModal(true);
+  };
+
   const submitAwardAllocations = async () => {
     const totalContainers = Number(rfq?.cargoDetails?.containerCount) || Number(rfq?.totalQuantity) || 0;
     const allocated = awardRows.reduce((sum, row) => sum + (Number(row.containers) || 0), 0);
-    if (!awardRows.length || allocated !== totalContainers) {
-      return showToast({ title: 'Invalid Allocation', description: `Allocate exactly all ${totalContainers} containers before submitting for approval.`, type: 'error' });
+    
+    // Remove strict validation - allow any container count for reassignment
+    if (!awardRows.length) {
+      return showToast({ title: 'Invalid Allocation', description: 'Add at least one vendor allocation.', type: 'error' });
     }
+    
     if (!awardWorkflow?.steps?.length) return showToast({ title: 'Workflow Unavailable', description: awardWorkflowError || 'Configure an RFQ Vendor Award workflow before submitting.', type: 'error' });
     if (new Set(awardRows.map((row) => row.quoteId)).size !== awardRows.length) {
       return showToast({ title: 'Duplicate Vendor', description: 'Each vendor quote can only appear once.', type: 'error' });
     }
+    
+    // Validate all rows have valid data
+    if (!awardRows.every((row) => row.quoteId && Number.isInteger(Number(row.containers)) && Number(row.containers) > 0)) {
+      return showToast({ title: 'Invalid Data', description: 'All allocations must have a valid vendor and positive container count.', type: 'error' });
+    }
+    
     setSubmittingAward(true);
+    const isReassignment = rfq.status === 'awarded';
+    
     try {
       const res = await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}/award`, {
         method: 'POST',
-        body: JSON.stringify({ allocations: awardRows, submitForApproval: true })
+        body: JSON.stringify({ 
+          allocations: awardRows, 
+          submitForApproval: true,
+          isReassignment 
+        })
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || 'Unable to submit vendor allocations.');
-      showToast({ title: 'Submitted For Approval', description: `${allocated} container(s) submitted to Procurement Head.`, type: 'success' });
+      
+      const action = isReassignment ? 'Reassignment' : 'Award';
+      showToast({ 
+        title: `${action} Submitted For Approval`, 
+        description: `${allocated} container(s) submitted to Procurement Head for ${isReassignment ? 'reassignment' : 'approval'}.`, 
+        type: 'success' 
+      });
       setShowAwardModal(false);
       await loadRfq();
     } catch (err) {
@@ -217,7 +251,8 @@ export default function RfqDetailView() {
   const cargo = rfq.cargoDetails || {};
   const quotesList = rfq.quotes || [];
   const totalContainers = Number(cargo.containerCount) || Number(rfq.totalQuantity) || 0;
-  const allocatedContainers = Math.min(Number(rfq.allocatedQuantity) || 0, totalContainers);
+  // Fix: Use allocated quantity from RFQ, fallback to 0
+  const allocatedContainers = Number(rfq.allocatedQuantity) || 0;
   const pendingContainers = Math.max(0, totalContainers - allocatedContainers);
   const awardAllocated = awardRows.reduce((sum, row) => sum + (Number(row.containers) || 0), 0);
   const awardTotal = awardRows.reduce((sum, row) => {
@@ -226,7 +261,10 @@ export default function RfqDetailView() {
   }, 0);
   const awardRemaining = totalContainers - awardAllocated;
   const hasDuplicateAwardVendor = new Set(awardRows.map((row) => row.quoteId).filter(Boolean)).size !== awardRows.filter((row) => row.quoteId).length;
-  const awardReady = awardAllocated === totalContainers && !hasDuplicateAwardVendor && awardRows.every((row) => row.quoteId && Number.isInteger(Number(row.containers)) && Number(row.containers) > 0) && Boolean(awardWorkflow?.steps?.length);
+  const awardReady = awardRows.length > 0 
+    && !hasDuplicateAwardVendor 
+    && awardRows.every((row) => row.quoteId && Number.isInteger(Number(row.containers)) && Number(row.containers) > 0) 
+    && Boolean(awardWorkflow?.steps?.length);
   const filteredManagerVendors = logisticsVendors.filter((vendor) => `${vendor.companyName || ''} ${vendor.sapVendorCode || ''}`.toLowerCase().includes(vendorSearch.toLowerCase()));
 
   return (
@@ -359,7 +397,7 @@ export default function RfqDetailView() {
             </React.Fragment>)}
           </div>
         </div>
-      </section>}
+      </section>} 
           {/* Card: Shipment Requirements */}
           <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100 pb-2">
@@ -416,10 +454,12 @@ export default function RfqDetailView() {
                 <Users className="h-3.5 w-3.5" />Vendors <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">{(rfq.invitedVendors || []).length}</span>
               </button>
               <button onClick={() => setActiveTab('bl')} className={`flex items-center gap-1.5 border-b-2 px-3 pb-3 transition ${activeTab === 'bl' ? 'border-[#0d7676] text-[#0d7676]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><Ship className="h-3.5 w-3.5" />BL Entries <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">{(rfq.blEntries || []).length}</span></button>
+              <button onClick={() => setActiveTab('documents')} className={`flex items-center gap-1.5 border-b-2 px-3 pb-3 transition ${activeTab === 'documents' ? 'border-[#0d7676] text-[#0d7676]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><FileText className="h-3.5 w-3.5" />Documents</button>
             </div>
 
             <div className="mb-2 flex items-center gap-2">
-              {quotesList.length > 0 && <button onClick={() => handleAwardQuote(quotesList[0])} className="px-3 py-1.5 border border-amber-300 bg-amber-50 text-amber-700 text-xs font-bold rounded-xl transition inline-flex items-center gap-1"><Award className="w-3.5 h-3.5" />Award Vendors</button>}
+              {quotesList.length > 0 && rfq.status !== 'awarded' && <button onClick={() => handleAwardQuote(quotesList[0])} className="px-3 py-1.5 border border-amber-300 bg-amber-50 text-amber-700 text-xs font-bold rounded-xl transition inline-flex items-center gap-1"><Award className="w-3.5 h-3.5" />Award Vendors</button>}
+              {rfq.status === 'awarded' && rfq.approvalProgress?.status === 'Approved & Dispatched' && <button onClick={handleReassignRfq} className="px-3 py-1.5 border border-blue-300 bg-blue-50 text-blue-700 text-xs font-bold rounded-xl transition inline-flex items-center gap-1"><Award className="w-3.5 h-3.5" />Reassign RFQ</button>}
               <button onClick={() => { setActiveTab('vendors'); setShowVendorManager(true); }} className="px-3 py-1.5 border border-teal-200 bg-teal-50 text-[#0d7676] text-xs font-bold rounded-xl transition inline-flex items-center gap-1"><Users className="w-3.5 h-3.5" />Manage Vendors</button>
             </div>
           </div>
@@ -517,20 +557,40 @@ export default function RfqDetailView() {
             </div>
           )}
           {activeTab === 'bl' && <div className="p-4">{(rfq.blEntries || []).length ? <div className="divide-y divide-slate-100 rounded-xl border border-slate-200">{rfq.blEntries.map((entry) => <div key={entry.blId || entry._id} className="grid gap-3 p-3 text-xs sm:grid-cols-4"><div><p className="text-[10px] uppercase text-slate-400">BL Number</p><p className="font-bold">{entry.blNumber}</p></div><div><p className="text-[10px] uppercase text-slate-400">Shipping Line</p><p className="font-bold">{entry.shippingLine || '—'}</p></div><div><p className="text-[10px] uppercase text-slate-400">ETA</p><p className="font-bold">{entry.etaDate ? new Date(entry.etaDate).toLocaleDateString('en-GB') : '—'}</p></div><div><p className="text-[10px] uppercase text-slate-400">Status</p><p className="font-bold capitalize text-[#0d7676]">{String(entry.status || 'submitted').replaceAll('_', ' ')}</p></div></div>)}</div> : <p className="py-10 text-center text-xs text-slate-400">No Bill of Lading entries have been created for this RFQ.</p>}</div>}
+          
+          {/* Documents Tab */}
+          {activeTab === 'documents' && (
+            <div className="p-5">
+              <DocumentUploader
+                documentableType="RfqHeader"
+                documentableId={rfq.rfqId}
+                documentType="rfq_document"
+                multiple={true}
+              />
+            </div>
+          )}
         </div>
       </div>
 
       {showAwardModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6">
         <div role="dialog" aria-modal="true" aria-labelledby="award-modal-title" className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-          <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 sm:px-6">
-            <div className="flex gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600"><Award className="h-5 w-5" /></span><div><h2 id="award-modal-title" className="text-lg font-extrabold text-slate-900">Award Vendors</h2><p className="mt-0.5 max-w-2xl text-xs leading-5 text-slate-500">Allocate every RFQ container to one or more quoted vendors. Amounts use each vendor's quoted rate per container and will follow the workflow shown below.</p></div></div>
+          {/* <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 sm:px-6">
+            <div className="flex gap-3"><span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${rfq.status === 'awarded' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'}`}><Award className="h-5 w-5" /></span><div><h2 id="award-modal-title" className="text-lg font-extrabold text-slate-900">{rfq.status === 'awarded' ? 'Reassign RFQ Vendors' : 'Award Vendors'}</h2><p className="mt-0.5 max-w-2xl text-xs leading-5 text-slate-500">{rfq.status === 'awarded' ? 'Reassign containers to different vendors. This will create a new approval request and go through the approval workflow again.' : 'Allocate containers to one or more quoted vendors. Amounts use each vendor's quoted rate per container and will follow the workflow shown below.'}</p></div></div>
             <button type="button" aria-label="Close award dialog" onClick={() => setShowAwardModal(false)} className="rounded-lg border border-transparent p-2 text-slate-400 transition hover:border-slate-200 hover:bg-slate-50 hover:text-slate-700"><X className="h-4 w-4" /></button>
-          </div>
+          </div> */}
 
           <div className="overflow-y-auto px-5 py-5 sm:px-6">
+            {rfq.status === 'awarded' && rfq.awardedVendorName && (
+              <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
+                <p className="text-xs font-bold text-blue-900">Current Award</p>
+                <p className="mt-1 text-sm font-extrabold text-blue-700">{rfq.awardedVendorName}</p>
+                <p className="mt-0.5 text-[10px] text-blue-600">{rfq.allocatedQuantity || 0} containers allocated</p>
+              </div>
+            )}
+            
             <div className="mb-4 grid gap-3 sm:grid-cols-3">
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500">RFQ containers</p><p className="mt-1 text-xl font-extrabold text-slate-900">{totalContainers}</p></div>
-              <div className={`rounded-xl border p-3 ${awardAllocated === totalContainers ? 'border-emerald-200 bg-emerald-50' : awardAllocated > totalContainers ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50'}`}><p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500">Allocation progress</p><p className={`mt-1 text-xl font-extrabold ${awardAllocated === totalContainers ? 'text-emerald-700' : awardAllocated > totalContainers ? 'text-rose-700' : 'text-amber-700'}`}>{awardAllocated} / {totalContainers}</p><p className="mt-0.5 text-[10px] text-slate-500">{awardRemaining > 0 ? `${awardRemaining} still to allocate` : awardRemaining < 0 ? `${Math.abs(awardRemaining)} over-allocated` : 'All containers allocated'}</p></div>
+              <div className={`rounded-xl border p-3 bg-teal-50 border-teal-200`}><p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500">Allocation progress</p><p className={`mt-1 text-xl font-extrabold text-teal-700`}>{awardAllocated} containers</p><p className="mt-0.5 text-[10px] text-slate-500">Ready to submit</p></div>
               <div className="rounded-xl border border-teal-200 bg-teal-50/60 p-3"><p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500">Total award value</p><p className="mt-1 text-xl font-extrabold text-[#0d7676]">₹{awardTotal.toLocaleString('en-IN')}</p></div>
             </div>
 
@@ -545,14 +605,14 @@ export default function RfqDetailView() {
               </div>; })}
             </div>
 
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><button type="button" disabled={awardRows.length >= quotesList.length || awardRemaining <= 0} onClick={() => setAwardRows((current) => [...current, { quoteId: quotesList.find((quote) => !current.some((row) => row.quoteId === quote.quoteId))?.quoteId || '', containers: awardRemaining, remark: '' }])} className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 bg-white px-3 py-2 text-xs font-bold text-[#0d7676] transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-40"><Plus className="h-3.5 w-3.5" />Add vendor allocation</button><p className="text-[10px] text-slate-500">One vendor can appear only once. Use positive whole quantities totaling exactly <strong>{totalContainers}</strong>.</p></div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><button type="button" disabled={awardRows.length >= quotesList.length} onClick={() => setAwardRows((current) => [...current, { quoteId: quotesList.find((quote) => !current.some((row) => row.quoteId === quote.quoteId))?.quoteId || '', containers: 1, remark: '' }])} className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 bg-white px-3 py-2 text-xs font-bold text-[#0d7676] transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-40"><Plus className="h-3.5 w-3.5" />Add vendor allocation</button><p className="text-[10px] text-slate-500">{rfq.status === 'awarded' ? 'Reassign any number of containers to vendors.' : 'One vendor can appear only once. Use positive whole quantities.'}</p></div>
 
             <div className={`mt-5 rounded-xl border p-4 ${awardWorkflowError ? 'border-rose-200 bg-rose-50' : 'border-teal-200 bg-teal-50/60'}`}><div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500">Approval workflow</p>{awardWorkflow && <p className="mt-1 text-xs font-bold text-slate-900">{awardWorkflow.slab}</p>}</div>{awardReady && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-bold text-emerald-700"><CheckCircle2 className="h-3 w-3" />Ready for approval</span>}</div>{awardWorkflowError ? <p className="mt-2 text-xs font-semibold text-rose-700">{awardWorkflowError}</p> : awardWorkflow ? <div className="mt-3 flex flex-wrap items-center gap-2">{awardWorkflow.steps.map((step, index) => <React.Fragment key={step.step}><span className="rounded-lg border border-teal-200 bg-white px-3 py-2 text-[10px] font-bold text-[#0d7676]"><span className="mr-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-teal-100">{index + 1}</span>{step.title}</span>{index < awardWorkflow.steps.length - 1 && <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}</React.Fragment>)}</div> : <p className="mt-2 inline-flex items-center gap-2 text-xs text-slate-500"><Loader2 className="h-3.5 w-3.5 animate-spin" />Selecting workflow for ₹{awardTotal.toLocaleString('en-IN')}…</p>}</div>
 
-            {!awardReady && !awardWorkflowError && <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-semibold text-amber-800">{hasDuplicateAwardVendor ? 'Remove the duplicate vendor allocation.' : awardRemaining > 0 ? `Allocate the remaining ${awardRemaining} container(s) to continue.` : awardRemaining < 0 ? `Reduce the allocation by ${Math.abs(awardRemaining)} container(s).` : 'Complete all vendor selections to continue.'}</div>}
+            {!awardReady && !awardWorkflowError && <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-semibold text-amber-800">{hasDuplicateAwardVendor ? 'Remove the duplicate vendor allocation.' : 'Complete all vendor selections to continue.'}</div>}
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/80 px-5 py-4 sm:px-6"><p className="text-[10px] text-slate-500">Submitting creates an approval request; it does not immediately award the RFQ.</p><div className="flex gap-2"><button type="button" onClick={() => setShowAwardModal(false)} className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50">Cancel</button><button type="button" disabled={submittingAward || !awardReady} onClick={submitAwardAllocations} className="inline-flex items-center gap-2 rounded-lg bg-[#0d7676] px-5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-[#096464] disabled:cursor-not-allowed disabled:opacity-45">{submittingAward && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{submittingAward ? 'Submitting…' : 'Submit for Approval'}</button></div></div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/80 px-5 py-4 sm:px-6"><p className="text-[10px] text-slate-500">{rfq.status === 'awarded' ? 'Reassignment creates a new approval request and goes through the full workflow.' : 'Submitting creates an approval request; it does not immediately award the RFQ.'}</p><div className="flex gap-2"><button type="button" onClick={() => setShowAwardModal(false)} className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50">Cancel</button><button type="button" disabled={submittingAward || !awardReady} onClick={submitAwardAllocations} className="inline-flex items-center gap-2 rounded-lg bg-[#0d7676] px-5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-[#096464] disabled:cursor-not-allowed disabled:opacity-45">{submittingAward && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{submittingAward ? 'Submitting…' : rfq.status === 'awarded' ? 'Submit Reassignment' : 'Submit for Approval'}</button></div></div>
         </div>
       </div>}
 

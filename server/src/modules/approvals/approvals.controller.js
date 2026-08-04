@@ -181,6 +181,7 @@ export const getPendingApprovals = async (req, res) => {
       });
     }
 
+    // FIX: Calculate total AFTER all filtering (not before)
     const total      = approvals.length;
     const totalPages = Math.max(1, Math.ceil(total / size));
     const safePage   = Math.min(page, totalPages);

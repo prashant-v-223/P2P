@@ -36,36 +36,36 @@ function buildNotification(data) {
   if (isFullyApproved) {
     return {
       actionType: 'fully_approved',
-      title: `✅ Request ${approvalId} Fully Approved`,
+      title: `Request ${approvalId} Fully Approved`,
       message: `${approvalType} (${amount || ''}) by ${actingUser}`,
-      browserTitle: `✅ Request ${approvalId} Fully Approved`,
+      browserTitle: `Request ${approvalId} Fully Approved`,
       browserBody: `${approvalType} completed all approval steps.`
     };
   }
   if (isRejected) {
     return {
       actionType: 'rejected',
-      title: `❌ Request ${approvalId} Rejected`,
+      title: `Request ${approvalId} Rejected`,
       message: `${approvalType} rejected by ${actingUser}`,
-      browserTitle: `❌ Request ${approvalId} Rejected`,
+      browserTitle: `Request ${approvalId} Rejected`,
       browserBody: `${approvalId} was rejected by ${actingUser}.`
     };
   }
   if (isReturned) {
     return {
       actionType: 'returned',
-      title: `↩ Request ${approvalId} Returned`,
+      title: `Request ${approvalId} Returned`,
       message: `${approvalType} returned for changes by ${actingUser}`,
-      browserTitle: `↩ Request ${approvalId} Returned`,
+      browserTitle: `Request ${approvalId} Returned`,
       browserBody: `${approvalId} returned for revision by ${actingUser}.`
     };
   }
   if (action === 'approve') {
     return {
       actionType: 'approved',
-      title: `✔ Request ${approvalId} Advanced`,
+      title: `Request ${approvalId} Advanced`,
       message: `Approved by ${actingUser} → Awaiting next step`,
-      browserTitle: `✔ Request ${approvalId} Advanced`,
+      browserTitle: `Request ${approvalId} Advanced`,
       browserBody: `${approvalId} advanced. Current status: ${newStatus}`
     };
   }
@@ -109,13 +109,14 @@ export function useRealtimeNotifications() {
 
         dispatch(addNotification({
           actionType: 'created',
-          title: `🆕 New Request ${data.approvalId}`,
+          title: `New Request ${data.approvalId}`,
           message: `${data.approvalType} (${data.amount}) submitted by ${data.requestedBy}`,
-          approvalId: data.approvalId
+          approvalId: data.approvalId,
+          approvalType: data.approvalType
         }));
 
         if (permission === 'granted') {
-          showBrowserNotification(`🆕 Approval Needed: ${data.approvalId}`, {
+          showBrowserNotification(`Approval Needed: ${data.approvalId}`, {
             body: `${data.approvalType} submitted by ${data.requestedBy}. Awaiting ${data.firstStepTitle}.`,
             tag: `approval-created-${data.approvalId}`
           });
@@ -135,7 +136,8 @@ export function useRealtimeNotifications() {
           actionType: notif.actionType,
           title: notif.title,
           message: notif.message,
-          approvalId: data.approvalId
+          approvalId: data.approvalId,
+          approvalType: data.approvalType
         }));
 
         if (permission === 'granted' && notif.browserTitle) {
@@ -155,7 +157,8 @@ export function useRealtimeNotifications() {
           actionType: 'rfq_quote_submitted',
           title: `RFQ Quote Received: ${data.rfqNumber || data.rfqId}`,
           message: `${data.vendorName} submitted or updated a freight quote.`,
-          approvalId: data.rfqId
+          approvalId: data.rfqId,
+          approvalType: 'RFQ Logistics'
         }));
       });
 

@@ -20,11 +20,14 @@ const getRefreshToken = () => {
 
 export const apiFetch = async (url, options = {}) => {
   const token = getAccessToken();
+  const headers = { ...(options.headers || {}) };
+  const body = options.body;
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
+  const hasContentType = Object.keys(headers).some((key) => key.toLowerCase() === 'content-type');
 
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(options.headers || {})
-  };
+  if (!isFormData && !hasContentType && body !== undefined && body !== null) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -35,6 +38,10 @@ export const apiFetch = async (url, options = {}) => {
     cache: options.cache || (options.method ? undefined : 'no-store'),
     headers
   };
+
+  if (!isFormData && body !== undefined && body !== null && typeof body !== 'string' && !(body instanceof Blob) && !(body instanceof URLSearchParams)) {
+    requestOptions.body = JSON.stringify(body);
+  }
 
   let res;
   try {

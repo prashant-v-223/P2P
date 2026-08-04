@@ -27,6 +27,7 @@ const documentSchema = new mongoose.Schema({
     index: true 
   },
 
+  storageType: { type: String, default: 's3', enum: ['s3', 'local'] },
   uploadedBy: { type: String, required: true, default: 'System User' },
   metadata: { type: Map, of: String }
 }, { timestamps: true });

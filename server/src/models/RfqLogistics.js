@@ -31,7 +31,18 @@ const rfqHeaderSchema = new mongoose.Schema({
   awardedQuoteId: String,
   totalQuantity: { type: Number, default: 1 },
   allocatedQuantity: { type: Number, default: 0 },
-  pendingAllocation: { type: Number, default: 1 }
+  pendingAllocation: { type: Number, default: 1 },
+  reassignmentHistory: [{
+    reassignedAt: Date,
+    reassignedBy: String,
+    previousVendorId: String,
+    previousVendorName: String,
+    previousAllocations: Array,
+    previousAllocatedQuantity: Number,
+    newAllocations: Array,
+    newAllocatedQuantity: Number,
+    approvalId: String
+  }]
 }, { timestamps: true, strict: false });
 
 // RFQ Quotes submitted by Vendors (with auto L1..L5 ranking)

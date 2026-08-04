@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
+import DocumentUploader from '../../components/shared/DocumentUploader';
 import { 
   ChevronLeft, 
   Building2, 
@@ -415,9 +416,13 @@ export default function PurchaseOrderDetailView() {
 
           {/* TAB 4: DOCUMENTS */}
           {activeTab === 'documents' && (
-            <div className="p-12 flex-1 flex flex-col items-center justify-center text-center text-xs text-slate-400">
-              <FileText className="w-8 h-8 text-slate-300 mb-2" />
-              <p className="font-semibold text-slate-700">No attached documents</p>
+            <div className="p-5">
+              <DocumentUploader
+                documentableType="PurchaseOrder"
+                documentableId={po.poNumber}
+                documentType="po_copy"
+                multiple={true}
+              />
             </div>
           )}
         </div>

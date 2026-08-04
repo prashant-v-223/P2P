@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Truck, DollarSign, CheckCircle2, FileText, Building2 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
+import DocumentUploader from '../../components/shared/DocumentUploader';
 
 export default function LogisticsPaymentsView() {
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedPaymentId, setSelectedPaymentId] = useState('');
 
   useEffect(() => {
     async function fetchPayments() {
@@ -92,6 +94,43 @@ export default function LogisticsPaymentsView() {
             </tbody>
           </table>
         </div>
+
+      {/* Document Upload Section */}
+      {payments.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-2xs p-5 space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <h3 className="text-sm font-bold text-slate-900">Freight & Logistics Documents</h3>
+            <p className="text-xs text-slate-500">Attach invoices, bills of lading, freight receipts, and payment proof</p>
+          </div>
+
+          <div className="space-y-3">
+            <label className="block text-xs font-semibold text-slate-700">Select Logistics Payment</label>
+            <select
+              value={selectedPaymentId}
+              onChange={(e) => setSelectedPaymentId(e.target.value)}
+              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-[#0d7676] focus:border-[#0d7676]"
+            >
+              <option value="">-- Select a logistics payment to upload documents --</option>
+              {payments.map(payment => (
+                <option key={payment.logisticsPaymentId} value={payment.logisticsPaymentId}>
+                  {payment.logisticsPaymentId} · {payment.providerName} · ₹{payment.amount.toLocaleString('en-IN')}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {selectedPaymentId && (
+            <div className="pt-3">
+              <DocumentUploader
+                documentableType="LogisticsPayment"
+                documentableId={selectedPaymentId}
+                documentType="bill_of_lading"
+                multiple={true}
+              />
+            </div>
+          )}
+        </div>
+      )}
       </div>
     </div>
   );

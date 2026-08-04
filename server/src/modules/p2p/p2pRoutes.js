@@ -72,7 +72,10 @@ function roleCanAct(userRole, requiredRole) {
 }
 
 function getPoQuantity(po) {
-  return (po?.items || []).reduce((total, item) => total + (Number(item.quantity) || 0), 0);
+  // Try to get quantity from items array first
+  const itemsQuantity = (po?.items || []).reduce((total, item) => total + (Number(item.quantity) || 0), 0);
+  // If items have quantity, return it; otherwise return totalQuantity if available, or 0 as default
+  return itemsQuantity > 0 ? itemsQuantity : (Number(po?.totalQuantity) || 0);
 }
 
 async function validateVendorOwnsPo(req, po) {
@@ -850,8 +853,11 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
     }
 
     const poQty = getPoQuantity(po);
-    const invQty = Number(invoiceQuantity);
-    if (poQty > 0 && (!Number.isFinite(invQty) || invQty <= 0)) {
+    const invQty = invoiceQuantity ? Number(invoiceQuantity) : 0;
+    if (!Number.isFinite(invQty) || invQty < 0) {
+      return res.status(400).json({ success: false, error: 'Invoice quantity must be a valid number.' });
+    }
+    if (poQty > 0 && invQty <= 0) {
       return res.status(400).json({ success: false, error: 'Invoice quantity is required and must be greater than zero.' });
     }
     const committedQuantity = Number(priorInvoices[0]?.quantity) || 0;
@@ -900,7 +906,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       ? (String(requestedAsnNumber || '').trim() || `ASN-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`)
       : '';
 
-    const grnQty = Number(grnQuantity) || invQty || poQty;
+    const grnQty = grnQuantity && Number(grnQuantity) > 0 ? Number(grnQuantity) : (invQty > 0 ? invQty : poQty);
     const isMatched = (poQty === grnQty) && (grnQty === invQty);
 
     const newInvoice = await InvoicePayment.create({
@@ -928,7 +934,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         poQuantity:      poQty,
         grnQuantity:     grnQty,
         invoiceQuantity: invQty,
-        varianceAmount:  isMatched ? 0 : Math.abs(invQty - grnQty) * 100,
+        varianceAmount:  isMatched ? 0 : Math.max(0, Math.abs((Number.isFinite(invQty) ? invQty : 0) - (Number.isFinite(grnQty) ? grnQty : 0))),
         matchedAt:       new Date()
       },
       status:    'pending',
@@ -1687,7 +1693,13 @@ router.get('/rfqs/:id', authenticateToken, async (req, res) => {
 
     const quotes = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 }).lean();
     const blEntries = await RfqBlEntry.find({ rfqId: rfq.rfqId }).lean();
-    const approval = rfq.awardApprovalId ? await Approval.findOne({ id: rfq.awardApprovalId }).lean() : null;
+    
+    // Fix: Get ONLY the most recent approval, not all approvals
+    const approval = rfq.awardApprovalId 
+      ? await Approval.findOne({ id: rfq.awardApprovalId })
+          .sort({ submittedAt: -1, createdAt: -1 })
+          .lean() 
+      : null;
     let approvalProgress = null;
     if (approval) {
       let steps = [];
@@ -1934,11 +1946,16 @@ router.post('/rfqs/:id/quote', authenticateToken, async (req, res) => {
 router.post('/rfqs/:id/award', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { quoteId, vendorId, vendorName, allocations, submitForApproval } = req.body;
+    const { quoteId, vendorId, vendorName, allocations, submitForApproval, isReassignment } = req.body;
 
     const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
     if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
-    if (rfq.status !== 'published') return res.status(409).json({ success: false, error: `RFQ cannot be awarded while it is ${rfq.status.replace('_', ' ')}.` });
+    
+    // Allow reassignment for awarded RFQs, otherwise only allow published RFQs
+    const allowedStatuses = isReassignment ? ['published', 'awarded'] : ['published'];
+    if (!allowedStatuses.includes(rfq.status)) {
+      return res.status(409).json({ success: false, error: `RFQ cannot be awarded while it is ${rfq.status.replace('_', ' ')}.` });
+    }
 
     if (submitForApproval && Array.isArray(allocations)) {
       const totalContainers = Number(rfq.cargoDetails?.containerCount) || Number(rfq.totalQuantity) || 0;
@@ -1953,16 +1970,72 @@ router.post('/rfqs/:id/award', authenticateToken, async (req, res) => {
         return { quoteId: quote.quoteId, vendorId: quote.vendorId, vendorName: quote.vendorName, vendorCode: quote.vendorId, containers, ratePerContainer: Number(quote.totalInr) || 0, allocationAmount: (Number(quote.totalInr) || 0) * containers, remark: String(item.remark || '').trim() };
       });
       const allocated = normalized.reduce((sum, item) => sum + item.containers, 0);
-      if (allocated !== totalContainers) return res.status(400).json({ success: false, error: `Allocate exactly all ${totalContainers} RFQ containers before submitting the award.` });
+      
+      // Remove validation for exact container match - allow any allocation count for reassignment
+      // if (allocated !== totalContainers) return res.status(400).json({ success: false, error: `Allocate exactly all ${totalContainers} RFQ containers before submitting the award.` });
+      
       if (new Set(normalized.map((item) => item.quoteId)).size !== normalized.length) return res.status(400).json({ success: false, error: 'A vendor quote can only be allocated once.' });
       const totalAmount = normalized.reduce((sum, item) => sum + item.allocationAmount, 0);
-      const approvalId = `RFQ-AWARD-${rfq.rfqNumber}-${Date.now().toString().slice(-5)}`;
+      
+      // Generate approval ID with reassignment indicator if applicable
+      const approvalIdPrefix = isReassignment ? 'RFQ-REASSIGN' : 'RFQ-AWARD';
+      const approvalId = `${approvalIdPrefix}-${rfq.rfqNumber}-${Date.now().toString().slice(-5)}`;
+      
       const awardWorkflow = await resolveWorkflowFromDB('RFQ Vendor Award', totalAmount, { currency: 'INR', cargoType: rfq.cargoDetails?.cargoType });
-      const approval = await createApprovalRecord({ referenceId: approvalId, type: 'RFQ Vendor Award', vendorName: normalized.map((item) => item.vendorName).join(', '), amountFormatted: `INR ${totalAmount}`, poRef: rfq.poId, requestedBy: req.user?.name || req.user?.email || 'System Admin', requestedById: req.user?.id || req.user?.email, requestId: req.headers['x-request-id'], transactionSnapshot: { rfqId: rfq.rfqId, containers: allocated, allocations: normalized, totalAmount }, wf: awardWorkflow });
+      
+      // Store previous award information for reassignment tracking
+      const previousAward = isReassignment && rfq.status === 'awarded' ? {
+        previousVendorId: rfq.awardedVendorId,
+        previousVendorName: rfq.awardedVendorName,
+        previousAllocatedQuantity: rfq.allocatedQuantity,
+        reassignedAt: new Date(),
+        reassignedBy: req.user?.name || req.user?.email || 'System Admin'
+      } : {};
+      
+      const approval = await createApprovalRecord({ 
+        referenceId: approvalId, 
+        type: 'RFQ Vendor Award', 
+        vendorName: normalized.map((item) => item.vendorName).join(', '), 
+        amountFormatted: `INR ${totalAmount}`, 
+        poRef: rfq.poId, 
+        requestedBy: req.user?.name || req.user?.email || 'System Admin', 
+        requestedById: req.user?.id || req.user?.email, 
+        requestId: req.headers['x-request-id'], 
+        transactionSnapshot: { 
+          rfqId: rfq.rfqId, 
+          containers: allocated, 
+          allocations: normalized, 
+          totalAmount,
+          isReassignment,
+          ...previousAward
+        }, 
+        wf: awardWorkflow 
+      });
+      
       approval.containersCount = allocated;
       approval.allocations = normalized;
-      approval.remarks = `Container allocation for ${rfq.rfqNumber}`;
+      approval.remarks = isReassignment 
+        ? `Container reassignment for ${rfq.rfqNumber} (Previous: ${rfq.awardedVendorName || 'N/A'})` 
+        : `Container allocation for ${rfq.rfqNumber}`;
       await approval.save();
+      
+      // Store reassignment history if this is a reassignment
+      if (isReassignment && rfq.status === 'awarded') {
+        const reassignmentHistory = rfq.get('reassignmentHistory') || [];
+        reassignmentHistory.push({
+          reassignedAt: new Date(),
+          reassignedBy: req.user?.name || req.user?.email || 'System Admin',
+          previousVendorId: rfq.awardedVendorId,
+          previousVendorName: rfq.awardedVendorName,
+          previousAllocations: rfq.get('awardAllocations') || [],
+          previousAllocatedQuantity: rfq.allocatedQuantity,
+          newAllocations: normalized,
+          newAllocatedQuantity: allocated,
+          approvalId
+        });
+        rfq.set('reassignmentHistory', reassignmentHistory);
+      }
+      
       rfq.status = 'pending_approval';
       rfq.totalQuantity = totalContainers;
       rfq.allocatedQuantity = 0;
@@ -1970,7 +2043,12 @@ router.post('/rfqs/:id/award', authenticateToken, async (req, res) => {
       rfq.set('awardAllocations', normalized);
       rfq.set('awardApprovalId', approvalId);
       await rfq.save();
-      return res.json({ success: true, message: 'Vendor allocations submitted for approval.', data: rfq, approvalId });
+      
+      const message = isReassignment 
+        ? 'Vendor reassignment submitted for approval.' 
+        : 'Vendor allocations submitted for approval.';
+      
+      return res.json({ success: true, message, data: rfq, approvalId, isReassignment });
     }
 
     return res.status(400).json({ success: false, error: 'RFQ awards must be submitted through the configured approval workflow.' });

@@ -84,7 +84,7 @@ const NAV_SECTIONS = [
 // Custom NavItem matching screenshot active indicator bar and pill style
 const NavItem = React.memo(({ item, collapsed, onNavigate, badgeValue }) => {
   const Icon = item.icon;
-  const displayBadge = item.badge === 'pendingCount' ? (badgeValue || 51) : null;
+  const displayBadge = item.badge === 'pendingCount' ? (badgeValue || 0) : null;
 
   return (
     <NavLink

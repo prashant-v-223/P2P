@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
+import DocumentUploader from '../../components/shared/DocumentUploader';
 
 const formatCurrency = (val) => {
   if (val === undefined || val === null) return '₹0.00';
@@ -328,24 +329,14 @@ export default function InvoicePaymentDetailView() {
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
               <h3 className="text-sm font-bold text-slate-900">Documents</h3>
-              <span className="text-xs text-slate-400 font-semibold">(1)</span>
             </div>
 
-            <div className="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-colors text-xs">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center font-bold text-xs">
-                  D
-                </div>
-                <div>
-                  <p className="font-bold text-slate-800">RAYZON SOLAR LIMITED INVOICE-{invoice.invoiceNumber || '9000024000'} DT-16-06-2026 (1).pdf</p>
-                  <p className="text-[10px] text-slate-400 font-mono">268 KB</p>
-                </div>
-              </div>
-
-              <button className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors">
-                <Download className="w-4 h-4" />
-              </button>
-            </div>
+            <DocumentUploader
+              documentableType="InvoicePayment"
+              documentableId={invoice.invoicePaymentId}
+              documentType="vendor_invoice"
+              multiple={true}
+            />
           </div>
         </div>
 

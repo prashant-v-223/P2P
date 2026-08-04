@@ -168,14 +168,47 @@ export default function NotificationPanel() {
   const panelRef = useRef(null);
   const prevUnreadRef = useRef(unreadCount);
 
+  // Map approval types to detail view routes
+  const getDetailRoute = (approvalType, approvalId) => {
+    if (!approvalId) return '/approvals';
+    
+    const type = approvalType?.toLowerCase() || '';
+    
+    // Advance Payment
+    if (type.includes('advance')) {
+      return `/p2p/advance-payments/${approvalId}`;
+    }
+    
+    // Invoice Payment
+    if (type.includes('invoice')) {
+      return `/p2p/invoice-payments/${approvalId}`;
+    }
+    
+    // RFQ Logistics
+    if (type.includes('rfq') || type.includes('logistics')) {
+      return `/admin/rfqs/${approvalId}`;
+    }
+    
+    // Custom Duty Payment
+    if (type.includes('custom') || type.includes('duty')) {
+      return `/p2p/custom-duty?id=${approvalId}`;
+    }
+    
+    // Logistics Payment
+    if (type.includes('logistics payment')) {
+      return `/p2p/logistics-payments?id=${approvalId}`;
+    }
+    
+    // Default fallback to approvals page with search
+    return `/approvals?q=${encodeURIComponent(approvalId)}`;
+  };
+
   const handleNotifClick = (notif) => {
     dispatch(markRead(notif.id));
     setOpen(false);
-    if (notif.approvalId) {
-      navigate(`/approvals?q=${encodeURIComponent(notif.approvalId)}`);
-    } else {
-      navigate('/approvals');
-    }
+    
+    const route = getDetailRoute(notif.approvalType, notif.approvalId);
+    navigate(route);
   };
 
   // Detect SSE by watching for new notifications arriving while tab is active
@@ -338,7 +371,7 @@ export default function NotificationPanel() {
                   }
                 </div>
                 <p className="text-sm font-bold text-slate-700">
-                  {filter === 'unread' ? 'All caught up! 🎉' : 'No notifications yet'}
+                  {filter === 'unread' ? 'All caught up!' : 'No notifications yet'}
                 </p>
                 <p className="text-[11px] text-slate-400 mt-1 max-w-[200px]">
                   {filter === 'unread'

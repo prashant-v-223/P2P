@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
+import FileUploadZone from '../../components/shared/FileUploadZone';
 
 const generateUniqueInvoiceNumber = () => {
   const year = new Date().getFullYear();
@@ -56,7 +57,6 @@ export default function InvoicePaymentFormView() {
   const [currency, setCurrency] = useState('INR');
   const [dueDays, setDueDays] = useState(30);
   const [invoiceAmount, setInvoiceAmount] = useState('');
-  const [invoiceQuantity, setInvoiceQuantity] = useState('');
   const [grnNo, setGrnNo] = useState('');
   const [remarks, setRemarks] = useState('');
 
@@ -68,9 +68,9 @@ export default function InvoicePaymentFormView() {
   const [tdsPercentage, setTdsPercentage] = useState('0%');
   const [advanceAdjust, setAdvanceAdjust] = useState('0');
 
-  // Upload
+  // Upload - Changed from single file to multiple documents
   const [sendApprovalTo, setSendApprovalTo] = useState('');
-  const [selectedFile, setSelectedFile] = useState(null);
+  const [documents, setDocuments] = useState([]);
 
   const calculateDueDate = () => {
     const d = new Date(invoiceDate || Date.now());
@@ -117,7 +117,6 @@ export default function InvoicePaymentFormView() {
             setAsnNumber(inv.asnNumber || generateASNNumber());
             setInvoiceDate(inv.invoiceDate ? new Date(inv.invoiceDate).toISOString().split('T')[0] : '');
             setInvoiceAmount(inv.grossAmount || '');
-            setInvoiceQuantity(inv.threeWayMatch?.invoiceQuantity || '');
             setGrnNo(inv.grnNumber || '');
             setCgstAmount(inv.cgstAmount || '0');
             setSgstAmount(inv.sgstAmount || '0');
@@ -181,19 +180,13 @@ export default function InvoicePaymentFormView() {
     }
   };
 
-  const handleFileChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      setSelectedFile(e.target.files[0]);
-      setErrorMsg('');
-    }
+  const handleFilesSelected = (newFiles) => {
+    setDocuments(prev => [...prev, ...newFiles]);
+    setErrorMsg('');
   };
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setSelectedFile(e.dataTransfer.files[0]);
-      setErrorMsg('');
-    }
+  const handleFileRemove = (index) => {
+    setDocuments(docs => docs.filter((_, i) => i !== index));
   };
 
   const handleSubmit = async (e) => {
@@ -247,18 +240,6 @@ export default function InvoicePaymentFormView() {
       showToast({ title: 'Amount Exceeds PO', description: msg, type: 'error' });
       return;
     }
-    if (!isEditMode && Number(selectedPoObj?.totalQuantity) > 0 && (!invoiceQuantity || Number(invoiceQuantity) <= 0)) {
-      const msg = 'Invoice quantity is required.';
-      setErrorMsg(msg);
-      showToast({ title: 'Quantity Required', description: msg, type: 'error' });
-      return;
-    }
-    if (!isEditMode && Number(invoiceQuantity) > Number(selectedPoObj?.remainingQuantity)) {
-      const msg = `Invoice quantity exceeds the remaining PO quantity (${selectedPoObj.remainingQuantity}).`;
-      setErrorMsg(msg);
-      showToast({ title: 'Quantity Exceeds PO', description: msg, type: 'error' });
-      return;
-    }
     if (!grnNo.trim()) {
       const msg = 'GRN / Delivery Note No is required.';
       setErrorMsg(msg);
@@ -271,16 +252,17 @@ export default function InvoicePaymentFormView() {
       showToast({ title: 'Invoice Type Required', description: msg, type: 'error' });
       return;
     }
-    if (!selectedFile && !isEditMode) {
-      const msg = 'Invoice document file is required. Please drag & drop or upload your invoice file (PDF, JPG, PNG).';
+    if (!documents.length && !isEditMode) {
+      const msg = 'At least one invoice document is required.';
       setErrorMsg(msg);
-      showToast({ title: 'Invoice File Required', description: msg, type: 'error' });
+      showToast({ title: 'Invoice Document Required', description: msg, type: 'error' });
       return;
     }
 
     try {
       setSubmitting(true);
       const numTdsPct = parseFloat(String(tdsPercentage).replace('%', '')) || 0;
+      
       const payload = {
         poNumber,
         invoiceNumber: invoiceNumber.trim(),
@@ -290,7 +272,7 @@ export default function InvoicePaymentFormView() {
         dueDate: calculateDueDate(),
         grossAmount: Number(invoiceAmount) || 0,
         currency,
-        invoiceQuantity: Number(invoiceQuantity) || undefined,
+        grnQuantity: 0,
         gstAmount: (Number(cgstAmount) || 0) + (Number(sgstAmount) || 0) + (Number(igstAmount) || 0),
         tdsAmount: ((Number(invoiceAmount) || 0) * numTdsPct) / 100,
         tdsPercentage: numTdsPct,
@@ -311,11 +293,58 @@ export default function InvoicePaymentFormView() {
       });
 
       if (res.ok) {
-        showToast({
-          title: isEditMode ? 'Invoice Updated' : 'Invoice Payment Created',
-          description: `Invoice "${invoiceNumber}" saved successfully.`,
-          type: 'success'
-        });
+        const data = await res.json();
+        const invoiceId = data.data?.invoicePaymentId || data.data?.invoiceId;
+
+        // Step 2: Upload documents if any are attached (only for new invoices)
+        if (!isEditMode && documents.length > 0 && invoiceId) {
+          const formData = new FormData();
+          documents.forEach(doc => {
+            formData.append('files', doc.file);
+          });
+          formData.append('documentType', 'vendor_invoice');
+          formData.append('documentableType', 'InvoicePayment');
+          formData.append('documentableId', invoiceId);
+
+          try {
+            const docRes = await apiFetch('/api/documents/upload-multiple', {
+              method: 'POST',
+              body: formData
+            });
+            const docJson = await docRes.json();
+            
+            if (!docRes.ok) {
+              console.error('Document upload failed:', docJson.error);
+              showToast({
+                title: isEditMode ? 'Invoice Updated' : 'Invoice Created',
+                description: `Invoice "${invoiceNumber}" saved but documents failed to upload. You can add them later.`,
+                type: 'warning',
+                duration: 5000
+              });
+            } else {
+              showToast({
+                title: isEditMode ? 'Invoice Updated' : 'Invoice Payment Created',
+                description: `Invoice "${invoiceNumber}" with ${docJson.data?.uploaded?.length || documents.length} document(s) saved successfully.`,
+                type: 'success'
+              });
+            }
+          } catch (docError) {
+            console.error('Document upload error:', docError);
+            showToast({
+              title: isEditMode ? 'Invoice Updated' : 'Invoice Created',
+              description: `Invoice "${invoiceNumber}" saved but documents failed to upload. You can add them later.`,
+              type: 'warning',
+              duration: 5000
+            });
+          }
+        } else {
+          showToast({
+            title: isEditMode ? 'Invoice Updated' : 'Invoice Payment Created',
+            description: `Invoice "${invoiceNumber}" saved successfully.`,
+            type: 'success'
+          });
+        }
+
         navigate('/admin/invoice-payments');
       } else {
         const err = await res.json();
@@ -681,27 +710,6 @@ export default function InvoicePaymentFormView() {
               )}
             </div>
 
-            {/* Invoice Quantity */}
-            <div className="space-y-1">
-              <label className="block text-xs font-semibold text-slate-700">
-                Invoice Quantity {Number(selectedPoObj?.totalQuantity) > 0 && <span className="text-rose-500">*</span>}
-              </label>
-              <input
-                type="number"
-                min="0.01"
-                step="0.01"
-                max={selectedPoObj?.remainingQuantity || undefined}
-                value={invoiceQuantity}
-                onChange={(e) => { setInvoiceQuantity(e.target.value); setErrorMsg(''); }}
-                disabled={!selectedPoObj || Number(selectedPoObj.totalQuantity) <= 0}
-                placeholder="Delivered quantity"
-                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] disabled:opacity-60"
-              />
-              {Number(selectedPoObj?.totalQuantity) > 0 && !isEditMode && (
-                <p className="text-[10px] text-slate-500">Remaining quantity: {selectedPoObj.remainingQuantity}</p>
-              )}
-            </div>
-
             {/* GRN / Delivery Note No */}
             <div className="space-y-1">
               <label className="block text-xs font-semibold text-slate-700">
@@ -825,50 +833,26 @@ export default function InvoicePaymentFormView() {
           </div>
         </div>
 
-        {/* Section 4: INVOICE FILE */}
+        {/* Section 4: INVOICE DOCUMENTS */}
         <div className="bg-white rounded-xl p-3.5 border border-slate-200 shadow-2xs space-y-2 w-full">
           <h2 className="text-[11px] font-bold text-slate-800 uppercase tracking-wider border-b border-slate-100 pb-1.5">
-            INVOICE FILE {!isEditMode && <span className="text-rose-500">*</span>}
+            INVOICE DOCUMENTS {!isEditMode && <span className="text-rose-500">*</span>}
           </h2>
 
-          <div
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={handleDrop}
-            className="border-2 border-dashed border-slate-200 hover:border-[#0d7676] rounded-xl p-4 text-center bg-slate-50/50 hover:bg-slate-50 transition-colors cursor-pointer"
-          >
-            <input
-              type="file"
-              id="admin-invoice-file"
-              onChange={handleFileChange}
-              accept=".pdf,.jpg,.jpeg,.png"
-              className="hidden"
-            />
-            <label htmlFor="admin-invoice-file" className="cursor-pointer block space-y-1">
-              <div className="w-8 h-8 bg-teal-50 text-[#0d7676] rounded-full flex items-center justify-center mx-auto border border-teal-100">
-                <CloudUpload className="w-4 h-4" />
-              </div>
-              <div className="flex items-center justify-center gap-1.5 text-xs">
-                <span className="font-bold text-slate-700">Drag & drop your invoice here {!isEditMode && <span className="text-rose-500">*</span>}</span>
-                <span className="text-[11px] text-[#0d7676] font-semibold underline">or click to browse</span>
-              </div>
-              <p className="text-[10px] text-slate-400">PDF, JPG, PNG ... max 10MB</p>
-            </label>
-
-            {selectedFile && (
-              <div className="mt-2 p-2 bg-white border border-teal-200 rounded-lg inline-flex items-center gap-2.5 text-xs shadow-2xs">
-                <FileText className="w-3.5 h-3.5 text-[#0d7676]" />
-                <span className="font-bold text-slate-800">{selectedFile.name}</span>
-                <span className="text-[10px] text-slate-400 font-mono">({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)</span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedFile(null)}
-                  className="text-slate-400 hover:text-rose-500 ml-1"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
-          </div>
+          <FileUploadZone
+            multiple={true}
+            accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx,.xls,.csv,.zip"
+            maxSize={25}
+            onFilesSelected={handleFilesSelected}
+            selectedFiles={documents}
+            onFileRemove={handleFileRemove}
+          />
+          
+          {!isEditMode && (
+            <p className="text-[10px] text-slate-500 font-medium">
+              Upload invoice copy, delivery note, GRN copy, or other supporting documents
+            </p>
+          )}
         </div>
 
         {/* Bottom Actions Bar */}
