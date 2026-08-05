@@ -84,7 +84,10 @@ export const DEFAULT_PERMISSIONS = [
 
   // ── Users ────────────────────────────────────────────────────────────────────
   { id: 'perm-044', key: 'users.view', name: 'View Users', module: 'Users', action: 'view', description: 'View user directory and account details.', type: 'System', status: 'Active' },
-  { id: 'perm-045', key: 'users.manage', name: 'Manage Users', module: 'Users', action: 'manage', description: 'Create, edit and deactivate user accounts.', type: 'System', status: 'Active' },
+  { id: 'perm-045', key: 'users.create', name: 'Provision User', module: 'Users', action: 'create', description: 'Provision new user account in directory.', type: 'System', status: 'Active' },
+  { id: 'perm-046', key: 'users.edit', name: 'Edit User', module: 'Users', action: 'edit', description: 'Edit user profile, role, department and account status.', type: 'System', status: 'Active' },
+  { id: 'perm-047', key: 'users.delete', name: 'Delete User', module: 'Users', action: 'delete', description: 'Delete user account from directory.', type: 'System', status: 'Active' },
+  { id: 'perm-048', key: 'users.manage', name: 'Manage Users', module: 'Users', action: 'manage', description: 'Master control to create, edit, deactivate and delete user accounts.', type: 'System', status: 'Active' },
 
   // ── Roles & Permissions ──────────────────────────────────────────────────────
   { id: 'perm-046', key: 'roles.view', name: 'View Roles', module: 'Roles & Permissions', action: 'view', description: 'View system roles and permission matrix.', type: 'System', status: 'Active' },
@@ -140,7 +143,7 @@ export const DEFAULT_ROLES = [
       'exchange-rates': ['view', 'manage'],
       'sap': ['view', 'sync'],
       'workflows': ['view', 'manage'],
-      'users': ['view', 'manage'],
+      'users': ['view', 'create', 'edit', 'delete', 'manage'],
       'roles': ['view', 'manage'],
       'permissions': ['view-perms', 'create-perms']
     }

@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import {
   UserPlus, Search, Shield, CheckCircle2, Loader2, X,
-  XCircle, ArrowRightLeft, Users, AlertCircle
+  XCircle, ArrowRightLeft, Users, AlertCircle, Pencil, Trash2, ShieldAlert
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { SearchableSelect } from '../ui/searchable-select';
 import { FieldError } from '../ui/field-error';
 import { useToast } from '../ui/toast';
 import { ServerPagination } from '../ui/server-pagination';
+import { userHasPermission } from '../../lib/permissions';
 
 // ── Delegation Badge ─────────────────────────────────────────────────────────
 function DelegationBadge({ user }) {
@@ -35,8 +37,6 @@ function DelegationBadge({ user }) {
 // ── Set Delegation Modal (Admin) ─────────────────────────────────────────────
 function DelegationModal({ user, allUsers, onClose, onSaved }) {
   const [parentUserId, setParentUserId] = useState(user.parentUserId || '');
-  const [active, setActive] = useState(user.delegationActive || false);
-  const [note, setNote] = useState(user.delegationNote || '');
   const [saving, setSaving] = useState(false);
   const { showToast } = useToast();
 
@@ -50,8 +50,8 @@ function DelegationModal({ user, allUsers, onClose, onSaved }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           parentUserId: parentUserId || null,
-          delegationActive: active,
-          delegationNote: note
+          delegationActive: Boolean(parentUserId),
+          delegationNote: ''
         })
       });
       const data = await res.json();
@@ -104,14 +104,14 @@ function DelegationModal({ user, allUsers, onClose, onSaved }) {
           <div className="flex gap-2.5 rounded-xl bg-blue-50 border border-blue-200 p-3">
             <AlertCircle className="h-4 w-4 text-blue-500 flex-shrink-0 mt-0.5" />
             <p className="text-xs text-blue-700">
-              When <strong>delegation is active</strong>, the selected parent user can act on all pending approvals assigned to <strong>{user.name}</strong>.
+              Select a parent/delegate user below. Once saved, the selected user can act on all pending approvals assigned to <strong>{user.name}</strong>.
             </p>
           </div>
 
           {/* Parent User Select */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Delegate / Parent User
+              Delegate / Parent User <span className="text-rose-500">*</span>
             </label>
             <select
               value={parentUserId}
@@ -125,37 +125,6 @@ function DelegationModal({ user, allUsers, onClose, onSaved }) {
                 </option>
               ))}
             </select>
-          </div>
-
-          {/* Delegation Note */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Reason / Note <span className="font-normal text-slate-400">(optional)</span>
-            </label>
-            <input
-              type="text"
-              maxLength={240}
-              placeholder="e.g. Annual leave Aug 5–15"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm focus:border-teal-600 focus:outline-none focus:ring-4 focus:ring-teal-600/10"
-            />
-          </div>
-
-          {/* Active Toggle */}
-          <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <div>
-              <p className="text-xs font-semibold text-slate-800">Activate delegation now</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">The delegate can immediately act on pending approvals.</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setActive((prev) => !prev)}
-              disabled={!parentUserId}
-              className={`relative h-6 w-11 rounded-full transition-colors ${active && parentUserId ? 'bg-teal-600' : 'bg-slate-300'} disabled:opacity-50`}
-            >
-              <span className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${active && parentUserId ? 'translate-x-5' : 'translate-x-0'}`} />
-            </button>
           </div>
 
           <div className="modal-footer">
@@ -183,7 +152,174 @@ function DelegationModal({ user, allUsers, onClose, onSaved }) {
   );
 }
 
+// ── Edit User Modal (Permission Controlled) ──────────────────────────────────
+function EditUserModal({ user, roleOptions, onClose, onSaved }) {
+  const [name, setName] = useState(user.name || '');
+  const [email, setEmail] = useState(user.email || '');
+  const [role, setRole] = useState(user.role || 'procurement');
+  const [department, setDepartment] = useState(user.department || 'Procurement');
+  const [status, setStatus] = useState(user.status || 'Active');
+  const [password, setPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState({});
+  const { showToast } = useToast();
+
+  const handleUpdate = async (e) => {
+    e.preventDefault();
+    const nextErrors = {};
+    if (name.trim().length < 2) nextErrors.name = 'Enter at least 2 characters.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) nextErrors.email = 'Enter a valid email.';
+    if (password && password.length < 8) nextErrors.password = 'Password must be at least 8 characters.';
+    if (!role) nextErrors.role = 'Select a system role.';
+    if (!department) nextErrors.department = 'Select a department.';
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+
+    try {
+      setSaving(true);
+      const payload = { name: name.trim(), email: email.trim(), role, department, status };
+      if (password) payload.password = password;
+
+      const res = await apiFetch(`/api/users/${user.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update user.');
+      showToast({ title: 'User updated', description: `${name.trim()}'s profile was updated.` });
+      onSaved();
+    } catch (err) {
+      showToast({ type: 'error', title: 'Update failed', description: err.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && !saving && onClose()}>
+      <section className="modal-panel max-w-lg">
+        <header className="modal-header">
+          <div className="flex items-center gap-3">
+            <span className="section-icon bg-teal-50 text-teal-700"><Pencil className="h-4 w-4" /></span>
+            <div>
+              <h3 className="text-sm font-bold text-slate-950">Edit User Account</h3>
+              <p className="mt-0.5 text-xs text-slate-500">Update profile details, assigned role, and status for {user.name}.</p>
+            </div>
+          </div>
+          <button type="button" disabled={saving} onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100">
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+
+        <form noValidate onSubmit={handleUpdate} className="modal-body max-h-[calc(100dvh-5.5rem)] overflow-y-auto space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name <span className="text-rose-500">*</span></label>
+            <input type="text" required value={name} onChange={(e) => { setName(e.target.value); setErrors({ ...errors, name: '' }); }} className={`w-full text-sm p-2.5 rounded-lg border ${errors.name ? 'border-rose-400' : 'border-slate-300'}`} />
+            <FieldError>{errors.name}</FieldError>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Official Email <span className="text-rose-500">*</span></label>
+            <input type="email" required value={email} onChange={(e) => { setEmail(e.target.value); setErrors({ ...errors, email: '' }); }} className={`w-full text-sm p-2.5 rounded-lg border ${errors.email ? 'border-rose-400' : 'border-slate-300'}`} />
+            <FieldError>{errors.email}</FieldError>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">System Role <span className="text-rose-500">*</span></label>
+              <SearchableSelect value={role} onChange={(value) => { setRole(value); setErrors({ ...errors, role: '' }); }} error={errors.role} options={roleOptions} searchPlaceholder="Search roles..." />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Department <span className="text-rose-500">*</span></label>
+              <SearchableSelect value={department} onChange={(value) => { setDepartment(value); setErrors({ ...errors, department: '' }); }} error={errors.department} options={['Procurement', 'Finance & Accounts', 'EXIM & Logistics', 'Supply Chain', 'IT Operations', 'Executive Management', 'Accounts & Finance']} searchPlaceholder="Search departments..." />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Account Status</label>
+              <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm focus:border-teal-600 focus:outline-none">
+                <option value="Active">Active</option>
+                <option value="Inactive">Inactive</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Reset Password <span className="font-normal text-slate-400">(optional)</span></label>
+              <input type="password" placeholder="Leave blank to keep current" value={password} onChange={(e) => { setPassword(e.target.value); setErrors({ ...errors, password: '' }); }} className={`w-full text-sm p-2.5 rounded-lg border ${errors.password ? 'border-rose-400' : 'border-slate-300'}`} />
+              <FieldError>{errors.password}</FieldError>
+            </div>
+          </div>
+
+          <div className="modal-footer">
+            <button type="button" onClick={onClose} disabled={saving} className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
+            <button type="submit" disabled={saving} className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-[#0d7676] hover:bg-[#0a5c5c] rounded-lg disabled:opacity-50">
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+              <span>Save Changes</span>
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+// ── Delete User Confirmation Modal ───────────────────────────────────────────
+function DeleteUserModal({ user, onClose, onDeleted }) {
+  const [deleting, setDeleting] = useState(false);
+  const { showToast } = useToast();
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      const res = await apiFetch(`/api/users/${user.id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to delete user.');
+      showToast({ title: 'User deleted', description: `${user.name} was removed from the directory.` });
+      onDeleted();
+    } catch (err) {
+      showToast({ type: 'error', title: 'Delete failed', description: err.message });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && !deleting && onClose()}>
+      <section className="modal-panel max-w-md">
+        <header className="modal-header">
+          <div className="flex items-center gap-3">
+            <span className="section-icon bg-rose-50 text-rose-600"><Trash2 className="h-4 w-4" /></span>
+            <div>
+              <h3 className="text-sm font-bold text-slate-950">Delete User Account</h3>
+              <p className="mt-0.5 text-xs text-slate-500">Confirm permanent account deletion.</p>
+            </div>
+          </div>
+          <button type="button" disabled={deleting} onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100">
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+
+        <div className="modal-body space-y-4">
+          <div className="rounded-xl border border-rose-200 bg-rose-50/70 p-3.5 text-xs text-rose-700">
+            Are you sure you want to permanently delete <strong>{user.name}</strong> ({user.email})? This action will remove the account and clear any associated delegation settings.
+          </div>
+
+          <div className="modal-footer">
+            <button type="button" onClick={onClose} disabled={deleting} className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
+            <button type="button" onClick={handleDelete} disabled={deleting} className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg disabled:opacity-50">
+              {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+              <span>Delete User</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function UserManagementView() {
+  const currentUser = useSelector((state) => state.auth?.user);
   const [usersList, setUsersList] = useState([]);
   const [roleOptions, setRoleOptions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -193,6 +329,8 @@ export default function UserManagementView() {
   const [stats, setStats] = useState({ activeUsers: 0, inactiveUsers: 0, totalUsers: 0 });
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
   const [delegationModal, setDelegationModal] = useState(null);
+  const [editUserModal, setEditUserModal] = useState(null);
+  const [deleteUserModal, setDeleteUserModal] = useState(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -200,6 +338,11 @@ export default function UserManagementView() {
   const [department, setDepartment] = useState('Procurement');
   const [errors, setErrors] = useState({});
   const { showToast } = useToast();
+
+  const canManageUsers = userHasPermission(currentUser?.role, 'users.manage');
+  const canCreateUser = canManageUsers || userHasPermission(currentUser?.role, 'users.create');
+  const canEditUser = canManageUsers || userHasPermission(currentUser?.role, 'users.edit');
+  const canDeleteUser = canManageUsers || userHasPermission(currentUser?.role, 'users.delete');
   const search = searchParams.get('q') || '';
   const statusFilter = searchParams.get('status') || 'All';
   const sort = searchParams.get('sort') || 'newest';
@@ -335,14 +478,32 @@ export default function UserManagementView() {
           </select>
         </div>
 
-        <button
-          onClick={() => setIsAddUserOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-[#0d7676] rounded-lg hover:bg-[#0a5c5c] transition shadow-xs flex-shrink-0"
-        >
-          <UserPlus className="w-4 h-4" />
-          Provision New User
-        </button>
+        {canCreateUser ? (
+          <button
+            onClick={() => setIsAddUserOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-[#0d7676] rounded-lg hover:bg-[#0a5c5c] transition shadow-xs flex-shrink-0"
+          >
+            <UserPlus className="w-4 h-4" />
+            Provision New User
+          </button>
+        ) : (
+          <button
+            disabled
+            title="You do not have permission to provision new users."
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 rounded-lg cursor-not-allowed flex-shrink-0"
+          >
+            <ShieldAlert className="w-4 h-4 text-slate-400" />
+            Provisioning Restricted
+          </button>
+        )}
       </div>
+
+      {!canManageUsers && !canCreateUser && !canEditUser && !canDeleteUser && (
+        <div className="flex items-center gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-800 font-medium shadow-2xs">
+          <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+          <span>Viewing User Directory in <strong>Read-Only Mode</strong>. Administrative actions (Add, Edit, Delete, Delegation) require <strong>users.manage</strong> permission.</span>
+        </div>
+      )}
 
       {/* Main Table Card */}
       <div className="surface-card flex min-h-0 flex-1 flex-col border border-slate-200 rounded-xl bg-white shadow-2xs overflow-hidden">
@@ -414,14 +575,44 @@ export default function UserManagementView() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => setDelegationModal(usr)}
-                        title="Manage delegation"
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:text-teal-700 hover:bg-teal-50 rounded-lg border border-slate-200 transition"
-                      >
-                        <ArrowRightLeft className="w-3 h-3" />
-                        Delegate
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        {canEditUser && (
+                          <button
+                            onClick={() => setEditUserModal(usr)}
+                            title="Edit user details"
+                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:text-teal-700 hover:bg-teal-50 rounded-lg border border-slate-200 transition"
+                          >
+                            <Pencil className="w-3 h-3 text-teal-600" />
+                            Edit
+                          </button>
+                        )}
+                        
+                        {canManageUsers && (
+                          <button
+                            onClick={() => setDelegationModal(usr)}
+                            title="Manage delegation"
+                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg border border-slate-200 transition"
+                          >
+                            <ArrowRightLeft className="w-3 h-3 text-amber-600" />
+                            Delegate
+                          </button>
+                        )}
+
+                        {canDeleteUser && (
+                          <button
+                            onClick={() => setDeleteUserModal(usr)}
+                            title="Delete user account"
+                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-lg border border-slate-200 transition"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            Delete
+                          </button>
+                        )}
+
+                        {!canEditUser && !canManageUsers && !canDeleteUser && (
+                          <span className="text-[11px] text-slate-400 italic">Read-only</span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -439,6 +630,27 @@ export default function UserManagementView() {
         itemLabel="users"
         onPageChange={(nextPage) => updateFilters({ page: nextPage })}
       />
+
+      {/* Edit User Modal */}
+      {editUserModal && createPortal(
+        <EditUserModal
+          user={editUserModal}
+          roleOptions={roleOptions}
+          onClose={() => setEditUserModal(null)}
+          onSaved={() => { setEditUserModal(null); fetchUsers(); }}
+        />,
+        document.body
+      )}
+
+      {/* Delete User Modal */}
+      {deleteUserModal && createPortal(
+        <DeleteUserModal
+          user={deleteUserModal}
+          onClose={() => setDeleteUserModal(null)}
+          onDeleted={() => { setDeleteUserModal(null); fetchUsers(); }}
+        />,
+        document.body
+      )}
 
       {/* Delegation Modal */}
       {delegationModal && createPortal(

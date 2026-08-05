@@ -197,16 +197,21 @@ export function userHasPermission(userRole, permissionKey, customPermissions) {
   if (roleNorm === 'admin' || roleNorm === 'system admin' || roleNorm === 'systemadmin') return true;
   if (permissionKey === '*') return true;
 
+  const [mod, act] = permissionKey.split('.');
+
   // Check custom permissions object if passed from DB
   if (customPermissions && typeof customPermissions === 'object') {
-    const [mod, act] = permissionKey.split('.');
-    if (customPermissions[mod] && customPermissions[mod].includes(act)) return true;
+    const modPerms = customPermissions[mod] || [];
+    if (modPerms.includes(act) || modPerms.includes('manage') || modPerms.includes('*')) return true;
   }
 
   // Fallback to static role permissions map
   const rolePerms = ROLE_PERMISSIONS[userRole] || ROLE_PERMISSIONS[roleNorm] || [];
   if (rolePerms.includes('*')) return true;
-  return rolePerms.includes(permissionKey);
+  if (rolePerms.includes(permissionKey)) return true;
+  if (act && (rolePerms.includes(`${mod}.manage`) || rolePerms.includes(`${mod}.*`))) return true;
+
+  return false;
 }
 
 /**

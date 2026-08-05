@@ -74,7 +74,7 @@ export const authorizePermission = (moduleKey, action) => {
 
       const hasPermission = roleRecords.some((role) => {
         const modulePerms = role?.permissions?.[moduleKey] || [];
-        return modulePerms.includes(action);
+        return modulePerms.includes(action) || modulePerms.includes('manage') || modulePerms.includes('*');
       });
 
       console.log(`[RBAC DEBUG] Has permission: ${hasPermission}`);
