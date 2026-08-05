@@ -60,13 +60,39 @@ function sendToClient(res, eventType, data) {
 }
 
 /**
- * Broadcast an event to ALL connected SSE clients.
+ * Broadcast an event to connected SSE clients with targeted role & user filtering.
  */
-export function broadcastEvent(eventType, data) {
+export function broadcastEvent(eventType, data, targetFilter = {}) {
   const payload = { ...data, serverTime: new Date().toISOString() };
   let sent = 0;
   for (const [clientId, client] of clients) {
     try {
+      const userRole = (client.userRole || '').toLowerCase();
+      const userId   = String(client.userId || '').toLowerCase();
+      const vendorId = String(client.vendorId || '').toLowerCase();
+
+      if (targetFilter.targetRole) {
+        const targetRoles = Array.isArray(targetFilter.targetRole) ? targetFilter.targetRole : [targetFilter.targetRole];
+        const isSuperUser = ['admin', 'system admin', 'systemadmin', 'superadmin'].includes(userRole);
+        const matchRole = isSuperUser || targetRoles.some(r => userRole.includes(r.toLowerCase()) || r.toLowerCase().includes(userRole));
+        if (!matchRole) continue;
+      }
+
+      if (targetFilter.targetUserId) {
+        if (userId !== String(targetFilter.targetUserId).toLowerCase()) continue;
+      }
+
+      if (targetFilter.targetVendorId) {
+        if (vendorId !== String(targetFilter.targetVendorId).toLowerCase()) continue;
+      }
+
+      // Hide internal admin notifications from vendors & brokers unless explicitly targeted
+      if ((userRole.includes('vendor') || userRole.includes('customs')) && !targetFilter.allowExternal) {
+        if (targetFilter.targetVendorId && vendorId !== String(targetFilter.targetVendorId).toLowerCase()) {
+          continue;
+        }
+      }
+
       sendToClient(client.res, eventType, payload);
       sent++;
     } catch {

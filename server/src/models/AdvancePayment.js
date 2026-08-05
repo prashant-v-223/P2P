@@ -30,7 +30,10 @@ const advancePaymentSchema = new mongoose.Schema({
   paidAt: { type: Date },
   adjustedAmount: { type: Number, default: 0 },
   adjustmentInvoiceId: { type: String },
-  createdBy: { type: String, default: 'Finance Team' }
+  createdBy: { type: String, default: 'Finance Team' },
+  isDeleted: { type: Boolean, default: false, index: true },
+  deletedAt: { type: Date },
+  deletedBy: { type: String }
 }, { timestamps: true });
 
 export const AdvancePayment = mongoose.models.AdvancePayment || mongoose.model('AdvancePayment', advancePaymentSchema);

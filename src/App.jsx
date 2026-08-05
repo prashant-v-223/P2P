@@ -1,53 +1,55 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchPendingApprovals } from './features/approvals/approvalsSlice';
 import { useRealtimeNotifications } from './hooks/useRealtimeNotifications';
+import { Loader2 } from 'lucide-react';
 
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import MainLayout from './components/layout/MainLayout';
-import WorkflowsDashboard from './features/workflows/WorkflowsDashboard';
-import ExchangeRatesDashboard from './features/exchangeRates/ExchangeRatesDashboard';
-import RolesAndPermissionsView from './components/admin/RolesAndPermissionsView';
-import UserManagementView from './components/admin/UserManagementView';
-import PendingApprovalsView from './components/approvals/PendingApprovalsView';
 import OverviewDashboard from './components/dashboard/OverviewDashboard';
-import UserProfilePage from './features/users/UserProfilePage';
 import LoginPage from './features/auth/LoginPage';
 import RegisterPage from './features/auth/RegisterPage';
-import VendorListView from './components/vendors/VendorListView';
-import VendorDetailsView from './components/vendors/VendorDetailsView';
-import VendorFormView from './components/vendors/VendorFormView';
 
-// P2P System Features matching exact user screenshot sidebar routes
-import PurchaseOrdersView from './features/p2p/PurchaseOrdersView';
-import PurchaseOrderDetailView from './features/p2p/PurchaseOrderDetailView';
-import AdvancePaymentsView from './features/p2p/AdvancePaymentsView';
-import CreateAdvancePaymentWizard from './features/p2p/CreateAdvancePaymentWizard';
-import AdvancePaymentDetailView from './features/p2p/AdvancePaymentDetailView';
-import EditAdvancePaymentView from './features/p2p/EditAdvancePaymentView';
+// Code-split dynamic route imports
+const WorkflowsDashboard = lazy(() => import('./features/workflows/WorkflowsDashboard'));
+const ExchangeRatesDashboard = lazy(() => import('./features/exchangeRates/ExchangeRatesDashboard'));
+const RolesAndPermissionsView = lazy(() => import('./components/admin/RolesAndPermissionsView'));
+const UserManagementView = lazy(() => import('./components/admin/UserManagementView'));
+const PendingApprovalsView = lazy(() => import('./components/approvals/PendingApprovalsView'));
+const UserProfilePage = lazy(() => import('./features/users/UserProfilePage'));
+const VendorListView = lazy(() => import('./components/vendors/VendorListView'));
+const VendorDetailsView = lazy(() => import('./components/vendors/VendorDetailsView'));
+const VendorFormView = lazy(() => import('./components/vendors/VendorFormView'));
 
-import InvoicePaymentsView from './features/p2p/InvoicePaymentsView';
-import InvoicePaymentDetailView from './features/p2p/InvoicePaymentDetailView';
-import InvoicePaymentFormView from './features/p2p/InvoicePaymentFormView';
-import CustomDutyView from './features/p2p/CustomDutyView';
-import LogisticsPaymentsView from './features/p2p/LogisticsPaymentsView';
+const PurchaseOrdersView = lazy(() => import('./features/p2p/PurchaseOrdersView'));
+const PurchaseOrderDetailView = lazy(() => import('./features/p2p/PurchaseOrderDetailView'));
+const AdvancePaymentsView = lazy(() => import('./features/p2p/AdvancePaymentsView'));
+const CreateAdvancePaymentWizard = lazy(() => import('./features/p2p/CreateAdvancePaymentWizard'));
+const AdvancePaymentDetailView = lazy(() => import('./features/p2p/AdvancePaymentDetailView'));
+const EditAdvancePaymentView = lazy(() => import('./features/p2p/EditAdvancePaymentView'));
 
-import RfqSourcingView from './features/p2p/RfqSourcingView';
-import RfqFormView from './features/p2p/RfqFormView';
-import RfqDetailView from './features/p2p/RfqDetailView';
-import CustomsBrokerPortalPage from './features/p2p/CustomsBrokerPortalPage';
-import EximReviewView from './features/p2p/EximReviewView';
-import BlInvoicesView from './features/p2p/BlInvoicesView';
+const InvoicePaymentsView = lazy(() => import('./features/p2p/InvoicePaymentsView'));
+const InvoicePaymentDetailView = lazy(() => import('./features/p2p/InvoicePaymentDetailView'));
+const InvoicePaymentFormView = lazy(() => import('./features/p2p/InvoicePaymentFormView'));
+const CustomDutyView = lazy(() => import('./features/p2p/CustomDutyView'));
+const LogisticsPaymentsView = lazy(() => import('./features/p2p/LogisticsPaymentsView'));
 
-import CustomAgentsView from './features/p2p/CustomAgentsView';
-import CustomAgentFormView from './features/p2p/CustomAgentFormView';
-import LogisticsProvidersView from './features/p2p/LogisticsProvidersView';
-import LogisticsProviderFormView from './features/p2p/LogisticsProviderFormView';
-import SapSyncView from './features/p2p/SapSyncView';
+const RfqSourcingView = lazy(() => import('./features/p2p/RfqSourcingView'));
+const RfqFormView = lazy(() => import('./features/p2p/RfqFormView'));
+const RfqDetailView = lazy(() => import('./features/p2p/RfqDetailView'));
+const CustomsBrokerPortalPage = lazy(() => import('./features/p2p/CustomsBrokerPortalPage'));
+const EximReviewView = lazy(() => import('./features/p2p/EximReviewView'));
+const BlInvoicesView = lazy(() => import('./features/p2p/BlInvoicesView'));
 
-import ApprovalEngineView from './features/p2p/ApprovalEngineView';
-import SettlementLedgerView from './features/p2p/SettlementLedgerView';
+const CustomAgentsView = lazy(() => import('./features/p2p/CustomAgentsView'));
+const CustomAgentFormView = lazy(() => import('./features/p2p/CustomAgentFormView'));
+const LogisticsProvidersView = lazy(() => import('./features/p2p/LogisticsProvidersView'));
+const LogisticsProviderFormView = lazy(() => import('./features/p2p/LogisticsProviderFormView'));
+const SapSyncView = lazy(() => import('./features/p2p/SapSyncView'));
+
+const ApprovalEngineView = lazy(() => import('./features/p2p/ApprovalEngineView'));
+const SettlementLedgerView = lazy(() => import('./features/p2p/SettlementLedgerView'));
 
 // Vendor Portal Imports
 import { VendorProvider } from './features/vendorPortal/vendorContext';
@@ -109,8 +111,14 @@ export default function App() {
     <BrowserRouter>
       <VendorProvider>
         <CustomAgentProvider>
-          <Routes>
-          {/* Public Auth Routes */}
+          <Suspense fallback={
+            <div className="py-24 flex flex-col items-center justify-center text-slate-500 text-xs font-semibold gap-2">
+              <Loader2 className="w-7 h-7 animate-spin text-teal-600" />
+              Loading module...
+            </div>
+          }>
+            <Routes>
+              {/* Public Auth Routes */}
           <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
           <Route path="/register" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <RegisterPage />} />
 
@@ -257,6 +265,7 @@ export default function App() {
 
           <Route path="*" element={<HomeRedirect />} />
         </Routes>
+        </Suspense>
         </CustomAgentProvider>
       </VendorProvider>
     </BrowserRouter>

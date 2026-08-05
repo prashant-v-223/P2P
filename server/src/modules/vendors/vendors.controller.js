@@ -1,9 +1,11 @@
 import jwt from 'jsonwebtoken';
+import crypto from 'node:crypto';
 import { config } from '../../config/index.js';
 import { Vendor } from '../../models/Vendor.js';
 import { PurchaseOrder } from '../../models/PurchaseOrder.js';
 import { InvoicePayment } from '../../models/InvoicePayment.js';
 import { AdvancePayment } from '../../models/AdvancePayment.js';
+import { WorkflowAudit } from '../../models/WorkflowAudit.js';
 
 export const initialVendorsStore = [];
 
@@ -333,6 +335,21 @@ export const createVendor = async (req, res) => {
         console.warn('[VENDOR DB ERROR] Error inserting to MongoDB:', retryErr.message);
       }
     }
+
+    try {
+      await WorkflowAudit.create({
+        eventId: `wa-${crypto.randomUUID()}`,
+        eventType: 'VENDOR_CREATED',
+        entityType: 'Vendor',
+        entityId: createdVendor?.id || uniqueId,
+        referenceNumber: finalSapCode,
+        action: 'create',
+        actorId: req.user?.id || 'system',
+        actorName: req.user?.name || req.user?.email || 'System Admin',
+        actorRole: req.user?.role || 'Admin',
+        remarks: `Vendor account "${companyName}" (${finalSapCode}) provisioned.`
+      });
+    } catch (_) {}
 
     return res.status(201).json({
       success: true,

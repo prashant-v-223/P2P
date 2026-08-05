@@ -1,4 +1,4 @@
-import { createSlice } from '@reduxjs/toolkit';
+import { createSlice, createSelector } from '@reduxjs/toolkit';
 
 const STORAGE_KEY = 'rayzon_p2p_notifications';
 const MAX_NOTIFICATIONS = 50;
@@ -78,37 +78,41 @@ const notificationsSlice = createSlice({
 export default notificationsSlice.reducer;
 export const { addNotification, markRead, markAllRead, clearAll } = notificationsSlice.actions;
 
-// ─── Selectors ─────────────────────────────────────────────────────────────
-export const selectNotifications = (state) => {
-  const items = state.notifications?.items || [];
-  const user = state.auth?.user;
-  if (!user) return [];
+// ─── Selectors (Memoized with createSelector to eliminate re-render warnings) ─────────
+const selectRawNotifications = (state) => state.notifications?.items || [];
+const selectAuthUser = (state) => state.auth?.user;
 
-  const userRole = (user.role || '').toLowerCase().trim();
-  const userId = String(user.id || user.userId || user.email || '').toLowerCase().trim();
+export const selectNotifications = createSelector(
+  [selectRawNotifications, selectAuthUser],
+  (items, user) => {
+    if (!user) return [];
 
-  const isSuperUser = userRole === 'admin' || userRole === 'system admin' || userRole === 'systemadmin' || userRole === 'superadmin';
-  if (isSuperUser) return items;
+    const userRole = (user.role || '').toLowerCase().trim();
+    const userId = String(user.id || user.userId || user.email || '').toLowerCase().trim();
 
-  return items.filter(item => {
-    if (item.targetRoles && Array.isArray(item.targetRoles) && item.targetRoles.length > 0) {
-      const matchRole = item.targetRoles.some(r => {
-        const norm = String(r).toLowerCase().replace(/[\s_-]+/g, ' ').trim();
-        return userRole.includes(norm) || norm.includes(userRole);
-      });
-      if (!matchRole) return false;
-    }
+    const isSuperUser = userRole === 'admin' || userRole === 'system admin' || userRole === 'systemadmin' || userRole === 'superadmin';
+    if (isSuperUser) return items;
 
-    if (item.targetUsers && Array.isArray(item.targetUsers) && item.targetUsers.length > 0) {
-      const matchUser = item.targetUsers.some(u => String(u).toLowerCase().trim() === userId);
-      if (!matchUser) return false;
-    }
+    return items.filter(item => {
+      if (item.targetRoles && Array.isArray(item.targetRoles) && item.targetRoles.length > 0) {
+        const matchRole = item.targetRoles.some(r => {
+          const norm = String(r).toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+          return userRole.includes(norm) || norm.includes(userRole);
+        });
+        if (!matchRole) return false;
+      }
 
-    return true;
-  });
-};
+      if (item.targetUsers && Array.isArray(item.targetUsers) && item.targetUsers.length > 0) {
+        const matchUser = item.targetUsers.some(u => String(u).toLowerCase().trim() === userId);
+        if (!matchUser) return false;
+      }
 
-export const selectUnreadCount = (state) => {
-  const filtered = selectNotifications(state);
-  return filtered.filter(n => !n.read).length;
-};
+      return true;
+    });
+  }
+);
+
+export const selectUnreadCount = createSelector(
+  [selectNotifications],
+  (notifications) => notifications.filter(n => !n.read).length
+);

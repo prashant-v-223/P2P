@@ -44,25 +44,27 @@ const getMongoConfig = () => {
 export const connectDB = async () => {
   try {
     const { uri, databaseName } = getMongoConfig();
-    configureAtlasDns();
+    if (uri.includes('mongodb+srv://')) {
+      configureAtlasDns();
+    }
     mongoose.set('strictQuery', true);
 
     await mongoose.connect(uri, {
       dbName: databaseName,
-      serverSelectionTimeoutMS: 15000,
-      connectTimeoutMS: 15000,
+      serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 5000,
       maxPoolSize: 10,
-      minPoolSize: 1,
-      retryWrites: true
+      minPoolSize: 1
     });
 
+    mongoose.set('bufferCommands', true);
     console.log(`[DB] Connected to "${mongoose.connection.name}" on ${mongoose.connection.host}`);
     await seedDatabase();
     return true;
   } catch (error) {
-    // Never log the URI because it can contain database credentials.
-    console.error(`[DB] MongoDB Atlas connection failed: ${error.message}`);
-    console.warn('[DB FALLBACK]: Using the resilient in-memory data store.');
+    mongoose.set('bufferCommands', false);
+    console.error(`[DB] Database connection failed: ${error.message}`);
+    console.warn('[DB FALLBACK]: Using resilient in-memory data store.');
     return false;
   }
 };

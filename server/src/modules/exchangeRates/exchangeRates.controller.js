@@ -1,8 +1,19 @@
+import mongoose from 'mongoose';
 import { ExchangeRate } from '../../models/ExchangeRate.js';
+
+const DEFAULT_RATES = [
+  { currency: 'USD', name: 'US Dollar', rate: 83.5 },
+  { currency: 'EUR', name: 'Euro', rate: 90.2 },
+  { currency: 'CNY', name: 'Chinese Yuan', rate: 11.5 },
+  { currency: 'INR', name: 'Indian Rupee', rate: 1.0 }
+];
 
 const validRate = (value) => Number.isFinite(Number(value)) && Number(value) > 0;
 
 export const getExchangeRates = async (_req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    return res.json({ success: true, count: DEFAULT_RATES.length, rates: DEFAULT_RATES });
+  }
   const rates = await ExchangeRate.find().sort({ currency: 1 }).lean();
   return res.json({ success: true, count: rates.length, rates });
 };

@@ -9,6 +9,7 @@ import {
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import { userHasPermission } from '../../lib/permissions';
+import UniversalApprovalWorkflowCard from '../../components/common/UniversalApprovalWorkflowCard';
 
 // ── Status Badge Component ───────────────────────────────────────────────────
 function StatusBadge({ status }) {
@@ -162,57 +163,18 @@ function DetailModal({ invoice, onClose, onRefresh }) {
             </div>
           </div>
 
-          {/* Workflow Stepper - Fully Dynamic from MongoDB */}
-          <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wide">Approval Workflow Status</h4>
-              <span className="text-[10px] font-extrabold text-[#0d7676] bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
-                {invoice.currentSlab || 'BL Freight Invoice Workflow'}
-              </span>
-            </div>
-            {(() => {
-              const steps = (invoice.parsedSteps && Array.isArray(invoice.parsedSteps) && invoice.parsedSteps.length > 0)
-                ? invoice.parsedSteps
-                : [
-                    { step: 1, title: 'EXIM Manager Approval', roleName: 'EXIM Manager' },
-                    { step: 2, title: 'Finance Lead Approval', roleName: 'Finance Lead' }
-                  ].slice(0, invoice.totalSteps || 1);
-
-              return (
-                <div className="grid gap-2 grid-cols-2 md:grid-cols-3">
-                  {steps.map((st, sIdx) => {
-                    const stepNum = st.step || sIdx + 1;
-                    const isPassed = stepNum < invoice.currentStep || invoice.status === 'Approved' || invoice.status === 'Approved & Dispatched';
-                    const isCurrent = stepNum === invoice.currentStep && invoice.status !== 'Approved' && invoice.status !== 'Approved & Dispatched' && invoice.status !== 'Rejected';
-                    
-                    return (
-                      <div
-                        key={sIdx}
-                        className={`p-2.5 rounded-lg border text-center transition-all ${
-                          isPassed
-                            ? 'bg-emerald-50 border-emerald-200 text-emerald-800 font-bold'
-                            : isCurrent
-                            ? 'bg-amber-50 border-amber-300 text-amber-900 font-extrabold ring-2 ring-amber-400/30'
-                            : 'bg-slate-50 border-slate-200 text-slate-400'
-                        }`}
-                      >
-                        <p className="text-[10px] font-bold uppercase truncate">{st.title || `Step ${stepNum}`}</p>
-                        <p className="text-[9px] font-semibold mt-0.5 text-slate-500 capitalize">{st.roleName || st.roleKey || 'Approver'}</p>
-                        <p className="text-xs font-extrabold mt-1">
-                          {isPassed ? 'Approved' : isCurrent ? 'Pending' : 'Upcoming'}
-                        </p>
-                      </div>
-                    );
-                  })}
-                  <div className={`p-2.5 rounded-lg border text-center ${invoice.status === 'Approved' || invoice.status === 'Approved & Dispatched' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>
-                    <p className="text-[10px] font-bold uppercase">Dispatched</p>
-                    <p className="text-[9px] font-semibold mt-0.5 text-slate-500">Payment</p>
-                    <p className="text-xs font-extrabold mt-1">{invoice.status === 'Approved' || invoice.status === 'Approved & Dispatched' ? 'Settled' : 'Pending'}</p>
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
+          {/* Universal Dynamic Approval Workflow Stepper Component */}
+          <UniversalApprovalWorkflowCard
+            referenceId={invoice.invoiceNumber || invoice.id || invoice._id}
+            recordType="BL Freight Invoice"
+            vendorName={invoice.vendorName}
+            amountFormatted={`${invoice.currency === 'USD' ? '$' : '₹'}${Number(invoice.amount || 0).toLocaleString('en-IN')}`}
+            poRef={invoice.blNumber}
+            onStatusChange={() => {
+              onRefresh();
+              onClose();
+            }}
+          />
 
           {/* Gated Approval Action Form (Only for Designated Approvers) */}
           {isPending && canActOnCurrentStep && (

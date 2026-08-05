@@ -13,11 +13,22 @@ import customAgentsRouter from './modules/customAgents/customAgents.router.js';
 import p2pRouter from './modules/p2p/p2pRoutes.js';
 import eventsRouter from './modules/events/events.router.js';
 import documentsRouter from './modules/documents/documents.router.js';
+import permissionsRouter from './modules/permissions/permissions.router.js';
+import { errorHandler } from './middleware/error.middleware.js';
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+// Security Headers Middleware
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  next();
+});
+
 app.use('/uploads', express.static(path.join(process.cwd(), 'server', 'uploads')));
 
 app.get('/api/health', (req, res) => {
@@ -28,6 +39,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/roles', rolesRouter);
+app.use('/api/permissions', permissionsRouter);
 app.use('/api/workflows', workflowsRouter);
 app.use('/api/exchange-rates', exchangeRatesRouter);
 app.use('/api/approvals', approvalsRouter);
@@ -39,9 +51,13 @@ app.use('/api/p2p', p2pRouter);
 app.use('/api/events', eventsRouter);
 app.use('/api/documents', documentsRouter); // Document upload/download routes
 
-// Fallback 200 OK Handler for any unhandled /api path
+// Fallback 404 Handler for any unhandled /api path
 app.all('/api/*', (req, res) => {
-  res.status(200).json({ success: true, message: 'API active' });
+  res.status(404).json({ success: false, error: `Route ${req.originalUrl} not found.` });
 });
 
+// Global Error Handler Middleware
+app.use(errorHandler);
+
 export default app;
+

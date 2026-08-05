@@ -465,6 +465,9 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
     workflowSteps:  JSON.stringify(wf.steps),
     status:         initialStatus,
     submittedAt:    new Date(),
+    slaHours:       48,
+    dueDate:        new Date(Date.now() + 48 * 3600 * 1000),
+    isOverdue:      false,
     actionHistory:  []
   });
   await WorkflowAudit.create({ eventId: `wa-${crypto.randomUUID()}`, eventType: 'APPROVAL_SUBMITTED', actorId: requestedById || requestedBy || 'system', actorName: requestedBy, entityType: type, entityId: referenceId, workflowId: wf.workflowId, workflowVersion: wf.workflowVersion || 1, step: 1, action: 'submit', previousState: { status: 'draft' }, newState: { status: initialStatus, currentStep: 1 }, requestId });
@@ -819,6 +822,23 @@ const createAdvanceHandler = async (req, res) => {
       wf
     });
 
+    try {
+      await WorkflowAudit.create({
+        eventId: `wa-${crypto.randomUUID()}`,
+        eventType: 'ADVANCE_SUBMITTED',
+        entityType: 'AdvancePayment',
+        entityId: advanceId,
+        referenceNumber: advanceId,
+        poReference: poRef,
+        action: 'submit',
+        actorId: req.user?.id || req.user?.email || 'system',
+        actorName: req.user?.name || req.user?.email || requestedBy || 'Finance Team',
+        actorRole: req.user?.role || 'Requester',
+        remarks: `Advance Payment request "${advanceId}" (${poCurrency} ${numAmount.toLocaleString('en-IN')}) submitted for approval.`,
+        occurredAt: new Date()
+      });
+    } catch (_) {}
+
     return res.json({
       success: true,
       message: 'Advance payment created and sent for approval.',
@@ -834,15 +854,74 @@ const createAdvanceHandler = async (req, res) => {
 router.post('/advances/create', authenticateToken, createAdvanceHandler);
 router.post('/advance-payments/create', authenticateToken, createAdvanceHandler);
 
+const updateAdvanceHandler = async (req, res) => {
+  try {
+    const adv = await AdvancePayment.findOne(buildAdvanceFilter(req.params.id));
+    if (!adv) return res.status(404).json({ success: false, error: 'Advance payment not found' });
+
+    const { amount, paymentMode, bankName, bankAccountNumber, remarks } = req.body;
+    if (amount !== undefined) adv.amount = Number(amount);
+    if (paymentMode !== undefined) adv.paymentMode = paymentMode;
+    if (bankName !== undefined) adv.bankName = bankName;
+    if (bankAccountNumber !== undefined) adv.bankAccountNumber = bankAccountNumber;
+    if (remarks !== undefined) adv.remarks = remarks;
+
+    await adv.save();
+
+    try {
+      await WorkflowAudit.create({
+        eventId: `wa-${crypto.randomUUID()}`,
+        eventType: 'ADVANCE_UPDATED',
+        entityType: 'AdvancePayment',
+        entityId: adv.advanceId,
+        referenceNumber: adv.advanceId,
+        poReference: adv.sapPoNumber || adv.poId,
+        action: 'update',
+        actorId: req.user?.id || req.user?.email || 'system',
+        actorName: req.user?.name || req.user?.email || 'User',
+        actorRole: req.user?.role || 'User',
+        remarks: `Advance Payment request details updated (Amount: ${adv.amount}, Mode: ${adv.paymentMode}).`,
+        occurredAt: new Date()
+      });
+    } catch (_) {}
+
+    return res.json({ success: true, data: adv });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+router.put('/advances/:id', updateAdvanceHandler);
+router.put('/advance-payments/:id', updateAdvanceHandler);
+
 // ─── DELETE Advance Payment ───────────────────────────────────────────────────
 const deleteAdvanceHandler = async (req, res) => {
   try {
     const adv = await AdvancePayment.findOne(buildAdvanceFilter(req.params.id));
     if (adv) {
-      await AdvancePayment.deleteOne({ _id: adv._id });
+      try {
+        await WorkflowAudit.create({
+          eventId: `wa-${crypto.randomUUID()}`,
+          eventType: 'ADVANCE_DELETED',
+          entityType: 'AdvancePayment',
+          entityId: adv.advanceId,
+          referenceNumber: adv.advanceId,
+          poReference: adv.sapPoNumber || adv.poId,
+          action: 'delete',
+          actorId: req.user?.id || req.user?.email || 'system',
+          actorName: req.user?.name || req.user?.email || 'User',
+          actorRole: req.user?.role || 'User',
+          remarks: `Advance Payment request "${adv.advanceId}" deleted.`,
+          occurredAt: new Date()
+        });
+      } catch (_) {}
+      adv.isDeleted = true;
+      adv.deletedAt = new Date();
+      adv.deletedBy = req.user?.email || 'User';
+      await adv.save();
       await Approval.deleteOne({ id: adv.advanceId }).catch(() => {});
     }
-    res.json({ success: true, message: 'Advance payment deleted' });
+    res.json({ success: true, message: 'Advance payment soft deleted' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -1098,6 +1177,23 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       wf
     });
 
+    try {
+      await WorkflowAudit.create({
+        eventId: `wa-${crypto.randomUUID()}`,
+        eventType: 'INVOICE_SUBMITTED',
+        entityType: 'InvoicePayment',
+        entityId: invPaymentId,
+        referenceNumber: finalInvoiceNumber,
+        poReference: poRef,
+        action: 'submit',
+        actorId: req.user?.id || req.user?.email || 'system',
+        actorName: req.user?.name || req.user?.email || requestedBy || 'Finance Team',
+        actorRole: req.user?.role || 'Requester',
+        remarks: `Invoice Payment "${invPaymentId}" (${finalInvoiceNumber}) submitted for approval. Net Payable: ₹${netPayable.toLocaleString('en-IN')}`,
+        occurredAt: new Date()
+      });
+    } catch (_) {}
+
     return res.json({ success: true, data: newInvoice, workflow: wf });
   } catch (err) {
     console.error('[Create Invoice]', err);
@@ -1106,7 +1202,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
 });
 
 // ─── PUT Update Invoice ───────────────────────────────────────────────────────
-router.put('/invoices/:id', async (req, res) => {
+router.put('/invoices/:id', optionalAuth, async (req, res) => {
   try {
     const invoice = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
     if (!invoice) return res.status(404).json({ success: false, error: 'Invoice payment not found' });
@@ -1131,6 +1227,24 @@ router.put('/invoices/:id', async (req, res) => {
     );
 
     await invoice.save();
+
+    try {
+      await WorkflowAudit.create({
+        eventId: `wa-${crypto.randomUUID()}`,
+        eventType: 'INVOICE_UPDATED',
+        entityType: 'InvoicePayment',
+        entityId: invoice.invoicePaymentId,
+        referenceNumber: invoice.invoiceNumber,
+        poReference: invoice.sapPoNumber || invoice.poId,
+        action: 'update',
+        actorId: req.user?.id || req.user?.email || 'admin@rayzon.one',
+        actorName: req.user?.name || req.user?.companyName || req.user?.email || 'System Admin',
+        actorRole: req.user?.role || 'System Admin',
+        remarks: `Invoice Payment "${invoice.invoicePaymentId}" details updated (Gross Amount: ${invoice.grossAmount}, GRN: ${invoice.grnNumber || 'N/A'}).`,
+        occurredAt: new Date()
+      });
+    } catch (_) {}
+
     return res.json({ success: true, data: invoice });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -2154,8 +2268,8 @@ router.post('/rfqs/:id/award', authenticateToken, async (req, res) => {
     const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
     if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
     
-    // Allow reassignment for awarded RFQs, otherwise only allow published RFQs
-    const allowedStatuses = isReassignment ? ['published', 'awarded'] : ['published'];
+    // Allow reassignment for awarded RFQs, and allow further allocations for partially awarded RFQs
+    const allowedStatuses = isReassignment ? ['published', 'partially_awarded', 'awarded'] : ['published', 'partially_awarded'];
     if (!allowedStatuses.includes(rfq.status)) {
       return res.status(409).json({ success: false, error: `RFQ cannot be awarded while it is ${rfq.status.replace('_', ' ')}.` });
     }
@@ -2724,6 +2838,129 @@ router.post('/bl-invoices/:id/action', authenticateToken, async (req, res) => {
     broadcastEvent('BL_INVOICE_ACTION', { id: invoice.logisticsPaymentId, action, status: nextStatus });
 
     return res.json({ success: true, message: `BL Invoice ${action}d successfully.`, invoice });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── GET Audit Trail for any record ID ─────────────────────────────────────
+router.get('/audit/:entityId', optionalAuth, async (req, res) => {
+  try {
+    const { entityId } = req.params;
+    const matcher = new RegExp(escapeRegex(entityId), 'i');
+
+    // 1. Resolve related document identifiers
+    const [invDoc, advDoc, rfqDoc, poDoc, appDoc] = await Promise.all([
+      InvoicePayment.findOne({ $or: [{ invoicePaymentId: entityId }, { invoiceNumber: entityId }, { invoicePaymentId: matcher }, { invoiceNumber: matcher }] }).lean().catch(() => null),
+      AdvancePayment.findOne({ $or: [{ advanceId: entityId }, { advanceId: matcher }] }).lean().catch(() => null),
+      RfqHeader.findOne({ $or: [{ rfqId: entityId }, { rfqNumber: entityId }, { rfqId: matcher }, { rfqNumber: matcher }] }).lean().catch(() => null),
+      PurchaseOrder.findOne({ $or: [{ poNumber: entityId }, { sapPoNumber: entityId }, { poNumber: matcher }, { sapPoNumber: matcher }] }).lean().catch(() => null),
+      Approval.findOne({ $or: [{ id: entityId }, { id: matcher }, { referenceNumber: entityId }, { poReference: entityId }] }).lean().catch(() => null)
+    ]);
+
+    const idSet = new Set([
+      entityId,
+      invDoc?.invoicePaymentId, invDoc?.invoiceNumber, invDoc?.poId, invDoc?.sapPoNumber,
+      advDoc?.advanceId, advDoc?.poId, advDoc?.sapPoNumber,
+      rfqDoc?.rfqId, rfqDoc?.rfqNumber, rfqDoc?.linkedPoId,
+      poDoc?.poNumber, poDoc?.sapPoNumber, poDoc?.id,
+      appDoc?.id, appDoc?.referenceNumber, appDoc?.poReference
+    ].filter(Boolean).map(String));
+
+    const idList = Array.from(idSet);
+    const regexList = idList.map((val) => new RegExp(escapeRegex(val), 'i'));
+
+    const [rawAudits, approvalDocs] = await Promise.all([
+      WorkflowAudit.find({
+        $or: [
+          { entityId: { $in: idList } },
+          { referenceNumber: { $in: idList } },
+          { workflowId: { $in: idList } },
+          { entityId: { $in: regexList } },
+          { referenceNumber: { $in: regexList } }
+        ]
+      }).sort({ createdAt: -1, occurredAt: -1 }).lean(),
+      Approval.find({
+        $or: [
+          { id: { $in: idList } },
+          { referenceNumber: { $in: idList } },
+          { poReference: { $in: idList } },
+          { id: { $in: regexList } }
+        ]
+      }).lean()
+    ]);
+
+    const approvalActionLogs = approvalDocs.flatMap((doc) =>
+      (doc.actionHistory || []).map((act, idx) => ({
+        _id: `act-${doc.id}-${idx}`,
+        eventId: `act-${doc.id}-${idx}`,
+        eventType: (act.action || 'APPROVAL_STEP').toUpperCase(),
+        action: act.action || 'Approval Action',
+        actorName: act.performedBy || act.actorName || 'Approver',
+        actorRole: act.role || act.actorRole || 'Approver',
+        remarks: act.remarks || act.reason || `Action "${act.action}" taken on step ${act.step || idx + 1}`,
+        createdAt: act.timestamp || act.occurredAt || doc.updatedAt || Date.now(),
+        occurredAt: act.timestamp || act.occurredAt || doc.updatedAt || Date.now()
+      }))
+    );
+
+    // Build creation/submission record if no explicit audit exists
+    const fallbackEvents = [];
+    if (invDoc && !rawAudits.some(a => (a.action || '').toLowerCase().includes('submit') || (a.action || '').toLowerCase().includes('create'))) {
+      fallbackEvents.push({
+        _id: `sys-create-${invDoc.invoicePaymentId}`,
+        eventType: 'INVOICE_SUBMITTED',
+        action: 'submit',
+        actorName: invDoc.createdBy || 'Finance Team',
+        actorRole: 'Requester',
+        remarks: `Invoice Payment request "${invDoc.invoicePaymentId}" (${invDoc.invoiceNumber}) submitted.`,
+        createdAt: invDoc.createdAt || Date.now()
+      });
+    }
+
+    if (advDoc && !rawAudits.some(a => (a.action || '').toLowerCase().includes('submit') || (a.action || '').toLowerCase().includes('create'))) {
+      fallbackEvents.push({
+        _id: `sys-create-${advDoc.advanceId}`,
+        eventType: 'ADVANCE_SUBMITTED',
+        action: 'submit',
+        actorName: advDoc.createdBy || 'Finance Team',
+        actorRole: 'Requester',
+        remarks: `Advance Payment request "${advDoc.advanceId}" submitted.`,
+        createdAt: advDoc.createdAt || Date.now()
+      });
+    }
+
+    if (rfqDoc && !rawAudits.some(a => (a.action || '').toLowerCase().includes('create') || (a.action || '').toLowerCase().includes('publish'))) {
+      fallbackEvents.push({
+        _id: `sys-create-${rfqDoc.rfqId}`,
+        eventType: 'RFQ_CREATED',
+        action: 'create',
+        actorName: rfqDoc.createdBy || 'System Admin',
+        actorRole: 'Procurement Head',
+        remarks: `Freight RFQ "${rfqDoc.rfqNumber}" (${rfqDoc.title}) published.`,
+        createdAt: rfqDoc.createdAt || Date.now()
+      });
+    }
+
+    // Deduplicate and sort chronologically
+    const seen = new Set();
+    const combined = [];
+    for (const log of [...rawAudits, ...approvalActionLogs, ...fallbackEvents]) {
+      const key = `${log.action || log.eventType}-${log.createdAt || log.occurredAt}-${log.actorName}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        combined.push(log);
+      }
+    }
+
+    combined.sort((a, b) => new Date(b.createdAt || b.occurredAt || 0).getTime() - new Date(a.createdAt || a.occurredAt || 0).getTime());
+
+    return res.json({
+      success: true,
+      entityId,
+      count: combined.length,
+      auditLogs: combined
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }

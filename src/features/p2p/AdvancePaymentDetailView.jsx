@@ -3,6 +3,8 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import DocumentUploader from '../../components/shared/DocumentUploader';
+import RecordDbInfoDrawer from '../../components/common/RecordDbInfoDrawer';
+import UniversalApprovalWorkflowCard from '../../components/common/UniversalApprovalWorkflowCard';
 import {
   ChevronLeft, Trash2, Edit3, Send, CheckCircle2, XCircle,
   Clock, Plus, Loader2, AlertTriangle, RotateCcw, Lock
@@ -264,20 +266,33 @@ export default function AdvancePaymentDetailView() {
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-slate-400 mt-0.5">Advance Payment Request · Details & Workflow</p>
           </div>
         </div>
 
-        {/* Delete — only shown for draft */}
-        {isDraft && (
-          <button
-            onClick={handleDelete}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-xs transition-colors"
-          >
-            <Trash2 className="w-3.5 h-3.5" /> Delete
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <RecordDbInfoDrawer entityId={id} entityType="AdvancePayment" recordData={advance || approval} />
+
+          {/* Delete — only shown for draft */}
+          {isDraft && (
+            <button
+              onClick={handleDelete}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-xs transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> Delete
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Universal Dynamic Approval Workflow Stepper Component */}
+      <UniversalApprovalWorkflowCard
+        referenceId={id}
+        recordType="Advance Payment"
+        vendorName={advance?.vendorName || approval?.vendorName}
+        amountFormatted={advance?.amount ? `₹${advance.amount.toLocaleString('en-IN')}` : approval?.amountINR}
+        poRef={advance?.sapPoNumber || advance?.poId}
+        onStatusChange={fetchData}
+      />
 
       {/* ─── BANNERS ────────────────────────────────────────────────────── */}
       {isRejected && (
@@ -462,149 +477,6 @@ export default function AdvancePaymentDetailView() {
               </button>
             </div>
           )}
-
-          {/* ── Approval Timeline ────────────────────────────────────── */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-slate-100">
-              <div>
-                <h3 className="font-bold text-slate-900 text-sm">Approval Timeline</h3>
-                {approval?.currentSlab && (
-                  <p className="text-[10px] text-teal-600 font-semibold mt-0.5">{approval.currentSlab}</p>
-                )}
-              </div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                {steps.length > 0 ? `${steps.length} STEPS` : 'WORKFLOW'}
-              </span>
-            </div>
-
-            <div className="p-5 space-y-1">
-
-              {/* Draft — no workflow yet */}
-              {isDraft && (
-                <div className="py-6 flex flex-col items-center gap-2 text-center">
-                  <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center">
-                    <Clock className="w-5 h-5 text-slate-300" />
-                  </div>
-                  <p className="text-xs font-semibold text-slate-500">No workflow started</p>
-                  <p className="text-[11px] text-slate-400">Submit for approval to initiate.</p>
-                </div>
-              )}
-
-              {/* Steps */}
-              {!isDraft && steps.length > 0 && (
-                <div className="space-y-4 pt-1">
-                  {steps.map((step, idx) => {
-                    const isApprovedStep = step.stepStatus === 'approved';
-                    const isPendingStep  = step.stepStatus === 'pending';
-                    const isRejectedStep = step.stepStatus === 'rejected';
-                    const isReturnedStep = step.stepStatus === 'returned';
-
-                    return (
-                      <div key={idx} className="relative pl-7">
-                        {/* Connector */}
-                        {idx < steps.length - 1 && (
-                          <div className={`absolute left-[9px] top-5 w-0.5 h-full ${isApprovedStep ? 'bg-emerald-300' : 'bg-slate-200'}`} />
-                        )}
-
-                        {/* Circle */}
-                        <div className={`absolute left-0 top-0 w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold
-                          ${isApprovedStep ? 'bg-emerald-500 text-white' :
-                            isRejectedStep ? 'bg-rose-500 text-white' :
-                            isReturnedStep ? 'bg-orange-500 text-white' :
-                            isPendingStep  ? 'bg-amber-400 text-white ring-2 ring-amber-200' :
-                            'bg-slate-200 text-slate-400'}`}
-                        >
-                          {isApprovedStep ? <CheckCircle2 className="w-3 h-3" /> :
-                           isRejectedStep ? <XCircle className="w-3 h-3" /> :
-                           isReturnedStep ? <RotateCcw className="w-3 h-3" /> :
-                           isPendingStep  ? <Clock className="w-3 h-3" /> :
-                           <span>{idx + 1}</span>}
-                        </div>
-
-                        {/* Step Info */}
-                        <div className="flex items-start justify-between gap-2 mb-1">
-                          <div className="min-w-0">
-                            <p className="font-bold text-slate-900 text-xs leading-snug">{step.label}</p>
-                            <p className="text-[11px] text-slate-500">{step.approver}</p>
-                          </div>
-                          <span className={`shrink-0 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border
-                            ${isApprovedStep ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                              isRejectedStep ? 'bg-rose-50 text-rose-700 border-rose-200' :
-                              isReturnedStep ? 'bg-orange-50 text-orange-700 border-orange-200' :
-                              isPendingStep  ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                              'bg-slate-100 text-slate-400 border-slate-200'}`}
-                          >
-                            {isApprovedStep ? 'Approved' :
-                             isRejectedStep ? 'Rejected' :
-                             isReturnedStep ? 'Returned' :
-                             isPendingStep  ? 'Pending'  : 'Waiting'}
-                          </span>
-                        </div>
-
-                        {/* Rejection/Return note on timeline step */}
-                        {(isRejectedStep || isReturnedStep) && step.remarks && (
-                          <div className={`mt-1 mb-1.5 p-2 rounded-lg text-[11px] border ${isRejectedStep ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-orange-50 border-orange-200 text-orange-700'}`}>
-                            <span className="font-bold">Note: </span><em>"{step.remarks}"</em>
-                            {step.actionedBy && <p className="text-[10px] mt-0.5 opacity-70">— {step.actionedBy}</p>}
-                          </div>
-                        )}
-
-                        {/* ── Action panel on ACTIVE PENDING step ──── */}
-                        {isPendingStep && (
-                          <div className="mt-3 space-y-2 p-3 bg-slate-50 rounded-xl border border-slate-200">
-                            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                              Add Note (required for rejection)
-                            </label>
-                            <textarea
-                              rows={3}
-                              value={remarksText}
-                              onChange={e => setRemarksText(e.target.value)}
-                              placeholder="Enter approval note or rejection reason..."
-                              className="w-full text-xs border border-slate-200 rounded-lg p-2 resize-none bg-white focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none placeholder:text-slate-400"
-                            />
-                            <div className="grid grid-cols-3 gap-1.5">
-                              <button
-                                onClick={handleApproveStep}
-                                disabled={!!actionLoading}
-                                className="col-span-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] disabled:opacity-50 transition-colors"
-                              >
-                                {actionLoading === 'approve' ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
-                                Approve
-                              </button>
-                              <button
-                                onClick={handleReturnStep}
-                                disabled={!!actionLoading}
-                                className="col-span-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10px] disabled:opacity-50 transition-colors"
-                              >
-                                {actionLoading === 'return' ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
-                                Return
-                              </button>
-                              <button
-                                onClick={handleRejectStep}
-                                disabled={!!actionLoading}
-                                className="col-span-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10px] disabled:opacity-50 transition-colors"
-                              >
-                                {actionLoading === 'reject' ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle className="w-3 h-3" />}
-                                Reject
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Approved — final state */}
-              {isApproved && (
-                <div className="mt-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-center">
-                  <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto mb-1" />
-                  <p className="text-xs font-bold text-emerald-700">Fully Approved & Ready for Disbursement</p>
-                </div>
-              )}
-            </div>
-          </div>
 
         </div>
       </div>

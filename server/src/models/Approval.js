@@ -37,6 +37,9 @@ const approvalSchema = new mongoose.Schema({
     default: 'Pending Procurement Head Approval'
   },
   submittedAt:   { type: Date, default: Date.now },
+  slaHours:      { type: Number, default: 48 },                     // 48 hours default SLA
+  dueDate:       { type: Date },                                    // Calculated deadline
+  isOverdue:     { type: Boolean, default: false },
   remarks:       { type: String, default: '' },
   containersCount: { type: Number, default: 0 },
   allocations: [{

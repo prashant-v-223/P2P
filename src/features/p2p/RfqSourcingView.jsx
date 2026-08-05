@@ -212,6 +212,8 @@ export default function RfqSourcingView() {
                           className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold inline-block border ${
                             statusKey === 'published'
                               ? 'bg-sky-50 text-sky-700 border-sky-200'
+                              : statusKey === 'partially_awarded'
+                              ? 'bg-amber-50 text-amber-800 border-amber-300 font-extrabold'
                               : statusKey === 'awarded'
                               ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                               : statusKey === 'pending_approval'
@@ -219,7 +221,9 @@ export default function RfqSourcingView() {
                               : 'bg-slate-100 text-slate-600 border-slate-200'
                           }`}
                         >
-                          {statusKey === 'pending_approval' ? 'Pending Approval' : statusKey.charAt(0).toUpperCase() + statusKey.slice(1)}
+                          {statusKey === 'partially_awarded' 
+                            ? `Partially Awarded (${rfq.allocatedQuantity || 0}/${rfq.totalQuantity || 1})` 
+                            : statusKey === 'pending_approval' ? 'Pending Approval' : statusKey.charAt(0).toUpperCase() + statusKey.slice(1)}
                         </span>
                       </td>
                       <td className="py-3.5 px-4 text-right">

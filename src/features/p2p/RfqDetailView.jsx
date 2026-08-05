@@ -3,6 +3,8 @@ import { useNavigate, useParams, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import DocumentUploader from '../../components/shared/DocumentUploader';
+import RecordDbInfoDrawer from '../../components/common/RecordDbInfoDrawer';
+import UniversalApprovalWorkflowCard from '../../components/common/UniversalApprovalWorkflowCard';
 import { 
   ArrowLeft, 
   Pencil, 
@@ -336,17 +338,22 @@ export default function RfqDetailView() {
             <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${
               (rfq.status || '').toLowerCase() === 'awarded' || (rfq.status || '').toLowerCase() === 'approved'
                 ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : (rfq.status || '').toLowerCase() === 'partially_awarded'
+                ? 'bg-amber-50 text-amber-800 border-amber-300'
                 : (rfq.status || '').toLowerCase().includes('pending')
                 ? 'bg-amber-50 text-amber-700 border-amber-200'
                 : 'bg-teal-50 text-teal-700 border-teal-200'
             }`}>
-              {rfq.status === 'pending_approval' ? 'Pending Approval' : rfq.status || 'Published'}
+              {rfq.status === 'partially_awarded' 
+                ? `Partially Awarded (${rfq.allocatedQuantity || 0}/${totalContainers})` 
+                : rfq.status === 'pending_approval' ? 'Pending Approval' : rfq.status || 'Published'}
             </span>
           </div>
           <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mt-0.5">{rfq.title}</p>
         </div>
 
         <div className="flex items-center gap-2">
+          <RecordDbInfoDrawer entityId={rfq.rfqId || id} entityType="RfqHeader" recordData={rfq} />
           <button
             onClick={() => navigate(`/admin/rfqs/${rfq.rfqId}/edit`)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer"
@@ -381,6 +388,18 @@ export default function RfqDetailView() {
           </button>
         </div>
       </div>
+
+      {/* Universal Dynamic Approval Workflow Stepper Component */}
+      <UniversalApprovalWorkflowCard
+        referenceId={rfq.rfqId || rfq.rfqNumber || id}
+        recordType="Freight RFQ"
+        vendorName={rfq.title}
+        amountFormatted={`${totalContainers} Containers`}
+        poRef={rfq.linkedPoId}
+        onStatusChange={() => {
+          loadRfq();
+        }}
+      />
 
       {/* Top 3 Summary Cards Matching Reference Site */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

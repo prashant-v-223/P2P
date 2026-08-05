@@ -22,7 +22,7 @@ const rfqHeaderSchema = new mongoose.Schema({
   closingDate: { type: Date },
   status: { 
     type: String, 
-    enum: ['draft', 'published', 'pending_approval', 'awarded', 'closed', 'cancelled'], 
+    enum: ['draft', 'published', 'pending_approval', 'partially_awarded', 'awarded', 'closed', 'cancelled'], 
     default: 'published',
     index: true 
   },

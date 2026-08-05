@@ -4,6 +4,8 @@ import { AlertCircle, ArrowLeft, CalendarDays, CheckCircle2, Loader2, Ship, Cloc
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import { CustomDatePicker } from '../../components/ui/custom-date-picker';
+import RecordDbInfoDrawer from '../../components/common/RecordDbInfoDrawer';
+import UniversalApprovalWorkflowCard from '../../components/common/UniversalApprovalWorkflowCard';
 
 const empty = { shippingLine: '', vesselRoute: '', oceanFreightUsd: '', stChargesInr: '', otherChargesInr: '0', transitDays: '', cutoffDate: '', vesselEtd: '', vesselEta: '', freeDays: '', rateValidity: '', costParticular: '', remarks: '' };
 const dateValue = (value) => value?.slice?.(0, 10) || '';
@@ -125,6 +127,15 @@ export default function FreightRfqDetailPage() {
           <ArrowLeft className="h-4 w-4" /> Back to RFQs
         </Link>
       </div>
+
+      {/* Universal Dynamic Approval Workflow Stepper Component */}
+      <UniversalApprovalWorkflowCard
+        referenceId={rfq?.rfqId || id}
+        recordType="Freight RFQ"
+        vendorName={rfq?.title}
+        poRef={rfq?.linkedPoId}
+        onStatusChange={() => {}}
+      />
 
       {/* Hero Header Card */}
       <section className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-7 shadow-2xs space-y-6">

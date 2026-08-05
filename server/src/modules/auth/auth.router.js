@@ -16,13 +16,16 @@ import {
   getDelegationStatus
 } from './auth.controller.js';
 import { authenticateToken } from '../../middleware/auth.middleware.js';
+import { rateLimiter } from '../../middleware/rateLimit.middleware.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 
 const router = Router();
 
+const loginLimiter = rateLimiter({ windowMs: 15 * 60 * 1000, max: 15, message: 'Too many login attempts. Please try again after 15 minutes.' });
+
 // Public auth routes
 router.post('/register', asyncHandler(register));
-router.post('/login', asyncHandler(login));
+router.post('/login', loginLimiter, asyncHandler(login));
 router.post('/refresh', asyncHandler(refreshTokenController));
 router.post('/forgot-password', asyncHandler(forgotPassword));
 router.post('/reset-password', asyncHandler(resetPassword));

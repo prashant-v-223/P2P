@@ -3,6 +3,8 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useConfirm } from '../ui/confirm-dialog';
 import GeneratePasswordModal from './GeneratePasswordModal';
+import RecordDbInfoDrawer from '../common/RecordDbInfoDrawer';
+import UniversalApprovalWorkflowCard from '../common/UniversalApprovalWorkflowCard';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Card, CardHeader, CardTitle, CardContent } from '../ui/card';
@@ -171,6 +173,7 @@ export default function VendorDetailsView() {
         </div>
 
         <div className="flex items-center gap-2.5">
+          <RecordDbInfoDrawer entityId={vendor?.id || vendor?.sapVendorCode || id} entityType="Vendor" recordData={vendor} />
           <Button variant="outline" size="sm" onClick={() => navigate(`/admin/vendors/${vendor.id || id}/edit`)} className="text-xs font-bold">
             <Pencil className="w-3.5 h-3.5 mr-1" />
             Edit
@@ -185,6 +188,16 @@ export default function VendorDetailsView() {
           </Button>
         </div>
       </div>
+
+      {/* Universal Dynamic Approval Workflow Stepper Component */}
+      <UniversalApprovalWorkflowCard
+        referenceId={vendor.sapVendorCode || vendor.id || id}
+        recordType="Vendor Account"
+        vendorName={vendor.companyName}
+        amountFormatted={vendor.sapVendorCode ? `Code: ${vendor.sapVendorCode}` : ''}
+        poRef={vendor.sapVendorCode}
+        onStatusChange={fetchVendorDetails}
+      />
 
       {/* 4 Summary Stat Metric Cards Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

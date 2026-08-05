@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import DocumentUploader from '../../components/shared/DocumentUploader';
+import RecordDbInfoDrawer from '../../components/common/RecordDbInfoDrawer';
+import UniversalApprovalWorkflowCard from '../../components/common/UniversalApprovalWorkflowCard';
 import { 
   ChevronLeft, 
   Building2, 
@@ -173,6 +175,7 @@ export default function PurchaseOrderDetailView() {
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-center">
+          <RecordDbInfoDrawer entityId={po.poNumber || poId} entityType="PurchaseOrder" recordData={po} />
           <button
             onClick={() => navigate('/p2p/advance-payments/create')}
             className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs shadow-xs transition-all"
@@ -181,6 +184,16 @@ export default function PurchaseOrderDetailView() {
           </button>
         </div>
       </div>
+
+      {/* Universal Dynamic Approval Workflow Stepper Component */}
+      <UniversalApprovalWorkflowCard
+        referenceId={po.poNumber || poId}
+        recordType="Purchase Order"
+        vendorName={po.vendorName}
+        amountFormatted={`₹${(po.poValue || 0).toLocaleString('en-IN')}`}
+        poRef={po.poNumber}
+        onStatusChange={fetchPoAndRelatedData}
+      />
 
       {/* 2. Main Two-Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 w-full items-start">

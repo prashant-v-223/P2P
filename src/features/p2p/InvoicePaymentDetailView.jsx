@@ -16,6 +16,8 @@ import {
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import DocumentUploader from '../../components/shared/DocumentUploader';
+import RecordDbInfoDrawer from '../../components/common/RecordDbInfoDrawer';
+import UniversalApprovalWorkflowCard from '../../components/common/UniversalApprovalWorkflowCard';
 
 const formatCurrency = (val) => {
   if (val === undefined || val === null) return '₹0.00';
@@ -199,6 +201,7 @@ export default function InvoicePaymentDetailView() {
 
         {/* Top Right Action Buttons */}
         <div className="flex items-center gap-2.5">
+          <RecordDbInfoDrawer entityId={invoice?.invoicePaymentId || id} entityType="InvoicePayment" recordData={invoice || approval} />
           {isDraft && (
             <button
               onClick={() => navigate(`/admin/invoice-payments/${invoice.invoicePaymentId}/edit`)}
@@ -230,6 +233,16 @@ export default function InvoicePaymentDetailView() {
           )}
         </div>
       </div>
+
+      {/* Universal Dynamic Approval Workflow Stepper Component */}
+      <UniversalApprovalWorkflowCard
+        referenceId={invoice.invoicePaymentId}
+        recordType="Invoice Payment"
+        vendorName={invoice.vendorName}
+        amountFormatted={`₹${(invoice.netPayable || 0).toLocaleString('en-IN')}`}
+        poRef={invoice.sapPoNumber || invoice.poId}
+        onStatusChange={fetchInvoice}
+      />
 
       {/* ─── STATUS BANNERS ─────────────────────────────────────────────── */}
       {isDraft && (
