@@ -4,6 +4,9 @@ import { useVendor } from './vendorContext';
 import { useToast } from '../../components/ui/toast';
 import { apiFetch } from '../../services/api';
 import { CloudUpload, FileText, CheckCircle2, AlertCircle, X, Search, ChevronDown, Check } from 'lucide-react';
+import { CustomSelect } from '../../components/ui/custom-select';
+import { CustomDatePicker } from '../../components/ui/custom-date-picker';
+import { CustomFileUpload } from '../../components/ui/custom-file-upload';
 
 const generateUniqueInvoiceNumber = () => {
   const year = new Date().getFullYear();
@@ -289,7 +292,7 @@ export default function VendorUploadInvoicePage() {
   };
 
   return (
-    <div className=" font-sans max-w-4xl mx-auto pb-12 antialiased text-left">
+    <div className="font-sans max-w-7xl mx-auto pb-12 antialiased text-left space-y-6">
       {/* Page Title & Subtitle */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Upload Invoice</h1>
@@ -519,37 +522,30 @@ export default function VendorUploadInvoicePage() {
             </div>}
 
             {/* Invoice Date */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-slate-700">
-                Invoice Date <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="date"
-                max={getLocalISODate()}
-                value={invoiceDate}
-                onChange={(e) => {
-                  setInvoiceDate(e.target.value);
-                  setErrorMsg('');
-                }}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
-              />
-            </div>
+            <CustomDatePicker
+              label="Invoice Date"
+              required
+              max={getLocalISODate()}
+              value={invoiceDate}
+              onChange={(val) => {
+                setInvoiceDate(val);
+                setErrorMsg('');
+              }}
+            />
 
             {/* Currency */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-slate-700">
-                Currency <span className="text-rose-500">*</span>
-              </label>
-              <select
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
-              >
-                <option value="INR">INR</option>
-                <option value="USD">USD</option>
-                <option value="EUR">EUR</option>
-              </select>
-            </div>
+            <CustomSelect
+              label="Currency"
+              required
+              value={currency}
+              onChange={(val) => setCurrency(val)}
+              options={[
+                { label: 'INR — Indian Rupee', value: 'INR' },
+                { label: 'USD — US Dollar', value: 'USD' },
+                { label: 'EUR — Euro', value: 'EUR' }
+              ]}
+              placeholder="Select currency"
+            />
 
             {/* Payment Due Date */}
             <div className="space-y-1.5">
@@ -664,20 +660,25 @@ export default function VendorUploadInvoicePage() {
           </h2>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-slate-700">
-                Invoice Type <span className="text-rose-500">*</span>
-              </label>
-              <select
-                value={invoiceType}
-                onChange={handleInvoiceTypeChange}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
-              >
-                <option value="With GST">With GST</option>
-                <option value="Without GST">Without GST</option>
-                <option value="SEZ Export">SEZ Export</option>
-              </select>
-            </div>
+            <CustomSelect
+              label="Invoice Type"
+              required
+              value={invoiceType}
+              onChange={(val) => {
+                setInvoiceType(val);
+                if (val === 'Without GST') {
+                  setCgstAmount('0');
+                  setSgstAmount('0');
+                  setIgstAmount('0');
+                }
+              }}
+              options={[
+                { label: 'With GST (Taxable Purchase)', value: 'With GST' },
+                { label: 'Without GST (Exempt / Non-Taxable)', value: 'Without GST' },
+                { label: 'SEZ Export (Zero-Rated Tax)', value: 'SEZ Export' }
+              ]}
+              placeholder="Select invoice tax type"
+            />
 
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-slate-700">
@@ -727,21 +728,19 @@ export default function VendorUploadInvoicePage() {
               />
             </div>
 
-            <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-slate-700">
-                TDS % (on base amount) <span className="text-rose-500">*</span>
-              </label>
-              <select
-                value={tdsPercentage}
-                onChange={(e) => setTdsPercentage(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
-              >
-                <option value="0%">0%</option>
-                <option value="1%">1%</option>
-                <option value="2%">2%</option>
-                <option value="10%">10%</option>
-              </select>
-            </div>
+            <CustomSelect
+              label="TDS % (on base amount)"
+              required
+              value={tdsPercentage}
+              onChange={(val) => setTdsPercentage(val)}
+              options={[
+                { label: '0% — No TDS Deduction', value: '0%' },
+                { label: '1% — Section 194C (Individual/HUF)', value: '1%' },
+                { label: '2% — Section 194C (Company/Others)', value: '2%' },
+                { label: '10% — Section 194J (Professional Services)', value: '10%' }
+              ]}
+              placeholder="Select TDS percentage"
+            />
 
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-slate-700">
@@ -760,52 +759,17 @@ export default function VendorUploadInvoicePage() {
 
         {/* Section 4: INVOICE FILE * */}
         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-4">
-          <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider border-b border-slate-100 pb-2">
-            INVOICE FILE <span className="text-rose-500">*</span>
-          </h2>
-
-          <div
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={handleDrop}
-            className="border-2 border-dashed border-slate-200 hover:border-[#0d7676] rounded-2xl p-8 text-center bg-slate-50/50 hover:bg-slate-50 transition-colors cursor-pointer"
-          >
-            <input
-              type="file"
-              id="invoice-file"
-              onChange={handleFileChange}
-              accept=".pdf,.jpg,.jpeg,.png"
-              className="hidden"
-            />
-            <label htmlFor="invoice-file" className="cursor-pointer block space-y-2">
-              <div className="w-12 h-12 bg-teal-50 text-[#0d7676] rounded-full flex items-center justify-center mx-auto border border-teal-100">
-                <CloudUpload className="w-6 h-6" />
-              </div>
-              <div>
-                <p className="text-xs font-bold text-slate-700">
-                  Drag & drop your invoice here <span className="text-rose-500">*</span>
-                </p>
-                <p className="text-[11px] text-[#0d7676] font-semibold mt-0.5 underline">
-                  or click to browse
-                </p>
-              </div>
-              <p className="text-[10px] text-slate-400">PDF, JPG, PNG ... max 10MB</p>
-            </label>
-
-            {selectedFile && (
-              <div className="mt-4 p-3 bg-white border border-teal-200 rounded-xl inline-flex items-center gap-3 text-xs shadow-2xs">
-                <FileText className="w-4 h-4 text-[#0d7676]" />
-                <span className="font-bold text-slate-800">{selectedFile.name}</span>
-                <span className="text-[10px] text-slate-400 font-mono">({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)</span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedFile(null)}
-                  className="text-slate-400 hover:text-rose-500 ml-2"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-          </div>
+          <CustomFileUpload
+            label="INVOICE SUPPORTING DOCUMENT"
+            required
+            accept=".pdf,.jpg,.jpeg,.png"
+            value={selectedFile}
+            onChange={(file) => {
+              setSelectedFile(file);
+              setErrorMsg('');
+            }}
+            helperText="Upload official invoice PDF or high-resolution scan."
+          />
         </div>
 
         {/* Bottom Actions */}

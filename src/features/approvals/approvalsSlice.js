@@ -7,12 +7,7 @@ export const fetchPendingApprovals = createAsyncThunk(
     try {
       const state = getState();
       const role  = roleArg || state.auth.user?.role || 'Finance Lead';
-      const me    = state.auth.user?.name  || '';
-      const meEmail = state.auth.user?.email || '';
-
       const params = new URLSearchParams({ role });
-      if (me)      params.set('me',      me);
-      if (meEmail) params.set('meEmail', meEmail);
 
       const res  = await apiFetch(`/api/approvals/pending?${params.toString()}`);
       const data = await res.json();

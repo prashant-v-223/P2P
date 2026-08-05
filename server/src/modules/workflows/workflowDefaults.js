@@ -172,6 +172,49 @@ const invoicePaymentDefaults = [
   }
 ];
 
+// BL Freight Invoice Workflow Defaults
+const blInvoiceDefaults = [
+  {
+    id: 'WF-BL-INV-STANDARD-V1',
+    definitionKey: 'bl_invoice_standard',
+    name: 'BL Freight Invoice (Up to ₹5 Lakhs)',
+    category: 'BL Freight Invoice',
+    minAmount: 0,
+    maxAmount: 500000,
+    formattedRange: '₹0 - ₹5,00,000',
+    description: 'Standard BL freight & destination charge invoice EXIM approval.',
+    status: 'Active',
+    priority: 100,
+    conditions: {},
+    version: 1,
+    createdBy: 'system-bootstrap',
+    activatedBy: 'system-bootstrap',
+    steps: [
+      { step: 1, title: 'EXIM Manager Approval', roleName: 'EXIM Manager', roleKey: 'exim-manager', statusKey: 'Pending EXIM Approval', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 }
+    ]
+  },
+  {
+    id: 'WF-BL-INV-HIGH-V1',
+    definitionKey: 'bl_invoice_high',
+    name: 'BL Freight Invoice (Above ₹5 Lakhs)',
+    category: 'BL Freight Invoice',
+    minAmount: 500000.01,
+    maxAmount: null,
+    formattedRange: 'Above ₹5,00,000',
+    description: 'High-value BL invoice requiring EXIM and Finance Lead approval.',
+    status: 'Active',
+    priority: 100,
+    conditions: {},
+    version: 1,
+    createdBy: 'system-bootstrap',
+    activatedBy: 'system-bootstrap',
+    steps: [
+      { step: 1, title: 'EXIM Manager Approval', roleName: 'EXIM Manager', roleKey: 'exim-manager', statusKey: 'Pending EXIM Approval', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
+      { step: 2, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance', statusKey: 'Pending Finance Approval', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 }
+    ]
+  }
+];
+
 export async function ensureRfqAwardWorkflows() {
   const now = new Date();
   await Promise.all(rfqAwardDefaults.map(({ id, ...defaults }) => Workflow.updateOne(
@@ -201,9 +244,20 @@ export async function ensureInvoicePaymentWorkflows() {
   console.log('[Workflows] Invoice Payment workflows ensured.');
 }
 
+export async function ensureBlInvoiceWorkflows() {
+  const now = new Date();
+  await Promise.all(blInvoiceDefaults.map(({ id, ...defaults }) => Workflow.updateOne(
+    { id },
+    { $setOnInsert: { id, ...defaults, effectiveFrom: now, activatedAt: now } },
+    { upsert: true }
+  )));
+  console.log('[Workflows] BL Freight Invoice workflows ensured.');
+}
+
 export async function ensureAllWorkflows() {
   await ensureRfqAwardWorkflows();
   await ensureAdvancePaymentWorkflows();
   await ensureInvoicePaymentWorkflows();
+  await ensureBlInvoiceWorkflows();
   console.log('[Workflows] All default workflows ensured.');
 }

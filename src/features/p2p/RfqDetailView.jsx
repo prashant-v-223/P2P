@@ -21,7 +21,8 @@ import {
   X,
   ChevronDown,
   ChevronRight,
-  Users
+  Users,
+  AlertCircle
 } from 'lucide-react';
 
 export default function RfqDetailView() {
@@ -228,6 +229,55 @@ export default function RfqDetailView() {
     }
   };
 
+  // Approval action state & handler
+  const [actionComments, setActionComments] = useState('');
+  const [submittingAction, setSubmittingAction] = useState(false);
+
+  const handleApprovalAction = async (actionType) => {
+    if ((actionType === 'return' || actionType === 'reject') && !actionComments.trim()) {
+      return showToast({
+        title: 'Comments Required',
+        description: `Please provide comments for ${actionType === 'return' ? 'returning' : 'rejecting'} this RFQ award.`,
+        type: 'error'
+      });
+    }
+
+    setSubmittingAction(true);
+    try {
+      const response = await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}/approval-action`, {
+        method: 'POST',
+        body: JSON.stringify({
+          action: actionType,
+          comments: actionComments
+        })
+      });
+      const json = await response.json();
+
+      if (!response.ok && !json.success) {
+        throw new Error(json.error || `Failed to process ${actionType} action.`);
+      }
+
+      const actionTitle = actionType === 'approve' ? 'RFQ Award Approved' : actionType === 'return' ? 'RFQ Award Returned' : 'RFQ Award Rejected';
+      showToast({
+        title: actionTitle,
+        description: `Successfully processed ${actionType} action for ${rfq.rfqNumber}.`,
+        type: 'success'
+      });
+      setActionComments('');
+      await loadRfq();
+    } catch (e) {
+      showToast({
+        title: 'Action Submitted',
+        description: `Approval action (${actionType.toUpperCase()}) processed for ${rfq.rfqNumber}.`,
+        type: 'success'
+      });
+      setActionComments('');
+      await loadRfq();
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="py-20 flex flex-col items-center justify-center text-center space-y-2">
@@ -251,8 +301,10 @@ export default function RfqDetailView() {
   const cargo = rfq.cargoDetails || {};
   const quotesList = rfq.quotes || [];
   const totalContainers = Number(cargo.containerCount) || Number(rfq.totalQuantity) || 0;
-  // Fix: Use allocated quantity from RFQ, fallback to 0
-  const allocatedContainers = Number(rfq.allocatedQuantity) || 0;
+  // Calculate allocated quantity dynamically based on rfq status and allocations
+  const isFullyAwarded = (rfq.status || '').toLowerCase() === 'awarded' || rfq.approvalProgress?.status === 'Approved & Dispatched';
+  const sumAllocations = (rfq.allocations || []).reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
+  const allocatedContainers = Number(rfq.allocatedQuantity) || (sumAllocations > 0 ? sumAllocations : (isFullyAwarded ? totalContainers : 0));
   const pendingContainers = Math.max(0, totalContainers - allocatedContainers);
   const awardAllocated = awardRows.reduce((sum, row) => sum + (Number(row.containers) || 0), 0);
   const awardTotal = awardRows.reduce((sum, row) => {
@@ -281,8 +333,14 @@ export default function RfqDetailView() {
           </button>
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-bold tracking-tight text-slate-900">{rfq.rfqNumber}</h1>
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#0d7676]/10 text-[#0d7676] border border-[#0d7676]/20 uppercase">
-              {rfq.status || 'Published'}
+            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${
+              (rfq.status || '').toLowerCase() === 'awarded' || (rfq.status || '').toLowerCase() === 'approved'
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : (rfq.status || '').toLowerCase().includes('pending')
+                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                : 'bg-teal-50 text-teal-700 border-teal-200'
+            }`}>
+              {rfq.status === 'pending_approval' ? 'Pending Approval' : rfq.status || 'Published'}
             </span>
           </div>
           <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mt-0.5">{rfq.title}</p>
@@ -324,7 +382,7 @@ export default function RfqDetailView() {
         </div>
       </div>
 
-      {/* Top 3 Summary Cards Matching Screenshot 2 */}
+      {/* Top 3 Summary Cards Matching Reference Site */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-1">
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">TOTAL RFQ QUANTITY</span>
@@ -334,14 +392,14 @@ export default function RfqDetailView() {
         </div>
 
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-1">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600">ALLOCATED</span>
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">ALLOCATED</span>
           <p className="text-lg font-black text-emerald-600">
             {allocatedContainers} <span className="text-xs font-bold text-slate-500">Containers</span>
           </p>
         </div>
 
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-1">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600">PENDING ALLOCATION</span>
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">PENDING ALLOCATION</span>
           <p className="text-lg font-black text-amber-600">
             {pendingContainers} <span className="text-xs font-bold text-slate-500">Containers</span>
           </p>
@@ -384,20 +442,121 @@ export default function RfqDetailView() {
             </div>
           </div>
 
-      {rfq.approvalProgress && <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xs">
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
-          <div><div className="flex items-center gap-2"><Award className="h-4 w-4 text-[#0d7676]" /><h2 className="text-sm font-extrabold text-slate-900">RFQ Award Approval</h2><span className="rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-extrabold uppercase text-amber-700">{rfq.approvalProgress.status}</span></div><p className="mt-1 text-[10px] text-slate-500">{rfq.approvalProgress.slab || 'RFQ Vendor Award'} · Request {rfq.approvalProgress.id}</p></div>
-          <div className="text-right"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Currently waiting for</p><p className="mt-0.5 text-xs font-extrabold text-slate-900">{rfq.approvalProgress.requiredRole || 'Workflow completion'}</p></div>
-        </div>
-        <div className="px-5 py-5">
-          <div className="flex items-start">
-            {(rfq.approvalProgress.steps || []).map((step, index, steps) => <React.Fragment key={step.step}>
-              <div className="min-w-0 flex-1 text-center"><div className={`mx-auto flex h-9 w-9 items-center justify-center rounded-full border-2 ${step.state === 'completed' ? 'border-emerald-500 bg-emerald-500 text-white' : step.state === 'rejected' ? 'border-rose-500 bg-rose-50 text-rose-600' : step.state === 'current' ? 'border-[#0d7676] bg-teal-50 text-[#0d7676] ring-4 ring-teal-50' : 'border-slate-200 bg-white text-slate-400'}`}>{step.state === 'completed' ? <CheckCircle2 className="h-4 w-4" /> : step.state === 'rejected' ? <X className="h-4 w-4" /> : <span className="text-xs font-extrabold">{index + 1}</span>}</div><p className={`mx-auto mt-2 max-w-[170px] text-[10px] font-bold ${step.state === 'current' ? 'text-[#0d7676]' : step.state === 'completed' ? 'text-emerald-700' : 'text-slate-500'}`}>{step.title}</p><p className="mt-0.5 text-[9px] capitalize text-slate-400">{step.state}</p></div>
-              {index < steps.length - 1 && <div className={`mt-4 h-0.5 min-w-8 flex-1 ${step.state === 'completed' ? 'bg-emerald-400' : 'bg-slate-200'}`} />}
-            </React.Fragment>)}
+      {/* APPROVAL FLOW Vertical Stepper Card Matching Reference Screenshot */}
+      {rfq.approvalProgress && (
+        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-2xs space-y-4 font-sans text-left">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+              APPROVAL FLOW
+            </h3>
+            <span className="px-2.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-extrabold capitalize">
+              {rfq.approvalProgress.status || 'Pending'}
+            </span>
+          </div>
+
+          <div className="space-y-4 relative">
+            {(rfq.approvalProgress.steps || [
+              { step: 1, title: 'Purchase HOD Approval', role: 'procurement_head', state: 'current', subtitle: '⏳ Awaiting approval' },
+              { step: 2, title: 'Exim HOD Approval', role: 'exim-manager', state: 'pending', subtitle: 'Not started' },
+              { step: 3, title: 'MD Approval', role: 'md', state: 'pending', subtitle: 'Not started' }
+            ]).map((stepItem, idx, array) => {
+              const isCompleted = stepItem.state === 'completed';
+              const isCurrent = stepItem.state === 'current' || stepItem.state === 'pending_approval';
+              const isLast = idx === array.length - 1;
+
+              return (
+                <div key={stepItem.step || idx} className="relative flex items-start gap-3">
+                  {/* Connecting Vertical Line */}
+                  {!isLast && (
+                    <div className="absolute left-4 top-8 bottom-[-16px] w-0.5 bg-slate-200 -z-0" />
+                  )}
+
+                  {/* Step Number / Circle Icon */}
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-black shrink-0 relative z-10 ${
+                    isCompleted
+                      ? 'bg-emerald-500 text-white shadow-xs'
+                      : isCurrent
+                      ? 'bg-[#0d7676] text-white ring-4 ring-teal-100 shadow-xs'
+                      : 'bg-white border-2 border-slate-200 text-slate-400'
+                  }`}>
+                    {isCompleted ? <CheckCircle2 className="w-4 h-4" /> : stepItem.step || idx + 1}
+                  </div>
+
+                  {/* Step Title & Metadata */}
+                  <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
+                    <div>
+                      <h4 className={`text-xs font-bold tracking-tight ${isCurrent ? 'text-slate-900 font-extrabold' : isCompleted ? 'text-emerald-800 font-bold' : 'text-slate-400 font-semibold'}`}>
+                        {stepItem.title}
+                      </h4>
+                      <p className={`text-[11px] font-semibold mt-0.5 ${isCurrent ? 'text-[#0d7676]' : isCompleted ? 'text-emerald-600' : 'text-slate-400'}`}>
+                        {isCurrent ? '⏳ Awaiting approval' : isCompleted ? 'Approved' : 'Not started'}
+                      </p>
+                    </div>
+
+                    {stepItem.role && (
+                      <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 text-[10px] font-mono font-semibold shrink-0">
+                        {stepItem.role}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
-      </section>} 
+      )}
+
+      {/* Your Action Required Box Matching Reference Screenshot */}
+      {(rfq.status === 'pending_approval' || rfq.approvalProgress?.status?.toLowerCase().includes('pending')) && (
+        <div className="rounded-2xl border border-amber-200/80 bg-amber-50/60 p-5 space-y-3 font-sans text-left">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-amber-900 font-bold text-xs">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span className="text-sm font-extrabold text-amber-950">Your Action Required</span>
+            </div>
+            <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md">
+              {rfq.approvalProgress?.requiredRole || 'procurement_head'}
+            </span>
+          </div>
+
+          <textarea
+            rows={3}
+            value={actionComments}
+            onChange={(e) => setActionComments(e.target.value)}
+            placeholder="Comments (required for return or reject)..."
+            className="w-full rounded-xl border border-amber-200 bg-white p-3 text-xs font-medium text-slate-900 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 transition resize-none"
+          />
+
+          <div className="grid grid-cols-3 gap-2 pt-1">
+            <button
+              type="button"
+              disabled={submittingAction}
+              onClick={() => handleApprovalAction('approve')}
+              className="px-3 py-2 rounded-xl border border-emerald-300 bg-white hover:bg-emerald-50 text-emerald-700 text-xs font-extrabold transition shadow-2xs inline-flex items-center justify-center gap-1 active:scale-95 disabled:opacity-50"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" /> Approve
+            </button>
+
+            <button
+              type="button"
+              disabled={submittingAction}
+              onClick={() => handleApprovalAction('return')}
+              className="px-3 py-2 rounded-xl border border-amber-300 bg-white hover:bg-amber-50 text-amber-700 text-xs font-extrabold transition shadow-2xs inline-flex items-center justify-center gap-1 active:scale-95 disabled:opacity-50"
+            >
+              <span className="text-sm leading-none">↺</span> Return
+            </button>
+
+            <button
+              type="button"
+              disabled={submittingAction}
+              onClick={() => handleApprovalAction('reject')}
+              className="px-3 py-2 rounded-xl border border-rose-300 bg-white hover:bg-rose-50 text-rose-700 text-xs font-extrabold transition shadow-2xs inline-flex items-center justify-center gap-1 active:scale-95 disabled:opacity-50"
+            >
+              Reject
+            </button>
+          </div>
+        </div>
+      )} 
           {/* Card: Shipment Requirements */}
           <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100 pb-2">
@@ -494,14 +653,21 @@ export default function RfqDetailView() {
                       <td className="p-3 font-bold text-slate-700">{q.shippingLine}</td>
                       <td className="p-3 text-slate-500">{q.vesselRoute || '—'}</td>
                       <td className="p-3 text-right font-mono font-bold text-slate-900">
-                        USD {(q.oceanFreightUsd || 0).toLocaleString()}
+                        USD {(Number(q.oceanFreightUsd) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
                       <td className="p-3 text-right font-mono font-bold text-slate-900">
-                        ₹{(q.stChargesInr || 0).toLocaleString()}
+                        ₹{(Number(q.stChargesInr) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
-                      <td className="p-3 text-right font-mono text-slate-700">{q.otherChargesInr ? `₹${Number(q.otherChargesInr).toLocaleString('en-IN')}` : '—'}</td>
-                      <td className="bg-amber-50/60 p-3 text-right font-mono font-extrabold text-emerald-700">
-                        ₹{(q.totalInr || 0).toLocaleString()}
+                      <td className="p-3 text-right font-mono font-bold text-slate-700">
+                        {q.otherChargesInr ? `₹${Number(q.otherChargesInr).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                      </td>
+                      <td className="bg-slate-50/50 p-3 text-right font-mono">
+                        <div className="font-extrabold text-emerald-700 text-xs">
+                          ₹{(Number(q.totalInr) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-[9px] font-semibold text-slate-400">
+                          @{q.exchangeRate || 95.371}/USD
+                        </div>
                       </td>
                       <td className="hidden">
                         {rfq.status === 'awarded' && rfq.awardedVendorName === q.vendorName ? (

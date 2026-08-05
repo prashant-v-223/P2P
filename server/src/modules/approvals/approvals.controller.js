@@ -7,6 +7,24 @@ import { WorkflowAudit } from '../../models/WorkflowAudit.js';
 
 const escapeRegex = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// ── Hierarchical Approvals Chain Map ──────────────────────────────────────
+const ROLE_HIERARCHY = {
+  'superadmin': ['admin', 'system admin', 'md', 'director', 'cfo', 'finance head', 'finance lead', 'finance', 'procurement head', 'procurement', 'exim manager', 'exim', 'logistics lead', 'logistics', 'accounts lead', 'accounts', 'manager', 'assistant manager', 'executive'],
+  'admin': ['system admin', 'md', 'director', 'cfo', 'finance head', 'finance lead', 'finance', 'procurement head', 'procurement', 'exim manager', 'exim', 'logistics lead', 'logistics', 'accounts lead', 'accounts', 'manager', 'assistant manager', 'executive'],
+  'system admin': ['md', 'director', 'cfo', 'finance head', 'finance lead', 'finance', 'procurement head', 'procurement', 'exim manager', 'exim', 'logistics lead', 'logistics', 'accounts lead', 'accounts', 'manager', 'assistant manager', 'executive'],
+  'md': ['director', 'cfo', 'finance head', 'finance lead', 'finance', 'procurement head', 'procurement', 'exim manager', 'exim', 'logistics lead', 'logistics', 'accounts lead', 'accounts', 'general manager', 'senior manager', 'manager', 'assistant manager', 'executive'],
+  'director': ['cfo', 'finance head', 'finance lead', 'finance', 'procurement head', 'procurement', 'exim manager', 'exim', 'logistics lead', 'logistics', 'accounts lead', 'accounts', 'general manager', 'senior manager', 'manager', 'assistant manager', 'executive'],
+  'cfo': ['finance head', 'finance lead', 'finance', 'accounts lead', 'accounts'],
+  'finance head': ['finance lead', 'finance', 'accounts lead', 'accounts'],
+  'finance lead': ['finance', 'accounts'],
+  'procurement head': ['procurement manager', 'procurement lead', 'procurement', 'buyer', 'assistant manager', 'executive'],
+  'exim manager': ['exim lead', 'exim officer', 'exim assistant', 'exim', 'assistant manager', 'executive'],
+  'general manager': ['senior manager', 'manager', 'assistant manager', 'executive'],
+  'senior manager': ['manager', 'assistant manager', 'executive'],
+  'manager': ['assistant manager', 'executive', 'officer'],
+  'assistant manager': ['executive', 'officer']
+};
+
 // ── Map a role string to the keywords we look for in status strings ──────────
 function getRoleKeywords(role = '') {
   const r = role.toLowerCase().replace(/[\s_-]+/g, ' ').trim();
@@ -21,20 +39,29 @@ function getRoleKeywords(role = '') {
   return [r];
 }
 
-// ── Check if an approval's ACTIVE STEP is meant for this role / roles ───────
+// ── Check if an approval's ACTIVE STEP is meant for this role / roles (with Hierarchy support) ───────
 function isApprovalForRole(approval, roleFilter) {
   const roles = Array.isArray(roleFilter) ? roleFilter : [roleFilter];
   
   for (const role of roles) {
+    const rNorm = (role || '').toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+    if (rNorm === 'admin' || rNorm === 'system admin' || rNorm === 'systemadmin' || rNorm === 'superadmin') return true;
+
     const keywords = getRoleKeywords(role);
+    const subordinates = ROLE_HIERARCHY[rNorm] || [];
+    const allAllowedKeywords = Array.from(new Set([
+      ...keywords,
+      ...subordinates.flatMap(s => getRoleKeywords(s))
+    ]));
+
     const statusLower = (approval.status || '').toLowerCase();
 
-    // Primary: does current status contain the role keyword?
-    for (const kw of keywords) {
+    // Primary: status check
+    for (const kw of allAllowedKeywords) {
       if (statusLower.includes(kw)) return true;
     }
 
-    // Secondary: check workflowSteps for activeStep role match
+    // Secondary: workflowSteps check
     if (approval.workflowSteps) {
       try {
         const steps = JSON.parse(approval.workflowSteps);
@@ -43,7 +70,7 @@ function isApprovalForRole(approval, roleFilter) {
           const roleName = (activeStepObj.roleName || '').toLowerCase();
           const roleKey  = (activeStepObj.roleKey  || '').toLowerCase();
           const title    = (activeStepObj.title    || '').toLowerCase();
-          for (const kw of keywords) {
+          for (const kw of allAllowedKeywords) {
             if (roleName.includes(kw) || roleKey.includes(kw) || title.includes(kw)) return true;
           }
         }
@@ -106,20 +133,30 @@ function getCurrentStepRole(approval) {
   return '';
 }
 
-// ── Check if user role(s) can act on current step ────────────────────────────
+// ── Check if user role(s) can act on current step (with Hierarchy support) ────────────────────────────
 function canActOnStep(userRole, approval) {
   const roles = Array.isArray(userRole) ? userRole : [userRole];
   
   for (const role of roles) {
     const ur = (role || '').toLowerCase().replace(/[\s_-]+/g, ' ').trim();
-    if (ur === 'admin' || ur.replace(/\s+/g, '') === 'systemadmin') return true;
+    if (ur === 'admin' || ur.replace(/\s+/g, '') === 'systemadmin' || ur === 'superadmin') return true;
 
     const requiredRole = getCurrentStepRole(approval);
     if (!requiredRole) return true;
 
+    // Direct role keyword match
     const keywords = getRoleKeywords(role);
     for (const kw of keywords) {
       if (requiredRole.includes(kw)) return true;
+    }
+
+    // Hierarchical role match (Higher-level approvers can act on subordinate steps)
+    const subordinates = ROLE_HIERARCHY[ur] || [];
+    for (const subRole of subordinates) {
+      const subKeywords = getRoleKeywords(subRole);
+      for (const kw of subKeywords) {
+        if (requiredRole.includes(kw) || kw.includes(requiredRole)) return true;
+      }
     }
   }
 
@@ -188,10 +225,10 @@ export const getPendingApprovals = async (req, res) => {
     }
 
     // ── Self-submission exclusion ────────────────────────────────────────
-    const currentUserName  = (req.user?.name  || req.query.me  || '').toLowerCase().trim();
-    const currentUserEmail = (req.user?.email || req.query.meEmail || '').toLowerCase().trim();
+    const currentUserName  = (req.query.me  || '').toLowerCase().trim();
+    const currentUserEmail = (req.query.meEmail || '').toLowerCase().trim();
 
-    if (currentUserName || currentUserEmail) {
+    if (!isSuperUser && req.query.excludeSelf === 'true' && (currentUserName || currentUserEmail)) {
       approvals = approvals.filter(a => {
         const submitter = (a.requestedBy || '').toLowerCase().trim();
         if (!submitter) return true;
@@ -423,6 +460,17 @@ export const processApprovalAction = async (req, res) => {
         }
       } catch (e) {
         console.error('[Approvals] Sync RFQ Vendor Award failed:', e.message);
+      }
+    } else if (approval.type === 'BL Freight Invoice' || approval.entityType === 'LogisticsPayment') {
+      try {
+        const { LogisticsPayment } = await import('../../models/LogisticsPayment.js');
+        const nextStatus = newStatus === 'Approved & Dispatched' ? 'Approved' : newStatus === 'Rejected' ? 'Rejected' : newStatus === 'Returned for changes' ? 'Returned' : newStatus;
+        await LogisticsPayment.findOneAndUpdate(
+          { $or: [{ logisticsPaymentId: approval.id }, { referenceNumber: approval.referenceNumber || approval.id }] },
+          { status: nextStatus, currentStep: newStep }
+        );
+      } catch (e) {
+        console.error('[Approvals] Sync LogisticsPayment failed:', e.message);
       }
     }
 

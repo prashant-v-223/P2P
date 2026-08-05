@@ -137,8 +137,7 @@ const logisticsPaymentSchema = new mongoose.Schema({
   amount: { type: Number, required: true },
   status: { 
     type: String, 
-    enum: ['draft', 'pending', 'approved', 'rejected', 'paid'], 
-    default: 'draft',
+    default: 'pending',
     index: true 
   },
   approvalInstanceId: String,

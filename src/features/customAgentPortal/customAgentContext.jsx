@@ -144,6 +144,17 @@ export const CustomAgentProvider = ({ children }) => {
     return json;
   };
 
+  const submitAgentInvoice = async (blId, invoiceData) => {
+    const res = await apiFetch('/api/p2p/customs-agent/invoices', {
+      method: 'POST',
+      body: JSON.stringify({ blId, ...invoiceData })
+    });
+    const json = await res.json();
+    if (!res.ok || !json.success) throw new Error(json.error || 'Agent invoice submission failed.');
+    await fetchAssignedBls(agentUser?.agentId);
+    return json.data;
+  };
+
   return (
     <CustomAgentContext.Provider
       value={{
@@ -155,6 +166,7 @@ export const CustomAgentProvider = ({ children }) => {
         markAsCleared,
         fetchAssignedBl,
         uploadCustomsDocument,
+        submitAgentInvoice,
         changePassword,
         fetchAssignedBls
       }}

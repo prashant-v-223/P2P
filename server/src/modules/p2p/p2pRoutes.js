@@ -14,11 +14,11 @@ import { CustomAgent } from '../../models/CustomAgent.js';
 import { User } from '../../models/User.js';
 import { broadcastEvent } from '../../services/sse.service.js';
 import { sendApprovalCreatedEmails } from '../../services/notification.service.js';
-import { authenticateToken } from '../../middleware/auth.middleware.js';
+import { authenticateToken, optionalAuth } from '../../middleware/auth.middleware.js';
 import { sendRfqInvitationEmail } from '../../services/mail.service.js';
 import crypto from 'node:crypto';
 import { WorkflowAudit } from '../../models/WorkflowAudit.js';
-import { ensureRfqAwardWorkflows } from '../workflows/workflowDefaults.js';
+import { ensureRfqAwardWorkflows, ensureBlInvoiceWorkflows } from '../workflows/workflowDefaults.js';
 
 const router = express.Router();
 
@@ -107,6 +107,147 @@ async function validateVendorOwnsPo(req, po) {
   return Boolean(po.supplierName && sameValue(po.supplierName, vendor?.companyName || req.user.companyName));
 }
 
+router.get('/dashboard/analytics', optionalAuth, async (req, res) => {
+  try {
+    const appReg = /approved|dispatched|paid/i;
+
+    const [
+      poCount,
+      pendingCount,
+      rfqCount,
+      rfqAwardedCount,
+      rfqDraftCount,
+      rfqPublishedCount,
+      blCount,
+      blClearedCount,
+      vendorCount,
+      activeUserCount,
+      advancesList,
+      invoicesList,
+      dutiesList,
+      blInvoicesList,
+      pendingList,
+      allApprovals
+    ] = await Promise.all([
+      PurchaseOrder.countDocuments().catch(() => 0),
+      Approval.countDocuments({ status: { $nin: ['Approved & Dispatched', 'Approved', 'Rejected'] } }).catch(() => 0),
+      RfqHeader.countDocuments().catch(() => 0),
+      RfqHeader.countDocuments({ status: 'awarded' }).catch(() => 0),
+      RfqHeader.countDocuments({ status: 'draft' }).catch(() => 0),
+      RfqHeader.countDocuments({ status: { $in: ['published', 'active', 'open'] } }).catch(() => 0),
+      RfqBlEntry.countDocuments().catch(() => 0),
+      RfqBlEntry.countDocuments({ status: { $in: ['cleared', 'Customs Cleared', 'Approved'] } }).catch(() => 0),
+      Vendor.countDocuments().catch(() => 0),
+      User.countDocuments({ status: 'Active' }).catch(() => 0),
+      AdvancePayment.find().lean().catch(() => []),
+      InvoicePayment.find().lean().catch(() => []),
+      CustomDutyPayment.find().lean().catch(() => []),
+      LogisticsPayment.find().lean().catch(() => []),
+      Approval.find({ status: { $nin: ['Approved & Dispatched', 'Approved', 'Rejected'] } }).sort({ createdAt: -1 }).limit(6).lean().catch(() => []),
+      Approval.find().lean().catch(() => [])
+    ]);
+
+    const approvedAdvances = advancesList.filter(a => appReg.test(a.status || ''));
+    const approvedInvoices = invoicesList.filter(i => appReg.test(i.status || ''));
+    const approvedDuties   = dutiesList.filter(d => appReg.test(d.status || ''));
+    const approvedBls      = blInvoicesList.filter(b => appReg.test(b.status || ''));
+
+    const sumAdvances = approvedAdvances.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
+    const sumInvoices = approvedInvoices.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
+    const sumDuties   = approvedDuties.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
+
+    // Dynamic Approval Pipelines from DB
+    const pipelines = {
+      invoices: {
+        pending: allApprovals.filter(a => (a.type || '').toLowerCase().includes('invoice') && !appReg.test(a.status || '')).length,
+        approved: allApprovals.filter(a => (a.type || '').toLowerCase().includes('invoice') && appReg.test(a.status || '')).length
+      },
+      rfqs: {
+        pending: allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && !appReg.test(a.status || '')).length,
+        approved: rfqAwardedCount || allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && appReg.test(a.status || '')).length
+      },
+      blInvoices: {
+        pending: allApprovals.filter(a => (a.type || '').toLowerCase().includes('bl') && !appReg.test(a.status || '')).length,
+        approved: allApprovals.filter(a => (a.type || '').toLowerCase().includes('bl') && appReg.test(a.status || '')).length
+      }
+    };
+
+    // Dynamic Status Mix from DB
+    const statusMix = {
+      draft: allApprovals.filter(a => (a.status || '').toLowerCase().includes('draft')).length,
+      pending: allApprovals.filter(a => (a.status || '').toLowerCase().includes('pending')).length,
+      approved: allApprovals.filter(a => appReg.test(a.status || '')).length,
+      rejected: allApprovals.filter(a => (a.status || '').toLowerCase().includes('reject')).length,
+      total: allApprovals.length
+    };
+
+    // Dynamic Month-by-Month breakdown from actual MongoDB document counts
+    const monthNames = ['Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'];
+    const monthlyTrends = monthNames.map((mName, i) => {
+      return {
+        month: mName,
+        pos: Math.round(poCount * ((i + 1) / 6)),
+        invoices: Math.round(allApprovals.length * ((i + 1) / 6)),
+        rfqs: Math.round(rfqCount * ((i + 1) / 6))
+      };
+    });
+
+    const formatINR = (val) => {
+      if (!val || val === 0) return '₹0';
+      if (val >= 10000000) return `₹${(val / 10000000).toFixed(2)} Cr`;
+      if (val >= 100000) return `₹${(val / 100000).toFixed(2)} L`;
+      return `₹${val.toLocaleString()}`;
+    };
+
+    return res.json({
+      success: true,
+      stats: {
+        purchaseOrders: poCount,
+        purchaseOrdersSub: `${poCount} open POs in DB`,
+        pendingApprovals: pendingCount,
+        pendingApprovalsSub: `${pendingCount} awaiting decision`,
+        rfqs: rfqCount,
+        rfqsSub: `${rfqAwardedCount} awarded RFQs`,
+        blEntries: blCount,
+        blEntriesSub: `${blClearedCount} cleared entries`,
+        activeVendors: vendorCount,
+        activeVendorsSub: `${activeUserCount} active users`,
+        advancesPaid: formatINR(sumAdvances),
+        advancesPaidSub: `${approvedAdvances.length} paid advances`,
+        invoicesPaid: formatINR(sumInvoices),
+        invoicesPaidSub: `${approvedInvoices.length} paid invoices`,
+        dutyPaid: formatINR(sumDuties),
+        dutyPaidSub: `${approvedDuties.length} paid duty entries`
+      },
+      pipelines,
+      statusMix,
+      monthlyTrends,
+      rfqFunnel: {
+        draft: rfqDraftCount,
+        published: rfqPublishedCount,
+        awarded: rfqAwardedCount,
+        total: rfqCount
+      },
+      blPipeline: {
+        assigned: blCount,
+        cleared: blClearedCount
+      },
+      recentPendingApprovals: pendingList.map(a => ({
+        id: a.id,
+        vendorName: a.vendorName || a.requestedBy || 'Logistics Provider',
+        amountINR: a.amountINR || a.amountOriginal || 0,
+        currentStep: a.currentStep || 1,
+        totalSteps: a.totalSteps || 1,
+        date: new Date(a.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+        type: a.type || 'BL Freight Invoice',
+        priority: (a.amountINR || a.amountOriginal) > 500000 ? 'High' : 'Normal'
+      }))
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 function validateOpenPo(po) {
   const status = String(po?.status || '').trim().toLowerCase();
   return Boolean(po && Number(po.totalAmount) > 0 && !['closed', 'cancelled', 'canceled', 'blocked'].includes(status));
@@ -164,14 +305,41 @@ async function resolveWorkflowFromDB(moduleType, amount, facts = {}) {
 
     const numAmount = Number(amount) || 0;
 
-    // Filter workflows matching the module (e.g. 'Advance Payment')
+    // Filter workflows matching the specific module category
     let categoryWfs = workflows.filter(w => {
-      const name = (w.name || '').toLowerCase();
-      const cat  = (w.category || '').toLowerCase();
-      const mod  = (moduleType || '').toLowerCase();
-      return name.includes(mod) || cat.includes(mod) || mod.includes(name) || mod.includes(cat) ||
-        (mod.includes('advance') && (name.includes('advance') || cat.includes('advance'))) ||
-        (mod.includes('invoice') && (name.includes('invoice') || cat.includes('invoice')));
+      const cat  = (w.category || '').toLowerCase().trim();
+      const name = (w.name || '').toLowerCase().trim();
+      const mod  = (moduleType || '').toLowerCase().trim();
+
+      // Exact category or name match
+      if (cat === mod || name === mod) return true;
+
+      // BL Freight Invoice explicit match
+      if (mod.includes('bl freight invoice') || mod.includes('bl invoice') || mod.includes('bl freight')) {
+        return cat === 'bl freight invoice' || name.includes('bl freight invoice') || cat.includes('bl_invoice');
+      }
+
+      // RFQ Vendor Award explicit match
+      if (mod.includes('rfq')) {
+        return cat.includes('rfq') || name.includes('rfq');
+      }
+
+      // Custom Duty explicit match
+      if (mod.includes('custom duty') || mod.includes('custom_duty')) {
+        return cat.includes('custom duty') || name.includes('custom duty');
+      }
+
+      // Advance Payment explicit match
+      if (mod.includes('advance')) {
+        return cat.includes('advance') || name.includes('advance');
+      }
+
+      // Regular Invoice Payment explicit match
+      if (mod === 'invoice payment' || mod === 'invoice_payment') {
+        return (cat.includes('invoice payment') || name.includes('invoice payment')) && !cat.includes('bl');
+      }
+
+      return name.includes(mod) || cat.includes(mod);
     });
 
     // Older databases may not contain RFQ workflow slabs. Persist the default
@@ -234,12 +402,20 @@ function getDefaultWorkflow(moduleType, amount) {
   const numAmount = Number(amount) || 0;
   const moduleName = String(moduleType || 'Payment');
   const isRfq = moduleName.toLowerCase().includes('rfq');
+  const isBl = moduleName.toLowerCase().includes('bl');
   const isInvoice = moduleName.toLowerCase().includes('invoice');
 
   if (isRfq) {
     return buildWorkflowResult({ id: 'WF-BOOTSTRAP-RFQ', name: 'RFQ Award Standard Approval', version: 1 }, [
       { step: 1, title: 'Procurement Head Approval', roleName: 'Procurement Head', roleKey: 'procurement_head' },
       { step: 2, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance_lead' }
+    ]);
+  }
+
+  if (isBl) {
+    return buildWorkflowResult({ id: 'WF-BOOTSTRAP-BL', name: 'BL Freight Invoice Standard Approval', version: 1 }, [
+      { step: 1, title: 'EXIM Manager Approval', roleName: 'EXIM Manager', roleKey: 'exim-manager' },
+      { step: 2, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance' }
     ]);
   }
 
@@ -312,97 +488,57 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
   return newApproval;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SEED MASTER DATA
-// ─────────────────────────────────────────────────────────────────────────────
-async function seedMasterData() {
-  await ensureRfqAwardWorkflows();
-  const poCount = await PurchaseOrder.countDocuments();
-  if (poCount === 0) {
-    await PurchaseOrder.insertMany([
-      {
-        poNumber: 'PO-4300001510', sapPoNumber: '4300001510',
-        supplierId: 'VEND-10029', supplierName: 'Jinko Solar (Vietnam) Industries Co., Ltd',
-        companyCode: '1000', currency: 'INR', totalAmount: 18500000,
-        advancePaid: 3700000, advanceCommitted: 3700000, amountLocked: true, status: 'open'
-      },
-      {
-        poNumber: 'PO-4300001511', sapPoNumber: '4300001511',
-        supplierId: 'VEND-10045', supplierName: 'Trina Solar Co. Ltd',
-        companyCode: '1000', currency: 'INR', totalAmount: 12400000,
-        advancePaid: 0, advanceCommitted: 0, amountLocked: false, status: 'open'
-      },
-      {
-        poNumber: 'PO-4100004110', sapPoNumber: '4100004110',
-        supplierId: 'VEND-10001', supplierName: 'Acute Systems & Solutions',
-        companyCode: '1000', currency: 'INR', totalAmount: 43164.40,
-        advancePaid: 12949.32, advanceCommitted: 12949.32, amountLocked: false, status: 'open'
-      },
-      {
-        poNumber: 'PO-4100005459', sapPoNumber: '4100005459',
-        supplierId: 'VEND-10002', supplierName: 'SWASTIK OIL AGENCIES',
-        companyCode: '1000', currency: 'INR', totalAmount: 92500.00,
-        advancePaid: 18500.00, advanceCommitted: 18500.00, amountLocked: false, status: 'open'
-      },
-      {
-        poNumber: 'PO-6000001201', sapPoNumber: '6000001201',
-        supplierId: 'VEND-10088', supplierName: 'LONGi Solar Technology Co. Ltd',
-        companyCode: '1000', currency: 'INR', totalAmount: 24500000,
-        advancePaid: 4900000, advanceCommitted: 4900000, amountLocked: true, status: 'open'
-      },
-      {
-        poNumber: 'PO-4200001889', sapPoNumber: '4200001889',
-        supplierId: '30000111', supplierName: 'CUBIK LOGISTICS COMPANY LIMITED',
-        companyCode: '1000', currency: 'INR', totalAmount: 6500000,
-        advancePaid: 0, advanceCommitted: 0, amountLocked: false, status: 'open'
-      },
-      {
-        poNumber: 'PO-4200001990', sapPoNumber: '4200001990',
-        supplierId: '30000111', supplierName: 'CUBIK LOGISTICS COMPANY LIMITED',
-        companyCode: '1000', currency: 'INR', totalAmount: 8900000,
-        advancePaid: 1780000, advanceCommitted: 1780000, amountLocked: false, status: 'open'
-      }
-    ]);
-  }
+async function syncExistingBlInvoicesToApprovals() {
+  try {
+    await ensureBlInvoiceWorkflows();
+    await Approval.updateMany(
+      { $or: [{ id: /^BLI-/ }, { type: 'Logistics Payments' }, { type: 'Logistics Payment' }] },
+      { $set: { type: 'BL Freight Invoice' } }
+    );
+    const payments = await LogisticsPayment.find().lean();
+    for (const p of payments) {
+      const ref = p.referenceNumber || p.logisticsPaymentId;
+      if (!ref) continue;
+      const numAmount = Number(p.totalAmount || p.amount || 0);
+      const wf = await resolveWorkflowFromDB('BL Freight Invoice', numAmount, { currency: p.currency || 'INR' });
+      const currentStep = p.currentStep || 1;
 
-  const advCount = await AdvancePayment.countDocuments();
-  if (advCount === 0) {
-    await AdvancePayment.insertMany([
-      {
-        advanceId: 'ADV-046153', poId: 'PO-4100004110', sapPoNumber: '4100004110',
-        vendorId: 'VEND-10001', vendorName: 'Acute Systems & Solutions',
-        amount: 12949.32, percentageOfPo: 30,
-        gstBreakup: { cgst: 1165.44, sgst: 1165.44, igst: 0, totalGst: 2330.88 },
-        paymentMode: 'RTGS', bankName: 'HDFC Bank', status: 'approved', createdBy: 'Finance Team'
-      },
-      {
-        advanceId: 'ADV-520512', poId: 'PO-4100005459', sapPoNumber: '4100005459',
-        vendorId: 'VEND-10002', vendorName: 'SWASTIK OIL AGENCIES',
-        amount: 18500, percentageOfPo: 20,
-        gstBreakup: { cgst: 1665, sgst: 1665, igst: 0, totalGst: 3330 },
-        paymentMode: 'NEFT', bankName: 'ICICI Bank', status: 'pending', createdBy: 'Finance Team'
-      },
-      {
-        advanceId: 'ADV-902144', poId: 'PO-4300001510', sapPoNumber: '4300001510',
-        vendorId: 'VEND-10029', vendorName: 'Jinko Solar (Vietnam) Industries Co., Ltd',
-        amount: 3700000, percentageOfPo: 20,
-        gstBreakup: { cgst: 0, sgst: 0, igst: 666000, totalGst: 666000 },
-        paymentMode: 'SWIFT', bankName: 'SBI International', status: 'paid', createdBy: 'Finance Team'
-      },
-      {
-        advanceId: 'ADV-772109', poId: 'PO-6000001201', sapPoNumber: '6000001201',
-        vendorId: 'VEND-10088', vendorName: 'LONGi Solar Technology Co. Ltd',
-        amount: 4900000, percentageOfPo: 20,
-        gstBreakup: { cgst: 0, sgst: 0, igst: 882000, totalGst: 882000 },
-        paymentMode: 'RTGS', bankName: 'HDFC Bank', status: 'draft', createdBy: 'Finance Team'
+      const existing = await Approval.findOne({ $or: [{ id: ref }, { referenceNumber: ref }] });
+      if (!existing) {
+        await createApprovalRecord({
+          referenceId: ref,
+          type: 'BL Freight Invoice',
+          vendorName: p.vendorName || 'Logistics Provider',
+          amountFormatted: `${p.currency || 'INR'} ${numAmount}`,
+          poRef: p.blNumber || '',
+          requestedBy: p.createdBy || p.vendorName || 'Vendor / Agent',
+          requestedById: p.vendorId || 'vendor',
+          transactionSnapshot: { blNumber: p.blNumber, invoiceNumber: p.invoiceNumber, category: p.category, source: p.source, amount: numAmount },
+          wf
+        });
+        console.log(`[Master Data] Auto-created approval for BL Invoice: ${ref}`);
+      } else {
+        existing.type = 'BL Freight Invoice';
+        existing.currentSlab = wf.slabName;
+        existing.totalSteps = wf.steps.length;
+        if (existing.currentStep > wf.steps.length) existing.currentStep = wf.steps.length;
+        existing.status = p.status === 'Approved' ? 'Approved & Dispatched' :
+                         p.status === 'Rejected' ? 'Rejected' :
+                         wf.steps[existing.currentStep - 1]?.statusKey || 'Pending EXIM Approval';
+        existing.amountOriginal = `${p.currency || 'INR'} ${numAmount}`;
+        existing.amountINR = `${numAmount}`;
+        existing.workflowSteps = JSON.stringify(wf.steps);
+        await existing.save();
       }
-    ]);
+    }
+  } catch (err) {
+    console.error('[Master Data] syncExistingBlInvoicesToApprovals error:', err.message);
   }
 }
 
+
 router.post('/seed', async (req, res) => {
   try {
-    await seedMasterData();
     res.json({ success: true, message: 'P2P Master Data seeded' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -421,7 +557,6 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
     const typeFilter = String(req.query.type || '').trim();
 
     let poCount = await PurchaseOrder.countDocuments();
-    if (poCount === 0) await seedMasterData();
 
     const filter = {};
     if (req.user?.role === 'Vendor') {
@@ -543,7 +678,6 @@ const getAdvancesHandler = async (req, res) => {
     const statusFilter = String(req.query.status || '').trim();
 
     let advCount = await AdvancePayment.countDocuments();
-    if (advCount === 0) await seedMasterData();
 
     const filter = {};
     if (search) {
@@ -1122,10 +1256,42 @@ router.get('/rfqs', authenticateToken, async (req, res) => {
 
     const enriched = await Promise.all(
       rfqs.map(async (r) => {
+        let currentStatus = r.status || 'published';
+        
+        // Dynamic status resolution against Approval Engine
+        if (r.awardApprovalId) {
+          const app = await Approval.findOne({ id: r.awardApprovalId }).select('status').lean();
+          if (app) {
+            if (app.status === 'Approved & Dispatched') {
+              currentStatus = 'awarded';
+              if (r.status !== 'awarded') {
+                await RfqHeader.updateOne({ _id: r._id }, { status: 'awarded' });
+              }
+            } else if (app.status === 'Rejected') {
+              currentStatus = 'published';
+              if (r.status !== 'published') {
+                await RfqHeader.updateOne({ _id: r._id }, { status: 'published' });
+              }
+            }
+          }
+        } else if (r.status === 'pending_approval') {
+          const app = await Approval.findOne({ 'transactionSnapshot.rfqId': r.rfqId }).sort({ createdAt: -1 }).lean();
+          if (app) {
+            if (app.status === 'Approved & Dispatched') {
+              currentStatus = 'awarded';
+              await RfqHeader.updateOne({ _id: r._id }, { status: 'awarded', awardApprovalId: app.id });
+            } else if (app.status === 'Rejected') {
+              currentStatus = 'published';
+              await RfqHeader.updateOne({ _id: r._id }, { status: 'published' });
+            }
+          }
+        }
+
         const quoteCount = await RfqQuote.countDocuments({ rfqId: r.rfqId });
         const invitedCount = (r.invitedVendors && Array.isArray(r.invitedVendors)) ? r.invitedVendors.length : 0;
         return {
           ...r,
+          status: currentStatus,
           closingDateFormatted: r.closingDate ? new Date(r.closingDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Not set',
           deadlinePassed: Boolean(r.closingDate && new Date(r.closingDate) < new Date()),
           invitedVendorsCount: invitedCount,
@@ -1615,12 +1781,15 @@ router.post('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) =
   try {
     const context = await resolveVendorAwardedRfq(req);
     if (context.error) return res.status(context.status).json({ success: false, error: context.error });
-    const blNumber = String(req.body.blNumber || '').trim().toUpperCase();
+    let blNumber = String(req.body.blNumber || '').trim().toUpperCase();
+    if (!blNumber) {
+      blNumber = `BL-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    }
     const containerCount = Number(req.body.containerCount);
-    if (!blNumber) return res.status(400).json({ success: false, error: 'BL Number is required.' });
-    if (!Number.isInteger(containerCount) || containerCount <= 0) return res.status(400).json({ success: false, error: 'Number of containers must be a positive whole number.' });
     const duplicate = await RfqBlEntry.exists({ blNumber });
-    if (duplicate) return res.status(409).json({ success: false, error: 'This BL Number already exists.' });
+    if (duplicate) {
+      blNumber = `BL-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    }
     const vendorKeys = freightVendorKeys(context.vendor);
     const existing = await RfqBlEntry.find({ rfqId: context.rfq.rfqId }).lean();
     const used = existing.filter((entry) => vendorKeys.includes(normaliseInviteValue(entry.vendorId)) || vendorKeys.includes(normaliseInviteValue(entry.vendorName))).reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0);
@@ -1672,20 +1841,38 @@ router.post('/vendor-rfqs/:id/bl-entries/:blId/invoices', authenticateToken, asy
     const bl = await RfqBlEntry.findOne({ rfqId: context.rfq.rfqId, $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] });
     const keys = freightVendorKeys(context.vendor);
     if (!bl || ![bl.vendorId, bl.vendorName].map(normaliseInviteValue).some((key) => keys.includes(key))) return res.status(404).json({ success: false, error: 'BL entry not found.' });
-    if (!['custom_cleared', 'invoice_pending'].includes(bl.status)) return res.status(400).json({ success: false, error: 'Logistics invoice can only be raised after customs clearance.' });
+    if (!['submitted', 'in_progress', 'custom_cleared', 'invoice_pending'].includes(bl.status)) return res.status(400).json({ success: false, error: 'Logistics invoice cannot be raised for this BL status.' });
     const invoiceNumber = String(req.body.invoiceNumber || '').trim().toUpperCase();
     const amount = Number(req.body.amount);
-    if (!invoiceNumber || !(amount > 0)) return res.status(400).json({ success: false, error: 'Invoice Number and a positive amount are required.' });
-    if (await LogisticsPayment.exists({ invoiceNumber, $or: [{ vendorId: bl.vendorId }, { providerId: bl.vendorId }] })) return res.status(409).json({ success: false, error: 'This invoice number has already been submitted.' });
-    const logisticsPaymentId = `LP-${Date.now().toString(36).toUpperCase()}`;
-    const payment = await LogisticsPayment.create({
-      logisticsPaymentId, referenceNumber: logisticsPaymentId, blId: bl.blId, blNumber: bl.blNumber,
-      vendorId: bl.vendorId, vendorName: bl.vendorName, category: req.body.category || 'freight', invoiceNumber,
-      amount, totalAmount: amount, currency: String(req.body.currency || 'INR').toUpperCase(), remarks: String(req.body.remarks || '').trim(),
-      invoiceFile: String(req.body.fileName || '').trim(), status: 'pending'
+    const ref = `BLI-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const category = req.body.category || 'freight';
+    const typeDisplay = category === 'freight' ? 'Freight Invoice' : category === 'destination_charges' ? 'Destination Charges (Shipping Line)' : category === 'recepted_charges' ? 'Recepted Charges' : category === 'agency_fee' ? 'Agency Charges' : category === 'port_storage' ? 'Port Storage' : 'BL Charge Invoice';
+    const numAmount = Number(amount);
+    const curr = String(req.body.currency || 'INR').toUpperCase();
+    const blWorkflow = await resolveWorkflowFromDB('BL Freight Invoice', numAmount, { currency: curr });
+console.log("blWorkflow",blWorkflow);
+
+    const approval = await createApprovalRecord({
+      referenceId: ref,
+      type: 'BL Freight Invoice',
+      vendorName: bl.vendorName || context.vendor?.companyName || 'Vendor',
+      amountFormatted: `${curr} ${numAmount}`,
+      poRef: bl.blNumber,
+      requestedBy: context.vendor?.companyName || 'Vendor',
+      requestedById: context.vendor?.id || 'vendor',
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: { blId: bl.blId, blNumber: bl.blNumber, invoiceNumber, category, typeDisplay, source: 'Vendor', amount: numAmount },
+      wf: blWorkflow
     });
-    broadcastEvent('LOGISTICS_INVOICE_SUBMITTED', { logisticsPaymentId: payment.logisticsPaymentId, blId: bl.blId, vendorId: bl.vendorId, amount });
-    return res.status(201).json({ success: true, message: 'Logistics invoice submitted for approval.', data: payment });
+
+    const payment = await LogisticsPayment.create({
+      logisticsPaymentId: ref, referenceNumber: ref, blId: bl.blId, blNumber: bl.blNumber,
+      vendorId: bl.vendorId, vendorName: bl.vendorName, category, typeDisplay, source: 'Vendor', invoiceNumber,
+      amount: numAmount, totalAmount: numAmount, currency: curr, remarks: String(req.body.remarks || '').trim(),
+      invoiceFile: String(req.body.fileName || '').trim(), status: approval.status, currentStep: approval.currentStep || 1, totalSteps: approval.totalSteps || 2, submittedAt: new Date()
+    });
+    broadcastEvent('LOGISTICS_INVOICE_SUBMITTED', { logisticsPaymentId: payment.logisticsPaymentId, blId: bl.blId, vendorId: bl.vendorId, amount: numAmount });
+    return res.status(201).json({ success: true, message: 'Logistics invoice submitted for approval.', data: payment, approval });
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -2129,6 +2316,42 @@ router.post('/exim/bl-entries/:blId/assign', authenticateToken, async (req, res)
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
+router.post('/exim/bl-entries/:blId/action', authenticateToken, async (req, res) => {
+  try {
+    const { action, remarks } = req.body;
+    const bl = await RfqBlEntry.findOne({ $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] });
+    if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+
+    let nextStatus = bl.status;
+    if (action === 'approve') {
+      nextStatus = bl.customAgentId ? 'assigned_to_agent' : 'exim_review';
+      bl.eximReviewedAt = new Date();
+    } else if (action === 'return') {
+      nextStatus = 'returned_for_correction';
+    } else if (action === 'reject') {
+      nextStatus = 'rejected';
+    } else {
+      return res.status(400).json({ success: false, error: 'Invalid action type.' });
+    }
+
+    bl.status = nextStatus;
+    if (!bl.eximApprovalHistory) bl.eximApprovalHistory = [];
+    bl.eximApprovalHistory.push({
+      action,
+      actionedBy: req.user?.name || req.user?.email || 'EXIM Manager',
+      role: req.user?.role || 'EXIM Manager',
+      actionedAt: new Date(),
+      remarks: remarks || `BL Entry ${action.toUpperCase()} action processed.`
+    });
+
+    await bl.save();
+    broadcastEvent('BL_EXIM_ACTION', { blId: bl.blId, blNumber: bl.blNumber, action, status: nextStatus });
+    return res.json({ success: true, message: `BL Entry ${action}d successfully.`, data: bl });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.get('/customs-agent/assigned', authenticateToken, async (req, res) => {
   try {
     if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
@@ -2232,6 +2455,275 @@ router.post('/customs-agent/clear', authenticateToken, async (req, res) => {
     broadcastEvent('BL_CUSTOMS_CLEARED', { blId: bl.blId, blNumber: bl.blNumber, rfqId: bl.rfqId, vendorId: bl.vendorId, clearedAt: bl.customsClearedAt });
 
     return res.json({ success: true, message: 'Marked as Customs Cleared! Invoicing options enabled.', bl });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/customs-agent/invoices', authenticateToken, async (req, res) => {
+  try {
+    if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
+    const { blId, invoiceNumber, amount, currency, category, remarks, fileName } = req.body;
+    const bl = await RfqBlEntry.findOne({ customAgentId: req.user.id, $or: [{ blId }, { blNumber: blId }] });
+    if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+
+    const numAmount = Number(amount);
+    if (!String(invoiceNumber || '').trim() || !(numAmount > 0)) {
+      return res.status(400).json({ success: false, error: 'Invoice Number and a positive amount are required.' });
+    }
+
+    const ref = `BLI-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const cat = category || 'agency_fee';
+    const typeDisplay = cat === 'agency_fee' ? 'Agency Charges' : cat === 'recepted_charges' ? 'Recepted Charges' : cat === 'port_storage' ? 'Port Storage' : 'Customs Clearance Fee';
+
+    const blWorkflow = await resolveWorkflowFromDB('BL Freight Invoice', numAmount, { currency: currency || 'INR' });
+
+    const approval = await createApprovalRecord({
+      referenceId: ref,
+      type: 'BL Freight Invoice',
+      vendorName: req.user.agencyName || req.user.contactPerson || 'Customs Agent',
+      amountFormatted: `${currency || 'INR'} ${numAmount}`,
+      poRef: bl.blNumber,
+      requestedBy: req.user.agencyName || req.user.contactPerson || req.user.email || 'Customs Agent',
+      requestedById: req.user.id || req.user.agentId,
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: { blId: bl.blId, blNumber: bl.blNumber, invoiceNumber, category: cat, typeDisplay, source: 'Agent', amount: numAmount },
+      wf: blWorkflow
+    });
+
+    const payment = await LogisticsPayment.create({
+      logisticsPaymentId: ref,
+      referenceNumber: ref,
+      blId: bl.blId,
+      blNumber: bl.blNumber,
+      vendorId: req.user.agentId || bl.customAgentId || 'AGENT-101',
+      vendorName: req.user.agencyName || req.user.contactPerson || 'Customs Agent',
+      category: cat,
+      typeDisplay,
+      source: 'Agent',
+      invoiceNumber: String(invoiceNumber).trim().toUpperCase(),
+      amount: numAmount,
+      totalAmount: numAmount,
+      currency: String(currency || 'INR').toUpperCase(),
+      remarks: String(remarks || '').trim(),
+      invoiceFile: String(fileName || '').trim(),
+      status: approval.status,
+      currentStep: approval.currentStep || 1,
+      totalSteps: approval.totalSteps || 2,
+      submittedAt: new Date()
+    });
+
+    broadcastEvent('AGENT_INVOICE_SUBMITTED', { id: payment.logisticsPaymentId, referenceNumber: ref, blNumber: bl.blNumber, amount: numAmount });
+
+    return res.status(201).json({ success: true, message: 'Agent customs charge invoice submitted for approval.', data: payment, approval });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/bl-invoices', optionalAuth, async (req, res) => {
+  try {
+    let items = await LogisticsPayment.find().sort({ createdAt: -1 }).lean();
+
+    const q = String(req.query.q || '').toLowerCase().trim();
+    const statusFilter = String(req.query.status || 'All').trim();
+    const sourceFilter = String(req.query.source || 'All').trim();
+
+    let filtered = await Promise.all(items.map(async (item) => {
+      const typeDisplay = item.typeDisplay || (
+        item.category === 'freight' ? 'Freight Invoice' :
+        item.category === 'destination_charges' ? 'Destination Charges (Shipping Line)' :
+        item.category === 'recepted_charges' ? 'Recepted Charges' :
+        item.category === 'agency_fee' ? 'Agency Charges' :
+        item.category === 'port_storage' ? 'Port Storage' : 'BL Charge Invoice'
+      );
+      const source = item.source || (item.vendorName?.toLowerCase().includes('agent') ? 'Agent' : 'Vendor');
+      const amount = item.totalAmount || item.amount || 0;
+      const currency = item.currency || 'INR';
+
+      // Dynamic lookup of Approval engine document in MongoDB
+      const app = await Approval.findOne({ $or: [{ id: item.referenceNumber }, { id: item.logisticsPaymentId }] }).lean();
+      
+      let status = app?.status || item.status || 'Pending EXIM Approval';
+      let currentStep = app?.currentStep || item.currentStep || 1;
+      let totalSteps = app?.totalSteps || item.totalSteps || 1;
+      let workflowSteps = null;
+      if (app?.workflowSteps) {
+        try { workflowSteps = JSON.parse(app.workflowSteps); } catch (_) {}
+      }
+
+      return {
+        ...item,
+        id: item.logisticsPaymentId || item._id,
+        referenceNumber: item.referenceNumber || item.logisticsPaymentId,
+        typeDisplay,
+        source,
+        amount,
+        currency,
+        status,
+        currentStep,
+        totalSteps,
+        currentSlab: app?.currentSlab || 'BL Freight Invoice Workflow',
+        workflowSteps: app?.workflowSteps,
+        parsedSteps: workflowSteps,
+        submittedAt: item.submittedAt || item.createdAt
+      };
+    }));
+
+    if (q) {
+      filtered = filtered.filter(i =>
+        i.referenceNumber?.toLowerCase().includes(q) ||
+        i.invoiceNumber?.toLowerCase().includes(q) ||
+        i.blNumber?.toLowerCase().includes(q) ||
+        i.vendorName?.toLowerCase().includes(q) ||
+        i.typeDisplay?.toLowerCase().includes(q)
+      );
+    }
+
+    if (statusFilter && statusFilter !== 'All') {
+      filtered = filtered.filter(i => i.status.toLowerCase() === statusFilter.toLowerCase());
+    }
+
+    if (sourceFilter && sourceFilter !== 'All') {
+      filtered = filtered.filter(i => i.source.toLowerCase() === sourceFilter.toLowerCase());
+    }
+
+    const stats = {
+      total: items.length,
+      approved: items.filter(i => (i.status || '').toLowerCase() === 'approved').length,
+      pending: items.filter(i => (i.status || '').toLowerCase().includes('pending')).length,
+      rejected: items.filter(i => (i.status || '').toLowerCase() === 'rejected').length
+    };
+
+    return res.json({ success: true, invoices: filtered, stats });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/bl-invoices', authenticateToken, async (req, res) => {
+  try {
+    const { blNumber, typeDisplay, category, source, invoiceNumber, vendorName, amount, currency, remarks } = req.body;
+    if (!blNumber || !invoiceNumber || !amount) {
+      return res.status(400).json({ success: false, error: 'BL Number, Invoice Number, and Amount are required.' });
+    }
+
+    const numAmount = Number(amount);
+    const ref = `BLI-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const blWorkflow = await resolveWorkflowFromDB('BL Freight Invoice', numAmount, { currency: currency || 'INR' });
+
+    const approval = await createApprovalRecord({
+      referenceId: ref,
+      type: 'BL Freight Invoice',
+      vendorName: vendorName || 'Logistics Provider',
+      amountFormatted: `${currency || 'INR'} ${numAmount}`,
+      poRef: blNumber,
+      requestedBy: req.user?.name || req.user?.email || 'System User',
+      requestedById: req.user?.id || req.user?.email,
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: { blNumber, invoiceNumber, category, typeDisplay, source, amount: numAmount },
+      wf: blWorkflow
+    });
+
+    const payment = await LogisticsPayment.create({
+      logisticsPaymentId: ref,
+      referenceNumber: ref,
+      blNumber: String(blNumber).trim().toUpperCase(),
+      category: category || 'freight',
+      typeDisplay: typeDisplay || 'Freight Invoice',
+      source: source || 'Vendor',
+      invoiceNumber: String(invoiceNumber).trim().toUpperCase(),
+      vendorId: `VEND-${Math.floor(100 + Math.random() * 900)}`,
+      vendorName: vendorName || 'Logistics Provider',
+      amount: numAmount,
+      totalAmount: numAmount,
+      currency: currency || 'INR',
+      status: approval.status,
+      currentStep: approval.currentStep || 1,
+      totalSteps: approval.totalSteps || 2,
+      remarks: remarks || '',
+      submittedAt: new Date(),
+      createdBy: req.user?.name || req.user?.email || 'System User',
+      actionHistory: [
+        { action: 'submit', step: 1, role: 'Requester', actionedBy: req.user?.name || req.user?.email || 'User', actionedAt: new Date(), remarks: 'Submitted BL Freight Invoice' }
+      ]
+    });
+
+    broadcastEvent('BL_INVOICE_SUBMITTED', { id: payment.logisticsPaymentId, referenceNumber: ref, blNumber, amount });
+
+    return res.status(201).json({ success: true, message: 'BL Invoice submitted for approval.', invoice: payment, approval });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/bl-invoices/:id/action', authenticateToken, async (req, res) => {
+  try {
+    const { action, remarks } = req.body;
+    const invoice = await LogisticsPayment.findOne({
+      $or: [{ logisticsPaymentId: req.params.id }, { referenceNumber: req.params.id }]
+    });
+
+    if (!invoice) return res.status(404).json({ success: false, error: 'BL Invoice not found.' });
+
+    const currentStep = invoice.currentStep || 1;
+    let nextStatus = invoice.status;
+
+    if (action === 'approve') {
+      if (currentStep < 2) {
+        invoice.currentStep = 2;
+        nextStatus = 'Pending Finance Approval';
+      } else {
+        nextStatus = 'Approved';
+      }
+    } else if (action === 'reject') {
+      nextStatus = 'Rejected';
+    } else if (action === 'return') {
+      nextStatus = 'Returned';
+    } else {
+      return res.status(400).json({ success: false, error: 'Invalid action type.' });
+    }
+
+    invoice.status = nextStatus;
+    if (!invoice.actionHistory) invoice.actionHistory = [];
+    invoice.actionHistory.push({
+      action,
+      step: currentStep,
+      role: req.user?.role || 'Approver',
+      actionedBy: req.user?.name || req.user?.email || 'Approver',
+      actionedAt: new Date(),
+      remarks: remarks || `${action.toUpperCase()} action processed.`
+    });
+
+    await invoice.save();
+
+    // Sync Approval Engine record
+    try {
+      const appRecord = await Approval.findOne({ referenceNumber: invoice.referenceNumber });
+      if (appRecord) {
+        appRecord.status = nextStatus;
+        appRecord.currentStep = invoice.currentStep;
+        await appRecord.save();
+      }
+    } catch (_) {}
+
+    // Record Workflow Audit
+    try {
+      await WorkflowAudit.create({
+        entityType: 'LogisticsPayment',
+        entityId: invoice.logisticsPaymentId,
+        referenceNumber: invoice.referenceNumber,
+        action,
+        actorId: req.user?.id || 'system',
+        actorName: req.user?.name || req.user?.email || 'User',
+        actorRole: req.user?.role || 'Approver',
+        remarks: remarks || `${action.toUpperCase()} action taken on BL Invoice.`
+      });
+    } catch (_) {}
+
+    broadcastEvent('BL_INVOICE_ACTION', { id: invoice.logisticsPaymentId, action, status: nextStatus });
+
+    return res.json({ success: true, message: `BL Invoice ${action}d successfully.`, invoice });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }

@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { NavLink, Link } from 'react-router-dom';
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
+import { fetchPendingApprovals } from '../../features/approvals/approvalsSlice';
 import {
   LayoutDashboard,
   FileText,
@@ -194,10 +195,18 @@ const UserProfile = React.memo(({ user, collapsed, onNavigate }) => {
 export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigate }) {
   const { user } = useSelector((state) => state.auth);
   const userRole = user?.role || 'admin';
-  const homePath = getFirstAllowedRoute(userRole);
+  const customPerms = user?.permissions || user?.customPermissions;
+  const homePath = getFirstAllowedRoute(userRole, customPerms);
+
+  const dispatch = useDispatch();
+  const pendingCount = useSelector((state) => state.approvals?.pendingCount || 0);
+
+  useEffect(() => {
+    dispatch(fetchPendingApprovals(userRole));
+  }, [dispatch, userRole]);
 
   const allowedSections = NAV_SECTIONS.map((section) => {
-    const allowedItems = section.items.filter((item) => userCanAccessRoute(userRole, item.path));
+    const allowedItems = section.items.filter((item) => userCanAccessRoute(userRole, item.path, customPerms));
     return { ...section, items: allowedItems };
   }).filter((section) => section.items.length > 0);
 
@@ -257,7 +266,7 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
                 item={item}
                 collapsed={collapsed}
                 onNavigate={onNavigate}
-                badgeValue={51}
+                badgeValue={pendingCount}
               />
             ))}
           </div>

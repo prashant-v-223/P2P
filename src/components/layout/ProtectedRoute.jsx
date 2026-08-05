@@ -13,10 +13,11 @@ export default function ProtectedRoute({ children }) {
 
   // Check role-based permission for current route
   const userRole = user?.role || 'admin';
-  const isAllowed = userCanAccessRoute(userRole, location.pathname);
+  const customPerms = user?.permissions || user?.customPermissions;
+  const isAllowed = userCanAccessRoute(userRole, location.pathname, customPerms);
 
   if (!isAllowed) {
-    const fallbackPath = getFirstAllowedRoute(userRole);
+    const fallbackPath = getFirstAllowedRoute(userRole, customPerms);
     return <Navigate to={fallbackPath} replace />;
   }
 

@@ -19,6 +19,8 @@ import {
   AlertCircle
 } from 'lucide-react';
 
+import { ServerPagination } from '../../components/ui/server-pagination';
+
 export default function RfqSourcingView() {
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -26,6 +28,8 @@ export default function RfqSourcingView() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
 
   const fetchRfqs = async () => {
     try {
@@ -255,6 +259,14 @@ export default function RfqSourcingView() {
                 })}
               </tbody>
             </table>
+            {/* <ServerPagination
+              page={currentPage}
+              totalPages={totalPages || 500}
+              total={rfqs.length}
+              pageSize={pageSize}
+              itemLabel="RFQs"
+              onPageChange={(p) => setCurrentPage(p)}
+            /> */}
           </div>
         )}
       </div>

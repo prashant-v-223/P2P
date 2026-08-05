@@ -194,22 +194,48 @@ export const ROUTE_PERMISSIONS = {
 export function userHasPermission(userRole, permissionKey, customPermissions) {
   if (!userRole) return false;
   const roleNorm = String(userRole).toLowerCase().trim();
-  if (roleNorm === 'admin' || roleNorm === 'system admin' || roleNorm === 'systemadmin') return true;
+  if (roleNorm === 'admin' || roleNorm === 'system admin' || roleNorm === 'systemadmin' || roleNorm === 'superadmin') return true;
   if (permissionKey === '*') return true;
 
   const [mod, act] = permissionKey.split('.');
 
-  // Check custom permissions object if passed from DB
-  if (customPermissions && typeof customPermissions === 'object') {
-    const modPerms = customPermissions[mod] || [];
-    if (modPerms.includes(act) || modPerms.includes('manage') || modPerms.includes('*')) return true;
+  // 1. Check array of permission strings e.g. ['dashboard.view', 'purchase-orders.view']
+  if (Array.isArray(customPermissions)) {
+    if (customPermissions.includes('*') || customPermissions.includes(permissionKey)) return true;
+    if (act && (customPermissions.includes(`${mod}.manage`) || customPermissions.includes(`${mod}.*`))) return true;
   }
 
-  // Fallback to static role permissions map
-  const rolePerms = ROLE_PERMISSIONS[userRole] || ROLE_PERMISSIONS[roleNorm] || [];
-  if (rolePerms.includes('*')) return true;
-  if (rolePerms.includes(permissionKey)) return true;
-  if (act && (rolePerms.includes(`${mod}.manage`) || rolePerms.includes(`${mod}.*`))) return true;
+  // 2. Check custom permissions object e.g. { dashboard: ['view'], 'purchase-orders': ['view'] }
+  if (customPermissions && typeof customPermissions === 'object' && !Array.isArray(customPermissions)) {
+    const modPerms = customPermissions[mod] || customPermissions[permissionKey] || [];
+    if (Array.isArray(modPerms) && (modPerms.includes(act) || modPerms.includes('manage') || modPerms.includes('view') || modPerms.includes('*'))) return true;
+  }
+
+  // 3. Check static role permissions map
+  const rolePerms = ROLE_PERMISSIONS[userRole] || ROLE_PERMISSIONS[roleNorm];
+  if (rolePerms) {
+    if (rolePerms.includes('*')) return true;
+    if (rolePerms.includes(permissionKey)) return true;
+    if (act && (rolePerms.includes(`${mod}.manage`) || rolePerms.includes(`${mod}.*`))) return true;
+  }
+
+  // 4. Fallback for custom roles missing explicit static entry: grant view permissions to standard modules
+  const defaultCustomRolePerms = [
+    'dashboard.view',
+    'purchase-orders.view',
+    'advance-payments.view',
+    'invoice-payments.view',
+    'logistics-payments.view',
+    'custom-duty.view',
+    'rfq.view',
+    'bl.view',
+    'exim.view',
+    'approvals.view',
+    'vendors.view',
+    'custom-agents.view',
+    'logistics-providers.view'
+  ];
+  if (defaultCustomRolePerms.includes(permissionKey)) return true;
 
   return false;
 }

@@ -58,12 +58,13 @@ export default function WorkflowSlabsView({ onNavigateToRates }) {
     }
   };
 
-  const categories = ['Advance Payment', 'Invoice Payment', 'Custom Duty', 'Logistics Payments', 'Purchase Orders'];
+  const categories = ['Advance Payment', 'Invoice Payment', 'BL Freight Invoice', 'Custom Duty', 'Logistics Payments', 'Purchase Orders'];
 
   const getCategoryIcon = (category) => {
     switch (category) {
       case 'Advance Payment': return <Receipt className="w-4 h-4 text-[#0d7676]" />;
       case 'Invoice Payment': return <FileCheck className="w-4 h-4 text-[#0d7676]" />;
+      case 'BL Freight Invoice': return <Truck className="w-4 h-4 text-[#0d7676]" />;
       case 'Custom Duty': return <ShieldCheck className="w-4 h-4 text-[#0d7676]" />;
       case 'Logistics Payments': return <Truck className="w-4 h-4 text-[#0d7676]" />;
       default: return <FileText className="w-4 h-4 text-[#0d7676]" />;

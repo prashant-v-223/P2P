@@ -79,5 +79,36 @@ export default notificationsSlice.reducer;
 export const { addNotification, markRead, markAllRead, clearAll } = notificationsSlice.actions;
 
 // ─── Selectors ─────────────────────────────────────────────────────────────
-export const selectNotifications = (state) => state.notifications.items;
-export const selectUnreadCount = (state) => state.notifications.items.filter(n => !n.read).length;
+export const selectNotifications = (state) => {
+  const items = state.notifications?.items || [];
+  const user = state.auth?.user;
+  if (!user) return [];
+
+  const userRole = (user.role || '').toLowerCase().trim();
+  const userId = String(user.id || user.userId || user.email || '').toLowerCase().trim();
+
+  const isSuperUser = userRole === 'admin' || userRole === 'system admin' || userRole === 'systemadmin' || userRole === 'superadmin';
+  if (isSuperUser) return items;
+
+  return items.filter(item => {
+    if (item.targetRoles && Array.isArray(item.targetRoles) && item.targetRoles.length > 0) {
+      const matchRole = item.targetRoles.some(r => {
+        const norm = String(r).toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+        return userRole.includes(norm) || norm.includes(userRole);
+      });
+      if (!matchRole) return false;
+    }
+
+    if (item.targetUsers && Array.isArray(item.targetUsers) && item.targetUsers.length > 0) {
+      const matchUser = item.targetUsers.some(u => String(u).toLowerCase().trim() === userId);
+      if (!matchUser) return false;
+    }
+
+    return true;
+  });
+};
+
+export const selectUnreadCount = (state) => {
+  const filtered = selectNotifications(state);
+  return filtered.filter(n => !n.read).length;
+};

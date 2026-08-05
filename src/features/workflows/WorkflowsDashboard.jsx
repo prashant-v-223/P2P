@@ -59,6 +59,7 @@ export default function WorkflowsDashboard() {
     'Invoice Payment',
     'RFQ Vendor Award',
     'Custom Duty',
+    'BL Freight Invoice',
     'Logistics Payments',
     'Purchase Orders'
   ];

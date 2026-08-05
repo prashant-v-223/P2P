@@ -25,6 +25,18 @@ import { ServerPagination } from '../ui/server-pagination';
 
 // Step display labels per payment type (must match backend WORKFLOW_STEPS status strings)
 const JOURNEY_LABELS = {
+  'BL Freight Invoice': [
+    { title: 'EXIM Manager Approval', role: 'EXIM Manager' },
+    { title: 'Finance Lead Approval', role: 'Finance Lead' }
+  ],
+  'Logistics Payments': [
+    { title: 'EXIM Manager Approval', role: 'EXIM Manager' },
+    { title: 'Finance Lead Approval', role: 'Finance Lead' }
+  ],
+  'Logistics Payment': [
+    { title: 'EXIM Manager Approval', role: 'EXIM Manager' },
+    { title: 'Finance Lead Approval', role: 'Finance Lead' }
+  ],
   'Advance Payment': [
     { title: 'Purchase HOD Approval', role: 'Procurement_head' },
     { title: 'Exim HOD Approval', role: 'Exim-Manager' },
@@ -42,10 +54,6 @@ const JOURNEY_LABELS = {
   'Custom Duty': [
     { title: 'Logistics Head Signoff', role: 'Logistics_Head' },
     { title: 'Finance Lead Treasury Release', role: 'Finance_Lead' }
-  ],
-  'Logistics Payments': [
-    { title: 'Logistics Lead Audit', role: 'Logistics_Lead' },
-    { title: 'Accounts Approval', role: 'Accounts_Lead' }
   ],
   'Purchase Orders': [
     { title: 'Technical Evaluation', role: 'Engineer' },
@@ -119,9 +127,6 @@ export default function PendingApprovalsView() {
       const params = new URLSearchParams(searchParams);
       // Always send logged-in user's role so backend filters correctly
       params.set('role', currentUserRole);
-      // Exclude the current user's own submitted requests
-      if (user?.name)  params.set('me', user.name);
-      if (user?.email) params.set('meEmail', user.email);
 
       const res = await apiFetch(`/api/approvals/pending?${params.toString()}`);
       const data = await res.json();
@@ -253,7 +258,7 @@ export default function PendingApprovalsView() {
           {visibleApprovals.map((approval, approvalIndex) => {
             const rawStepObjs = (approval.parsedSteps && approval.parsedSteps.length > 0)
               ? approval.parsedSteps
-              : (JOURNEY_LABELS[approval.type] || JOURNEY_LABELS['Advance Payment']);
+              : (JOURNEY_LABELS[approval.type] || JOURNEY_LABELS['BL Freight Invoice']);
 
             const steps = rawStepObjs.map(s => typeof s === 'string' ? s : s.title);
             const stepRoles = rawStepObjs.map(s => typeof s === 'string' ? '' : (s.role || s.roleName || ''));

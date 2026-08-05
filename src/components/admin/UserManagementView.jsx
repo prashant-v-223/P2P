@@ -431,7 +431,7 @@ export default function UserManagementView() {
     { label: 'Total Users', value: stats.totalUsers, color: 'text-teal-700', bg: 'bg-teal-50', border: 'border-teal-200' },
     { label: 'Active', value: stats.activeUsers, color: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-200' },
     { label: 'Inactive', value: stats.inactiveUsers, color: 'text-rose-600', bg: 'bg-rose-50', border: 'border-rose-200' },
-    { label: 'On Leave / Delegating', value: usersList.filter((u) => u.delegationActive).length, color: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-200' },
+    { label: 'Delegating', value: usersList.filter((u) => u.delegationActive).length, color: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-200' },
   ];
 
   return (

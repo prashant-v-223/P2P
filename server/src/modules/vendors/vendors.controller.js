@@ -26,104 +26,8 @@ function buildVendorFilter(id) {
   return filter;
 }
 
-export async function seedDefaultVendors() {
-  try {
-    const count = await Vendor.countDocuments();
-    if (count > 0) return;
-
-    // Import User model for password hashing
-    const { User } = await import('../../models/User.js');
-    const hashedPassword = await User.hashPassword('Rayzon@2026');
-
-    await Vendor.insertMany([
-      {
-        id: 'v-20000201',
-        supplierId: 'VEND-10029',
-        sapVendorCode: '20000201',
-        companyName: 'Jinko Solar (Vietnam) Industries Co., Ltd',
-        contactPerson: 'Kai Sun',
-        phone: '+86 13019807370',
-        email: 'kaiming.sun@jinkosolar.com',
-        vendorType: 'Domestic Vendor',
-        paymentTerms: '30 Days',
-        status: 'Active',
-        category: 'Manufacturing',
-        gstin: '24AAACJ1234F1Z5',
-        pan: 'AAACJ1234F',
-        bankName: 'JOINT STOCK COMMERCIAL BANK FOR FOREIGN TRADE OF VIETNAM',
-        branch: 'QUANG NINH BRANCH',
-        accountNumber: '**** 8888',
-        ifscCode: 'BFTVWW014',
-        portalAccessEnabled: true,
-        loginUrl: '/vendor/login',
-        passwordHash: hashedPassword,
-        purchaseOrdersCount: 4,
-        advancePaymentsCount: 1,
-        totalInvoicesCount: 2,
-        invoicesPaidCount: 1
-      },
-      {
-        id: 'v-10045',
-        supplierId: 'VEND-10045',
-        sapVendorCode: 'VEND-10045',
-        companyName: 'Trina Solar Co. Ltd',
-        contactPerson: 'Trina Manager',
-        phone: '+86 519 8548 2008',
-        email: 'info@trinasolar.com',
-        vendorType: 'Import Vendor',
-        paymentTerms: '45 Days',
-        status: 'Active',
-        category: 'Manufacturing',
-        gstin: '9919CHN29008OSG',
-        pan: 'AAACT9981K',
-        bankName: 'China Construction Bank',
-        branch: 'Jiangsu Branch',
-        accountNumber: '**** 9081',
-        ifscCode: 'CCBCHBJ',
-        portalAccessEnabled: true,
-        loginUrl: '/vendor/login',
-        passwordHash: hashedPassword,
-        purchaseOrdersCount: 2,
-        advancePaymentsCount: 0,
-        totalInvoicesCount: 1,
-        invoicesPaidCount: 0
-      },
-      {
-        id: 'v-10001',
-        supplierId: 'VEND-10001',
-        sapVendorCode: 'VEND-10001',
-        companyName: 'Acute Systems & Solutions',
-        contactPerson: 'Acute Admin',
-        phone: '+91 98250 12345',
-        email: 'support@acutesystems.in',
-        vendorType: 'Domestic Vendor',
-        paymentTerms: '30 Days',
-        status: 'Active',
-        category: 'Services',
-        gstin: '24AAACA9081F1Z2',
-        pan: 'AAACA9081F',
-        bankName: 'HDFC Bank',
-        branch: 'Surat Main Branch',
-        accountNumber: '**** 4110',
-        ifscCode: 'HDFC0000102',
-        portalAccessEnabled: true,
-        loginUrl: '/vendor/login',
-        passwordHash: hashedPassword,
-        purchaseOrdersCount: 3,
-        advancePaymentsCount: 1,
-        totalInvoicesCount: 2,
-        invoicesPaidCount: 2
-      }
-    ]);
-    console.log('[VENDOR SEED SUCCESS] Initialized default vendor accounts in MongoDB.');
-  } catch (err) {
-    console.warn('[VENDOR SEED WARN]', err.message);
-  }
-}
-
 export const getVendors = async (req, res) => {
   try {
-    await seedDefaultVendors();
     const vendors = await Vendor.find().sort({ createdAt: -1 }).lean().catch(() => []);
 
     const seenKeys = new Set();
@@ -193,7 +97,6 @@ export const vendorLogin = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Email/Vendor Code and password are required.' });
     }
 
-    await seedDefaultVendors();
 
     const rx = new RegExp(`^${escapeRegex(loginIdentifier)}$`, 'i');
     let vendor = await Vendor.findOne({
@@ -222,7 +125,7 @@ export const vendorLogin = async (req, res) => {
     // Verify password using scrypt hash
     const { User } = await import('../../models/User.js');
     const isPasswordValid = await User.prototype.verifyPassword.call({ passwordHash: vendor.passwordHash }, password);
-    
+
     if (!isPasswordValid) {
       return res.status(401).json({ success: false, error: 'Invalid password. Please try again.' });
     }
@@ -416,7 +319,7 @@ export const createVendor = async (req, res) => {
       recentPayments: []
     };
 
-    Vendor.collection.dropIndex('supplierId_1').catch(() => {});
+    Vendor.collection.dropIndex('supplierId_1').catch(() => { });
 
     let createdVendor = newVendorObj;
     try {
@@ -468,7 +371,7 @@ export const updateVendor = async (req, res) => {
     }
 
     const updatedVendor = await Vendor.findOneAndUpdate(filter, { $set: updates }, { new: true, runValidators: true });
-    
+
     return res.json({
       success: true,
       message: 'Vendor record updated',
@@ -499,11 +402,11 @@ export const generateVendorPassword = async (req, res) => {
     const { id } = req.params;
     const filter = buildVendorFilter(id);
     const tempPass = `RyznP2P@${Math.floor(1000 + Math.random() * 9000)}`;
-    
+
     // Hash the new temporary password
     const { User } = await import('../../models/User.js');
     const passwordHash = await User.hashPassword(tempPass);
-    
+
     const updated = await Vendor.findOneAndUpdate(
       filter,
       { $set: { passwordHash } },
@@ -522,7 +425,7 @@ export const generateVendorPassword = async (req, res) => {
     if (!passwordWasSaved) {
       return res.status(500).json({ success: false, error: 'Password could not be saved. Please try again.' });
     }
-    
+
     return res.json({
       success: true,
       message: `Temporary password generated for vendor ${id}`,
@@ -564,7 +467,7 @@ export const vendorChangePassword = async (req, res) => {
     // Verify current password
     const { User } = await import('../../models/User.js');
     const isPasswordValid = await User.prototype.verifyPassword.call({ passwordHash: vendor.passwordHash }, currentPassword);
-    
+
     if (!isPasswordValid) {
       return res.status(401).json({ success: false, error: 'Current password is incorrect.' });
     }
