@@ -1,11 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Truck, DollarSign, CheckCircle2, FileText, Building2, Search } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { useSelector } from 'react-redux';
+import { Truck, DollarSign, CheckCircle2, FileText, Building2, Search, Plus, Trash2 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import DocumentUploader from '../../components/shared/DocumentUploader';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { ServerPagination } from '../../components/ui/server-pagination';
+import { useToast } from '../../components/ui/toast';
 
 export default function LogisticsPaymentsView() {
+  const navigate = useNavigate();
+  const { showToast } = useToast();
+  const { user } = useSelector((state) => state.auth);
+
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedPaymentId, setSelectedPaymentId] = useState('');
@@ -14,14 +21,16 @@ export default function LogisticsPaymentsView() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
+  const canCreate = user?.role === 'admin' || user?.role === 'System Admin' || user?.role === 'finance' || user?.role === 'exim' || user?.role === 'logistics';
+
   useEffect(() => {
     async function fetchPayments() {
       try {
         setLoading(true);
-        const res = await apiFetch('/api/p2p/logistics-payments');
+        const res = await apiFetch('/api/p2p/bl-invoices');
         if (res.ok) {
           const data = await res.json();
-          setPayments(data.payments || []);
+          setPayments(data.invoices || data.payments || []);
         }
       } catch (e) {
         console.error('Error fetching logistics payments:', e);
@@ -35,10 +44,10 @@ export default function LogisticsPaymentsView() {
   const filtered = payments.filter(p => {
     const q = search.toLowerCase();
     const matchesSearch = !search ||
-      (p.logisticsPaymentId || '').toLowerCase().includes(q) ||
-      (p.providerName || '').toLowerCase().includes(q) ||
+      (p.referenceNumber || p.id || '').toLowerCase().includes(q) ||
+      (p.vendorName || p.providerName || '').toLowerCase().includes(q) ||
       (p.blNumber || '').toLowerCase().includes(q) ||
-      (p.category || '').toLowerCase().includes(q);
+      (p.category || p.typeDisplay || '').toLowerCase().includes(q);
 
     const matchesStatus = statusFilter === 'All' || (p.status || '').toLowerCase() === statusFilter.toLowerCase();
     return matchesSearch && matchesStatus;
@@ -47,11 +56,11 @@ export default function LogisticsPaymentsView() {
   const paginated = filtered.slice((page - 1) * pageSize, page * pageSize);
 
   return (
-    <div className="w-full space-y-4 font-sans">
+    <div className="w-full space-y-4 font-sans text-slate-800 antialiased pb-16">
       {/* Clean Toolbar Header */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between gap-3">
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-teal-50 text-[#0d7676] border border-teal-100 flex items-center justify-center font-bold">
+          <div className="w-10 h-10 rounded-xl bg-teal-50 text-[#0d7676] border border-teal-100 flex items-center justify-center font-bold">
             <Truck className="w-5 h-5" />
           </div>
           <div>
@@ -59,6 +68,16 @@ export default function LogisticsPaymentsView() {
             <p className="text-xs text-slate-500">Freight charges, ocean transport, destination handling, and port storage payouts to logistics providers</p>
           </div>
         </div>
+
+        {canCreate && (
+          <button
+            onClick={() => navigate('/p2p/logistics-payments/create')}
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>New Logistics Payment</span>
+          </button>
+        )}
       </div>
 
       {/* Filter Toolbar */}
@@ -115,36 +134,54 @@ export default function LogisticsPaymentsView() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-              {paginated.map((p) => (
-                <tr key={p.logisticsPaymentId} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="py-4 px-4 font-bold text-teal-700 font-mono">{p.logisticsPaymentId}</td>
-                  <td className="py-4 px-4 font-bold text-slate-900">{p.providerName}</td>
-                  <td className="py-4 px-4 font-semibold text-slate-800">{p.blNumber}</td>
-                  <td className="py-4 px-4 font-medium text-slate-600">{p.category}</td>
-                  <td className="py-4 px-4 text-right font-black text-slate-900 text-sm">₹{p.amount.toLocaleString('en-IN')}</td>
-                  <td className="py-4 px-4 text-center">
-                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase border ${
-                      p.status === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-blue-50 text-blue-700 border-blue-200'
-                    }`}>
-                      {p.status}
-                    </span>
-                  </td>
-                  <td className="py-4 px-4 text-right">
-                    {p.status === 'approved' ? (
-                      <button 
-                        onClick={() => setPayments(prev => prev.map(item => item.logisticsPaymentId === p.logisticsPaymentId ? { ...item, status: 'paid', utrNumber: 'UTRDHL908172' } : item))}
-                        className="px-3 py-1.5 rounded-lg bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-[11px]"
-                      >
-                        Record Treasury Payout
-                      </button>
-                    ) : (
-                      <span className="text-[11px] font-semibold text-emerald-600 flex items-center justify-end gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> UTR: {p.utrNumber}
+              {paginated.map((p, idx) => {
+                const refId = p.referenceNumber || p.logisticsPaymentId || p.id || `LOG-${idx}`;
+                const provider = p.vendorName || p.providerName || 'Logistics Vendor';
+                const bl = p.blNumber || 'N/A';
+                const cat = p.typeDisplay || p.category || 'Freight Invoice';
+                const amt = p.amount || p.totalAmount || 0;
+                const curr = p.currency || 'INR';
+                const status = p.status || 'Pending EXIM Approval';
+
+                return (
+                  <tr key={refId} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="py-4 px-4 font-bold text-[#0d7676] font-mono">{refId}</td>
+                    <td className="py-4 px-4 font-bold text-slate-900">{provider}</td>
+                    <td className="py-4 px-4 font-semibold text-slate-800">{bl}</td>
+                    <td className="py-4 px-4 font-medium text-slate-600">{cat}</td>
+                    <td className="py-4 px-4 text-right font-black text-slate-900 text-sm">
+                      {curr === 'USD' ? '$' : '₹'}{Number(amt).toLocaleString('en-IN')}
+                    </td>
+                    <td className="py-4 px-4 text-center">
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase border ${
+                        status.toLowerCase().includes('approved') ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                        status.toLowerCase().includes('paid') ? 'bg-purple-50 text-purple-700 border-purple-200' :
+                        status.toLowerCase().includes('reject') ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                        'bg-amber-50 text-amber-700 border-amber-200'
+                      }`}>
+                        {status}
                       </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="py-4 px-4 text-right">
+                      {status.toLowerCase().includes('approved') ? (
+                        <button 
+                          onClick={() => {
+                            setPayments(prev => prev.map(item => (item.referenceNumber === refId || item.id === refId) ? { ...item, status: 'Paid', utrNumber: 'UTR-LOG-8091' } : item));
+                            showToast({ title: 'Treasury Payout Recorded', description: `Recorded payment payout for ${refId}`, type: 'success' });
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-[11px] cursor-pointer shadow-2xs"
+                        >
+                          Record Payout
+                        </button>
+                      ) : (
+                        <span className="text-[11px] font-semibold text-slate-500">
+                          {p.utrNumber ? `UTR: ${p.utrNumber}` : `Step ${p.currentStep || 1}/${p.totalSteps || 1}`}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

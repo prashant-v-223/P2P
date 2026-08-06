@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
@@ -14,8 +14,179 @@ import {
   Layers,
   Building2,
   FileCheck,
-  FileText
+  FileText,
+  ChevronDown,
+  Plus
 } from 'lucide-react';
+
+
+function PoSelector({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [poList, setPoList] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [inputVal, setInputVal] = useState(value || '');
+  const ref = useRef(null);
+
+  useEffect(() => { setInputVal(value || ''); }, [value]);
+
+  useEffect(() => {
+    async function loadPos() {
+      try {
+        setLoading(true);
+        const res = await apiFetch('/api/p2p/purchase-orders?size=100');
+        const json = await res.json();
+        if (res.ok && json.data) {
+          setPoList(json.data);
+        }
+      } catch (e) {
+        console.error('Fetch PO error:', e);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadPos();
+  }, []);
+
+  useEffect(() => {
+    const clickHandler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', clickHandler);
+    return () => document.removeEventListener('mousedown', clickHandler);
+  }, []);
+
+  const filtered = poList.filter(po => {
+    const q = inputVal.toLowerCase().trim();
+    if (!q) return true;
+    const num = (po.poNumber || po.sapPoNumber || po.poId || '').toLowerCase();
+    const vendor = (po.supplierName || po.vendorName || '').toLowerCase();
+    const desc = (po.description || '').toLowerCase();
+    return num.includes(q) || vendor.includes(q) || desc.includes(q);
+  });
+
+  const handleCreatePo = async () => {
+    const numToCreate = inputVal.trim();
+    if (!numToCreate) return;
+    setCreating(true);
+    try {
+      const res = await apiFetch('/api/p2p/purchase-orders/create', {
+        method: 'POST',
+        body: JSON.stringify({ poNumber: numToCreate, totalAmount: 500000 })
+      });
+      const json = await res.json();
+      if (res.ok && json.data) {
+        const createdPo = json.data;
+        setPoList(prev => [createdPo, ...prev.filter(p => p.poNumber !== createdPo.poNumber)]);
+        const createdNum = createdPo.poNumber || createdPo.sapPoNumber || numToCreate;
+        onChange(createdNum);
+        setInputVal(createdNum);
+        setOpen(false);
+      }
+    } catch (e) {
+      console.error('Error creating PO:', e);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const selectedPoObj = poList.find(p => String(p.poNumber || p.sapPoNumber || p.poId) === String(value));
+
+  return (
+    <div className="space-y-1.5 relative" ref={ref}>
+      <label className="block text-xs font-bold text-slate-700 flex items-center justify-between">
+        <span>Linked SAP Purchase Order <span className="text-rose-500">*</span></span>
+        {selectedPoObj && (
+          <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+            ✓ Open (₹{Number(selectedPoObj.totalAmount || 0).toLocaleString('en-IN')})
+          </span>
+        )}
+      </label>
+
+      <div
+        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-900 focus-within:ring-2 focus-within:ring-[#0d7676] focus-within:bg-white transition flex items-center gap-2 cursor-pointer"
+        onClick={() => setOpen(true)}
+      >
+        <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+        <input
+          type="text"
+          value={inputVal}
+          onChange={(e) => {
+            setInputVal(e.target.value);
+            onChange(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          placeholder="Search or type PO number (e.g. 4100005638)"
+          className="flex-1 bg-transparent outline-none font-mono font-bold text-slate-900 placeholder:font-sans placeholder:font-normal placeholder:text-slate-400"
+        />
+        {loading ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400 shrink-0" />
+        ) : (
+          <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+        )}
+      </div>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden max-h-64 overflow-y-auto divide-y divide-slate-100">
+          {filtered.length > 0 ? (
+            filtered.map((po) => {
+              const num = po.poNumber || po.sapPoNumber || po.poId;
+              const isSelected = String(value) === String(num);
+              return (
+                <div
+                  key={po._id || num}
+                  onClick={() => {
+                    onChange(num);
+                    setInputVal(num);
+                    setOpen(false);
+                  }}
+                  className={`p-3 text-xs cursor-pointer hover:bg-teal-50 transition flex items-center justify-between ${isSelected ? 'bg-teal-50/80 border-l-4 border-l-[#0d7676]' : ''}`}
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-black text-slate-900">{num}</span>
+                      <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-emerald-100 text-emerald-800 uppercase">
+                        {po.status || 'open'}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 font-medium truncate mt-0.5">
+                      {po.supplierName || 'SAP Vendor'} {po.currency ? `· ${po.currency}` : ''}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <span className="font-mono font-bold text-slate-700 text-xs">
+                      ₹{Number(po.totalAmount || 0).toLocaleString('en-IN')}
+                    </span>
+                    {isSelected && <p className="text-[9px] text-[#0d7676] font-bold">Selected</p>}
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="p-4 text-center space-y-2">
+              <p className="text-xs text-slate-500 font-medium">No existing PO found matching "{inputVal}"</p>
+              {inputVal.trim() && (
+                <button
+                  type="button"
+                  onClick={handleCreatePo}
+                  disabled={creating}
+                  className="px-3 py-1.5 rounded-lg bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs shadow-2xs transition inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                  <span>{creating ? 'Adding to DB...' : `Add "${inputVal.trim()}" to DB & Link`}</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      <p className="text-[10px] text-slate-400 font-medium">
+        Search open SAP POs or enter a new PO number to add & link it automatically.
+      </p>
+    </div>
+  );
+}
 
 export default function RfqFormView() {
   const navigate = useNavigate();
@@ -308,22 +479,7 @@ export default function RfqFormView() {
               />
             </div>
 
-            <div className="space-y-1.5">
-              <label className="block text-xs font-bold text-slate-700">
-                Linked SAP Purchase Order <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                value={linkedPoId}
-                onChange={(e) => setLinkedPoId(e.target.value)}
-                placeholder="Enter PO Number (e.g. 4700000251)"
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-900 focus:ring-2 focus:ring-[#0d7676] focus:bg-white outline-none transition"
-              />
-              <p className="text-[10px] text-slate-400 font-medium">
-                Enter the SAP PO number to link with this RFQ.
-              </p>
-            </div>
+            <PoSelector value={linkedPoId} onChange={setLinkedPoId} />
 
             <div className="space-y-1.5">
               <label className="block text-xs font-bold text-slate-700">

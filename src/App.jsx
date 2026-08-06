@@ -33,7 +33,9 @@ const InvoicePaymentsView = lazy(() => import('./features/p2p/InvoicePaymentsVie
 const InvoicePaymentDetailView = lazy(() => import('./features/p2p/InvoicePaymentDetailView'));
 const InvoicePaymentFormView = lazy(() => import('./features/p2p/InvoicePaymentFormView'));
 const CustomDutyView = lazy(() => import('./features/p2p/CustomDutyView'));
+const CreateCustomDutyWizard = lazy(() => import('./features/p2p/CreateCustomDutyWizard'));
 const LogisticsPaymentsView = lazy(() => import('./features/p2p/LogisticsPaymentsView'));
+const CreateLogisticsPaymentWizard = lazy(() => import('./features/p2p/CreateLogisticsPaymentWizard'));
 
 const RfqSourcingView = lazy(() => import('./features/p2p/RfqSourcingView'));
 const RfqFormView = lazy(() => import('./features/p2p/RfqFormView'));
@@ -188,7 +190,12 @@ export default function App() {
             <Route path="p2p/invoice-payments/:id/edit" element={<InvoicePaymentFormView />} />
             <Route path="admin/invoice-payments/:id/edit" element={<InvoicePaymentFormView />} />
             <Route path="p2p/custom-duty" element={<CustomDutyView />} />
+            <Route path="p2p/custom-duty/create" element={<CreateCustomDutyWizard />} />
+            <Route path="admin/custom-duty/create" element={<CreateCustomDutyWizard />} />
+
             <Route path="p2p/logistics-payments" element={<LogisticsPaymentsView />} />
+            <Route path="p2p/logistics-payments/create" element={<CreateLogisticsPaymentWizard />} />
+            <Route path="admin/logistics-payments/create" element={<CreateLogisticsPaymentWizard />} />
 
             {/* LOGISTICS Group Routes */}
             <Route path="p2p/rfq" element={<RfqSourcingView />} />

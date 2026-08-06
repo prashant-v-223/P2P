@@ -156,17 +156,11 @@ export const refreshTokenController = async (req, res) => {
     if (!refreshToken) return res.status(401).json({ success: false, error: 'Refresh token required.' });
 
     const decoded = jwt.verify(refreshToken, config.jwtRefreshSecret);
-    const tokens = refreshTokensStore.get(decoded.id);
-    if (!tokens?.has(refreshToken)) {
-      return res.status(403).json({ success: false, error: 'Refresh token is invalid or revoked.' });
-    }
-
-    const user = await User.findOne({ id: decoded.id });
+    const user = await User.findOne({ $or: [{ id: decoded.id }, { _id: decoded.id }] });
     if (!user || user.status !== 'Active') {
-      return res.status(403).json({ success: false, error: 'User is unavailable.' });
+      return res.status(403).json({ success: false, error: 'User is unavailable or inactive.' });
     }
 
-    tokens.delete(refreshToken);
     const newTokens = generateTokens(user);
     return res.json({ success: true, ...newTokens, user: publicUser(user) });
   } catch {

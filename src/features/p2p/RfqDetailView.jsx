@@ -3,16 +3,18 @@ import { useNavigate, useParams, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import { SearchableSelect } from '../../components/ui/searchable-select';
+import CustomInput from '../../components/ui/custom-input';
 import DocumentUploader from '../../components/shared/DocumentUploader';
 import RecordDbInfoDrawer from '../../components/common/RecordDbInfoDrawer';
 import UniversalApprovalWorkflowCard from '../../components/common/UniversalApprovalWorkflowCard';
-import { 
-  ArrowLeft, 
-  Pencil, 
-  Copy, 
-  Trash2, 
-  Ship, 
-  Loader2, 
+import { getRfqAllocationSummary } from './rfqStatus';
+import {
+  ArrowLeft,
+  Pencil,
+  Copy,
+  Trash2,
+  Ship,
+  Loader2,
   Award,
   CheckCircle2,
   Calendar,
@@ -25,7 +27,10 @@ import {
   ChevronDown,
   ChevronRight,
   Users,
-  AlertCircle
+  AlertCircle,
+  Clock,
+  Box,
+  RefreshCw
 } from 'lucide-react';
 
 export default function RfqDetailView() {
@@ -36,6 +41,7 @@ export default function RfqDetailView() {
   const [rfq, setRfq] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('quotes');
+  const [documentCount, setDocumentCount] = useState(0);
   const [expandedQuotes, setExpandedQuotes] = useState({});
   const [showVendorManager, setShowVendorManager] = useState(false);
   const [logisticsVendors, setLogisticsVendors] = useState([]);
@@ -57,7 +63,36 @@ export default function RfqDetailView() {
   const [otherChargesInr, setOtherChargesInr] = useState('');
   const [transitDays, setTransitDays] = useState('');
   const [submittingQuote, setSubmittingQuote] = useState(false);
+  
+  // Reopen RFQ modal state
+  const [showReopenModal, setShowReopenModal] = useState(false);
+  const [reopenClosingDate, setReopenClosingDate] = useState('');
+  const [submittingReopen, setSubmittingReopen] = useState(false);
+
   const awardWorkflowInputKey = awardRows.map((row) => `${row.quoteId}:${row.containers}`).join('|');
+
+  const handleReopenRfq = async (e) => {
+    e.preventDefault();
+    if (!reopenClosingDate) {
+      return showToast({ title: 'Closing Date Required', description: 'Please select a new closing date to reopen this RFQ.', type: 'error' });
+    }
+    setSubmittingReopen(true);
+    try {
+      const res = await apiFetch(`/api/p2p/rfqs/${id}/reopen`, {
+        method: 'POST',
+        body: JSON.stringify({ closingDate: reopenClosingDate })
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || 'Failed to reopen RFQ.');
+      showToast({ title: 'RFQ Reopened', description: json.message, type: 'success' });
+      setShowReopenModal(false);
+      loadRfq();
+    } catch (err) {
+      showToast({ title: 'Reopen Failed', description: err.message, type: 'error' });
+    } finally {
+      setSubmittingReopen(false);
+    }
+  };
 
   const loadRfq = async () => {
     try {
@@ -77,7 +112,7 @@ export default function RfqDetailView() {
 
   useEffect(() => {
     loadRfq();
-    apiFetch('/api/p2p/rfqs/logistics-vendors').then((res) => res.json()).then((json) => setLogisticsVendors(json.data || [])).catch(() => {});
+    apiFetch('/api/p2p/rfqs/logistics-vendors').then((res) => res.json()).then((json) => setLogisticsVendors(json.data || [])).catch(() => { });
   }, [id]);
 
   useEffect(() => {
@@ -131,19 +166,28 @@ export default function RfqDetailView() {
   };
 
   const handleAwardQuote = async (quote) => {
-    const quantity = Number(rfq?.cargoDetails?.containerCount) || Number(rfq?.totalQuantity) || 1;
-    setAwardRows([{ quoteId: quote.quoteId, containers: quantity, remark: '' }]);
+    const summary = getRfqAllocationSummary(rfq);
+    const targetQty = summary.totalContainers || 1;
+    setAwardRows([{
+      quoteId: quote.quoteId,
+      containers: targetQty,
+      remark: summary.allocatedContainers > 0 ? `Vendor Award (${summary.totalContainers} containers)` : ''
+    }]);
     setShowAwardModal(true);
   };
 
   const handleReassignRfq = () => {
-    // Allow reassignment for awarded RFQs
-    const quantity = Number(rfq?.cargoDetails?.containerCount) || Number(rfq?.totalQuantity) || 1;
-    const existingQuote = (rfq.quotes || [])[0];
+    const summary = getRfqAllocationSummary(rfq);
+    const targetQty = summary.totalContainers || 1;
+    const existingQuote = (quotesList || [])[0];
     if (existingQuote) {
-      setAwardRows([{ quoteId: existingQuote.quoteId, containers: quantity, remark: 'Reassignment' }]);
+      setAwardRows([{
+        quoteId: existingQuote.quoteId,
+        containers: targetQty,
+        remark: summary.allocatedContainers > 0 ? `Vendor Award (${summary.totalContainers} containers)` : 'Vendor Allocation'
+      }]);
     } else {
-      setAwardRows([{ quoteId: '', containers: quantity, remark: 'Reassignment' }]);
+      setAwardRows([{ quoteId: '', containers: targetQty, remark: 'Vendor Allocation' }]);
     }
     setShowAwardModal(true);
   };
@@ -151,42 +195,46 @@ export default function RfqDetailView() {
   const submitAwardAllocations = async () => {
     const totalContainers = Number(rfq?.cargoDetails?.containerCount) || Number(rfq?.totalQuantity) || 0;
     const allocated = awardRows.reduce((sum, row) => sum + (Number(row.containers) || 0), 0);
-    
-    // Remove strict validation - allow any container count for reassignment
+    const currentSummary = getRfqAllocationSummary(rfq);
+
     if (!awardRows.length) {
       return showToast({ title: 'Invalid Allocation', description: 'Add at least one vendor allocation.', type: 'error' });
     }
-    
+
     if (!awardWorkflow?.steps?.length) return showToast({ title: 'Workflow Unavailable', description: awardWorkflowError || 'Configure an RFQ Vendor Award workflow before submitting.', type: 'error' });
     if (new Set(awardRows.map((row) => row.quoteId)).size !== awardRows.length) {
       return showToast({ title: 'Duplicate Vendor', description: 'Each vendor quote can only appear once.', type: 'error' });
     }
-    
+
     // Validate all rows have valid data
     if (!awardRows.every((row) => row.quoteId && Number.isInteger(Number(row.containers)) && Number(row.containers) > 0)) {
       return showToast({ title: 'Invalid Data', description: 'All allocations must have a valid vendor and positive container count.', type: 'error' });
     }
-    
+
+    if (allocated > totalContainers) {
+      return showToast({ title: 'Allocation Exceeded', description: `Total allocated quantity (${allocated}) cannot exceed total RFQ capacity (${totalContainers} containers).`, type: 'error' });
+    }
+
     setSubmittingAward(true);
-    const isReassignment = rfq.status === 'awarded';
-    
+    const isReassignment = rfq.status === 'awarded' && currentSummary.openContainers === 0;
+
     try {
       const res = await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}/award`, {
         method: 'POST',
-        body: JSON.stringify({ 
-          allocations: awardRows, 
+        body: JSON.stringify({
+          allocations: awardRows,
           submitForApproval: true,
-          isReassignment 
+          isReassignment
         })
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || 'Unable to submit vendor allocations.');
-      
+
       const action = isReassignment ? 'Reassignment' : 'Award';
-      showToast({ 
-        title: `${action} Submitted For Approval`, 
-        description: `${allocated} container(s) submitted to Procurement Head for ${isReassignment ? 'reassignment' : 'approval'}.`, 
-        type: 'success' 
+      showToast({
+        title: `${action} Submitted For Approval`,
+        description: `${allocated} container(s) submitted to Procurement Head for ${isReassignment ? 'reassignment' : 'approval'}.`,
+        type: 'success'
       });
       setShowAwardModal(false);
       await loadRfq();
@@ -304,23 +352,60 @@ export default function RfqDetailView() {
   const cargo = rfq.cargoDetails || {};
   const quotesList = rfq.quotes || [];
   const totalContainers = Number(cargo.containerCount) || Number(rfq.totalQuantity) || 0;
-  // Calculate allocated quantity dynamically based on rfq status and allocations
-  const isFullyAwarded = (rfq.status || '').toLowerCase() === 'awarded' || rfq.approvalProgress?.status === 'Approved & Dispatched';
-  const sumAllocations = (rfq.allocations || []).reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
-  const allocatedContainers = Number(rfq.allocatedQuantity) || (sumAllocations > 0 ? sumAllocations : (isFullyAwarded ? totalContainers : 0));
+
+  // Backward-compat: old data may not have approved flag
+  // If status is awarded/partially_awarded → treat unflagged allocations as approved
+  // If status is pending_approval → treat unflagged allocations as pending
+  const allAwardAllocations = rfq.awardAllocations || [];
+  const isPendingStatus = rfq.status === 'pending_approval';
+
+  const approvedAllocations = allAwardAllocations.filter(a =>
+    a.approved === true || (!isPendingStatus && a.approved !== false)
+  );
+  const pendingAllocations = isPendingStatus
+    ? allAwardAllocations.filter(a => a.approved === false || a.approved === undefined)
+    : [];
+
+  // Allocated = formally approved containers only
+  const allocatedContainers = Number(rfq.allocatedQuantity) || approvedAllocations.reduce((s, a) => s + (Number(a.containers) || 0), 0);
+  // Pending = containers currently in approval queue (not yet signed off)
+  const inApprovalContainers = isPendingStatus ? pendingAllocations.reduce((s, a) => s + (Number(a.containers) || 0), 0) : 0;
   const pendingContainers = Math.max(0, totalContainers - allocatedContainers);
+  const allocationSummary = getRfqAllocationSummary(rfq);
+  const normalizedAwardAllocations = allocationSummary.allAwardAllocations;
+  const normalizedApprovedAllocations = allocationSummary.approvedAllocations;
+  const normalizedPendingAllocations = allocationSummary.pendingAllocations;
+  const normalizedTotalContainers = allocationSummary.totalContainers;
+  const normalizedAllocatedContainers = allocationSummary.allocatedContainers;
+  const normalizedInApprovalContainers = allocationSummary.inApprovalContainers;
+  const normalizedOpenContainers = allocationSummary.openContainers;
+  const normalizedIsPendingApproval = allocationSummary.isPendingApproval;
+  const normalizedBadgeTone = allocationSummary.badgeTone;
+  const normalizedBadgeText = allocationSummary.badgeText;
+  const allocationContainersTotal = normalizedTotalContainers;
+
+  const cycleHistory = rfq.reassignmentHistory || [];
+  const currentCycleNumber = cycleHistory.length + 1;
+
+  // Workflow pipeline stages from rfq.workflow
+  const wf = rfq.workflow || {};
+  const approvalProgress = rfq.approvalProgress || {};
+
   const awardAllocated = awardRows.reduce((sum, row) => sum + (Number(row.containers) || 0), 0);
   const awardTotal = awardRows.reduce((sum, row) => {
     const quote = quotesList.find((item) => item.quoteId === row.quoteId);
     return sum + (Number(quote?.totalInr) || 0) * (Number(row.containers) || 0);
   }, 0);
-  const awardRemaining = totalContainers - awardAllocated;
+  const targetContainers = normalizedTotalContainers;
   const hasDuplicateAwardVendor = new Set(awardRows.map((row) => row.quoteId).filter(Boolean)).size !== awardRows.filter((row) => row.quoteId).length;
-  const awardReady = awardRows.length > 0 
-    && !hasDuplicateAwardVendor 
-    && awardRows.every((row) => row.quoteId && Number.isInteger(Number(row.containers)) && Number(row.containers) > 0) 
+  const exceedsTotalContainers = awardAllocated > normalizedTotalContainers;
+  const awardReady = awardRows.length > 0
+    && !hasDuplicateAwardVendor
+    && awardRows.every((row) => row.quoteId && Number.isInteger(Number(row.containers)) && Number(row.containers) > 0)
+    && !exceedsTotalContainers
     && Boolean(awardWorkflow?.steps?.length);
   const filteredManagerVendors = logisticsVendors.filter((vendor) => `${vendor.companyName || ''} ${vendor.sapVendorCode || ''}`.toLowerCase().includes(vendorSearch.toLowerCase()));
+
 
   return (
     <div className="w-full space-y-5 font-sans pb-16 antialiased text-left">
@@ -336,18 +421,17 @@ export default function RfqDetailView() {
           </button>
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-bold tracking-tight text-slate-900">{rfq.rfqNumber}</h1>
-            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${
-              (rfq.status || '').toLowerCase() === 'awarded' || (rfq.status || '').toLowerCase() === 'approved'
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                : (rfq.status || '').toLowerCase() === 'partially_awarded'
+            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${normalizedBadgeTone === 'amber'
                 ? 'bg-amber-50 text-amber-800 border-amber-300'
-                : (rfq.status || '').toLowerCase().includes('pending')
-                ? 'bg-amber-50 text-amber-700 border-amber-200'
-                : 'bg-teal-50 text-teal-700 border-teal-200'
-            }`}>
-              {rfq.status === 'partially_awarded' 
-                ? `Partially Awarded (${rfq.allocatedQuantity || 0}/${totalContainers})` 
-                : rfq.status === 'pending_approval' ? 'Pending Approval' : rfq.status || 'Published'}
+                : normalizedBadgeTone === 'emerald'
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                  : normalizedBadgeTone === 'rose'
+                    ? 'bg-rose-50 text-rose-700 border-rose-300'
+                    : normalizedBadgeTone === 'sky'
+                      ? 'bg-sky-50 text-sky-700 border-sky-200'
+                      : 'bg-slate-100 text-slate-600 border-slate-200'
+              }`}>
+              {normalizedBadgeText}
             </span>
           </div>
           <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mt-0.5">{rfq.title}</p>
@@ -355,6 +439,18 @@ export default function RfqDetailView() {
 
         <div className="flex items-center gap-2">
           <RecordDbInfoDrawer entityId={rfq.rfqId || id} entityType="RfqHeader" recordData={rfq} />
+          {(rfq.status === 'closed' || (rfq.closingDate && new Date(rfq.closingDate) < new Date())) && (
+            <button
+              onClick={() => {
+                setReopenClosingDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16));
+                setShowReopenModal(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-teal-300 bg-teal-50 hover:bg-teal-100 text-[#0d7676] text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Reopen RFQ</span>
+            </button>
+          )}
           <button
             onClick={() => navigate(`/admin/rfqs/${rfq.rfqId}/edit`)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer"
@@ -390,39 +486,47 @@ export default function RfqDetailView() {
         </div>
       </div>
 
-      {/* Universal Dynamic Approval Workflow Stepper Component */}
-      <UniversalApprovalWorkflowCard
-        referenceId={rfq.rfqId || rfq.rfqNumber || id}
-        recordType="Freight RFQ"
-        vendorName={rfq.title}
-        amountFormatted={`${totalContainers} Containers`}
-        poRef={rfq.linkedPoId}
-        onStatusChange={() => {
-          loadRfq();
-        }}
-      />
 
-      {/* Top 3 Summary Cards Matching Reference Site */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-1">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">TOTAL RFQ QUANTITY</span>
-          <p className="text-lg font-black text-slate-900">
-            {totalContainers} <span className="text-xs font-bold text-slate-500">Containers</span>
-          </p>
+      {/* RFQ Flow Pipeline — 6 metric cards + progress bar */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+        {/* Top row: 6 stat boxes */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-x divide-slate-100">
+          {[
+            { label: 'Total Containers', value: normalizedTotalContainers, sub: `${cargo.containerType || '40 HC'}`, color: 'text-slate-900', bg: 'bg-slate-50' },
+            { label: 'Approved & Awarded', value: normalizedAllocatedContainers, sub: `${normalizedTotalContainers > 0 ? Math.round((normalizedAllocatedContainers / normalizedTotalContainers) * 100) : 0}% of target`, color: 'text-emerald-700', bg: 'bg-emerald-50' },
+            { label: 'In Approval Queue', value: normalizedInApprovalContainers, sub: normalizedIsPendingApproval ? `Cycle #${currentCycleNumber}` : '—', color: 'text-amber-700', bg: 'bg-amber-50' },
+            { label: 'Vendors Invited', value: wf.invited || (rfq.invitedVendors || []).length, sub: 'freight forwarders', color: 'text-blue-700', bg: 'bg-blue-50' },
+            { label: 'Quotes Received', value: wf.quotes || quotesList.length, sub: `${(rfq.invitedVendors || []).length > 0 ? Math.round(((wf.quotes || quotesList.length) / (rfq.invitedVendors || []).length) * 100) : 0}% response rate`, color: 'text-violet-700', bg: 'bg-violet-50' },
+            { label: 'Approval Cycles', value: currentCycleNumber, sub: cycleHistory.length > 0 ? `${cycleHistory.length} prev. cycle(s)` : 'First cycle', color: 'text-[#0d7676]', bg: 'bg-teal-50' }
+          ].map(({ label, value, sub, color, bg }) => (
+            <div key={label} className={`${bg} px-4 py-3.5 text-center`}>
+              <p className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400 mb-1">{label}</p>
+              <p className={`text-2xl font-black ${color} tracking-tight`}>{value}</p>
+              <p className="text-[9px] font-semibold text-slate-400 mt-0.5 truncate">{sub}</p>
+            </div>
+          ))}
         </div>
 
-        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-1">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">ALLOCATED</span>
-          <p className="text-lg font-black text-emerald-600">
-            {allocatedContainers} <span className="text-xs font-bold text-slate-500">Containers</span>
-          </p>
-        </div>
-
-        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-1">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">PENDING ALLOCATION</span>
-          <p className="text-lg font-black text-amber-600">
-            {pendingContainers} <span className="text-xs font-bold text-slate-500">Containers</span>
-          </p>
+        {/* Progress Bar — Container allocation pipeline */}
+        <div className="px-5 py-3 border-t border-slate-100 bg-white">
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] font-extrabold uppercase text-slate-400 shrink-0 w-20">Allocation</span>
+            <div className="flex-1 flex h-2 rounded-full overflow-hidden bg-slate-100">
+              <div
+                className="bg-emerald-500 h-full transition-all duration-700"
+                style={{ width: `${normalizedTotalContainers > 0 ? (normalizedAllocatedContainers / normalizedTotalContainers) * 100 : 0}%` }}
+              />
+              <div
+                className="bg-amber-400 h-full transition-all duration-700"
+                style={{ width: `${normalizedTotalContainers > 0 ? (normalizedInApprovalContainers / normalizedTotalContainers) * 100 : 0}%` }}
+              />
+            </div>
+            <div className="flex items-center gap-3 text-[9px] font-bold shrink-0">
+              <span className="flex items-center gap-1 text-emerald-700"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />{normalizedAllocatedContainers} Awarded</span>
+              {normalizedInApprovalContainers > 0 && <span className="flex items-center gap-1 text-amber-700"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />{normalizedInApprovalContainers} Pending</span>}
+              <span className="flex items-center gap-1 text-slate-400"><span className="w-2 h-2 rounded-full bg-slate-200 inline-block" />{normalizedOpenContainers} Open</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -432,373 +536,889 @@ export default function RfqDetailView() {
         {/* Left Column: Sidebar Cards */}
         <div className="space-y-4 lg:col-span-1">
           {/* Card: RFQ Info */}
-          <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
-            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100 pb-2">
-              RFQ INFO
-            </h3>
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">RFQ Number</span>
-                <span className="font-mono font-bold text-slate-900">{rfq.rfqNumber}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">PO Number</span>
-                <span className="font-mono font-bold text-slate-900">{rfq.poId || '4700000251'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Created By</span>
-                <span className="font-bold text-slate-800">System Admin</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Closing</span>
-                <span className="font-bold text-slate-700">
-                  {rfq.closingDate ? new Date(rfq.closingDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Expired'}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Vendors</span>
-                <span className="font-bold text-[#0d7676]">{(rfq.invitedVendors || []).length || 1} invited</span>
-              </div>
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-100">
+              <h3 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">RFQ INFO</h3>
+            </div>
+            <div className="p-4 space-y-2.5 text-xs">
+              {[
+                ['RFQ Number', rfq.rfqNumber, 'font-mono font-black text-slate-900'],
+                ['SAP PO Number', rfq.sapPoNumber || rfq.poId, 'font-mono font-bold text-[#0d7676]'],
+                ['Title', rfq.title, 'font-semibold text-slate-800 text-right max-w-[60%] leading-4'],
+                ['Status', (rfq.status || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), 'font-bold text-slate-700'],
+                ['Created By', rfq.createdBy || 'System Admin', 'font-bold text-slate-700'],
+                ['Created At', rfq.createdAt ? new Date(rfq.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—', 'font-semibold text-slate-600'],
+                ['Closing Date', rfq.closingDate ? new Date(rfq.closingDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Expired', 'font-bold text-slate-700'],
+                ['Vendors Invited', `${(rfq.invitedVendors || []).length} vendors`, 'font-bold text-[#0d7676]'],
+                ['Quotes Received', `${quotesList.length} quote(s)`, 'font-bold text-violet-700'],
+              ].map(([label, value, cls]) => value ? (
+                <div key={label} className="flex items-start justify-between gap-2">
+                  <span className="text-slate-400 font-medium shrink-0">{label}</span>
+                  <span className={cls || 'font-semibold text-slate-800'}>{value}</span>
+                </div>
+              ) : null)}
+            </div>
+          </div>
+          {/* Universal Dynamic Approval Workflow Stepper Component */}
+          <UniversalApprovalWorkflowCard
+            referenceId={rfq.awardApprovalId || rfq.rfqId || rfq.rfqNumber || id}
+            recordType="Freight RFQ"
+            vendorName={rfq.title}
+            amountFormatted={`${normalizedTotalContainers} Containers`}
+            poRef={rfq.linkedPoId}
+            onStatusChange={() => {
+              loadRfq();
+            }}
+          />
+          {/* Card: Cargo & Shipment */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-100">
+              <h3 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">CARGO & SHIPMENT</h3>
+            </div>
+            <div className="p-4 space-y-2.5 text-xs">
+              {[
+                ['Cargo Type', cargo.cargoType],
+                ['Container Type', cargo.containerType],
+                ['Total Containers', `${normalizedTotalContainers} containers`],
+                ['Weight / Container', cargo.weightPerContainer ? `${cargo.weightPerContainer} MT` : null],
+                ['Shipping Terms', cargo.shippingTerms],
+                ['Port of Loading', cargo.portOfOrigin],
+                ['Port of Discharge', cargo.portOfDestination],
+                ['Readiness Date', cargo.estimatedReadinessDate ? new Date(cargo.estimatedReadinessDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : null],
+              ].map(([label, value]) => value ? (
+                <div key={label} className="flex items-center justify-between gap-2">
+                  <span className="text-slate-400 font-medium">{label}</span>
+                  <span className="font-bold text-slate-900 text-right">{value}</span>
+                </div>
+              ) : null)}
             </div>
           </div>
 
-      {/* APPROVAL FLOW Vertical Stepper Card Matching Reference Screenshot */}
-      {rfq.approvalProgress && (
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-2xs space-y-4 font-sans text-left">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-              APPROVAL FLOW
-            </h3>
-            <span className="px-2.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-extrabold capitalize">
-              {rfq.approvalProgress.status || 'Pending'}
+
+        </div>
+{/* Right Column: Quotes & Vendors Matrix Matching Screenshot 2 */}
+<div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden lg:col-span-2">
+  {/* Enhanced Tabs with better visual hierarchy */}
+  <div className="flex items-center justify-between border-b border-slate-200 px-6 pt-4 pb-0">
+    <div className="flex items-center gap-1 text-xs font-medium">
+      {[
+        { id: 'quotes', icon: FileText, label: 'Quotes', count: quotesList.length, color: 'amber' },
+        { id: 'vendors', icon: Users, label: 'Vendors', count: (rfq.invitedVendors || []).length, color: 'slate' },
+        { id: 'bl', icon: Ship, label: 'BL Entries', count: (rfq.blEntries || []).length, color: 'slate' },
+        { id: 'documents', icon: FileText, label: 'Documents',  color: 'slate' }
+      ].map((tab) => (
+        <button
+          key={tab.id}
+          onClick={() => setActiveTab(tab.id)}
+          className={`
+            flex items-center gap-2 px-4 pb-3.5 border-b-2 transition-all duration-200
+            ${activeTab === tab.id 
+              ? 'border-teal-600 text-teal-700' 
+              : 'border-transparent text-slate-400 hover:text-slate-600 hover:border-slate-300'
+            }
+          `}
+        >
+          <tab.icon className={`h-4 w-4 ${activeTab === tab.id ? 'text-teal-600' : ''}`} />
+          <span className="font-semibold">{tab.label}</span>
+          {tab.count !== undefined && (
+            <span className={`
+              px-2 py-0.5 rounded-full text-[10px] font-bold
+              ${activeTab === tab.id 
+                ? 'bg-teal-100 text-teal-700' 
+                : 'bg-slate-100 text-slate-500'
+              }
+            `}>
+              {tab.count}
             </span>
-          </div>
+          )}
+        </button>
+      ))}
+    </div>
 
-          <div className="space-y-4 relative">
-            {(rfq.approvalProgress.steps || [
-              { step: 1, title: 'Purchase HOD Approval', role: 'procurement_head', state: 'current', subtitle: '⏳ Awaiting approval' },
-              { step: 2, title: 'Exim HOD Approval', role: 'exim-manager', state: 'pending', subtitle: 'Not started' },
-              { step: 3, title: 'MD Approval', role: 'md', state: 'pending', subtitle: 'Not started' }
-            ]).map((stepItem, idx, array) => {
-              const isCompleted = stepItem.state === 'completed';
-              const isCurrent = stepItem.state === 'current' || stepItem.state === 'pending_approval';
-              const isLast = idx === array.length - 1;
+    {/* Action Buttons - Improved layout */}
+    <div className="flex items-center gap-2 pb-2">
+      {normalizedOpenContainers > 0 && !normalizedIsPendingApproval && quotesList.length > 0 && (
+        <button
+          onClick={() => handleAwardQuote(quotesList[0])}
+          className="px-4 py-2 bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 text-white text-xs font-bold rounded-xl transition-all duration-200 inline-flex items-center gap-2 shadow-sm hover:shadow-md active:scale-95"
+        >
+          <Award className="w-4 h-4" />
+          <span>
+            {normalizedAllocatedContainers > 0 
+              ? `Allocate Remaining ${normalizedOpenContainers} Container${normalizedOpenContainers > 1 ? 's' : ''}` 
+              : `Award Vendors (${normalizedTotalContainers} Containers)`
+            }
+          </span>
+        </button>
+      )}
 
-              return (
-                <div key={stepItem.step || idx} className="relative flex items-start gap-3">
-                  {/* Connecting Vertical Line */}
-                  {!isLast && (
-                    <div className="absolute left-4 top-8 bottom-[-16px] w-0.5 bg-slate-200 -z-0" />
+      {normalizedOpenContainers === 0 && (
+        <div className="flex items-center gap-2">
+          <span className="px-4 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs font-bold inline-flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            All {normalizedTotalContainers} Containers Awarded
+          </span>
+          {!normalizedIsPendingApproval && (
+            <button
+              onClick={handleReassignRfq}
+              className="px-4 py-2 border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs font-bold rounded-xl transition-all duration-200 inline-flex items-center gap-2 hover:shadow-sm"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Reassign</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      <button
+        onClick={() => { setActiveTab('vendors'); setShowVendorManager(true); }}
+        className="px-4 py-2 border border-teal-200 bg-teal-50 hover:bg-teal-100 text-teal-700 text-xs font-bold rounded-xl transition-all duration-200 inline-flex items-center gap-2 hover:shadow-sm"
+      >
+        <Users className="w-3.5 h-3.5" />
+        Manage Vendors
+      </button>
+    </div>
+  </div>
+
+  {/* Content Area with improved styling */}
+  {activeTab === 'quotes' && (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-xs border-collapse">
+        <thead className="border-b border-slate-200 bg-slate-50/90 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+          <tr>
+            <th className="px-4 py-3.5">Vendor</th>
+            <th className="px-4 py-3.5">Shipping Line</th>
+            <th className="px-4 py-3.5">Route</th>
+            <th className="px-4 py-3.5 text-right">Ocean Freight (USD)</th>
+            <th className="px-4 py-3.5 text-right">St. Charges (INR)</th>
+            <th className="px-4 py-3.5 text-right">Other (INR)</th>
+            <th className="px-4 py-3.5 text-right">Total (INR)</th>
+            <th className="px-4 py-3.5 text-center">Allocation Status</th>
+            <th className="px-4 py-3.5 text-center">Transit</th>
+            <th className="px-4 py-3.5 text-center">ETD</th>
+            <th className="px-4 py-3.5 text-center">ETA</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 bg-white">
+          {quotesList.map((q, idx) => {
+            const approvedAlloc = normalizedApprovedAllocations.find(
+              (a) => a.quoteId === q.quoteId || a.vendorId === q.vendorId || a.vendorName === q.vendorName
+            );
+            const pendingAlloc = normalizedPendingAllocations.find(
+              (a) => a.quoteId === q.quoteId || a.vendorId === q.vendorId || a.vendorName === q.vendorName
+            );
+
+            return (
+              <tr key={q.quoteId || idx} className="hover:bg-teal-50/20 transition-colors duration-150 group">
+                <td className="px-4 py-3.5">
+                  <div className="flex items-center gap-2.5">
+                    <div className={`
+                      w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-black shadow-2xs shrink-0
+                      ${q.rank === 'L1' || idx === 0 ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-slate-100 text-slate-600 border border-slate-200'}
+                    `}>
+                      {q.rank || `L${idx + 1}`}
+                    </div>
+                    <span className="font-extrabold text-slate-900">{q.vendorName}</span>
+                  </div>
+                </td>
+                <td className="px-4 py-3.5 font-bold text-slate-700">{q.shippingLine}</td>
+                <td className="px-4 py-3.5 text-slate-600 font-semibold">{q.vesselRoute || 'SHANGHAI → NHAVA SHEVA'}</td>
+                <td className="px-4 py-3.5 text-right font-mono font-bold text-slate-900">
+                  ${(Number(q.oceanFreightUsd) || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </td>
+                <td className="px-4 py-3.5 text-right font-mono font-bold text-slate-900">
+                  ₹{(Number(q.stChargesInr) || 0).toLocaleString('en-IN')}
+                </td>
+                <td className="px-4 py-3.5 text-right font-mono text-slate-600">
+                  {q.otherChargesInr ? `₹${Number(q.otherChargesInr).toLocaleString('en-IN')}` : '—'}
+                </td>
+                <td className="px-4 py-3.5 text-right">
+                  <div className="font-black text-[#0d7676] text-xs">
+                    ₹{(Number(q.totalInr) || 0).toLocaleString('en-IN')}
+                  </div>
+                  <div className="text-[9px] text-slate-400 font-mono">
+                    @ ₹{q.exchangeRate || 95.37}/USD
+                  </div>
+                </td>
+                <td className="px-4 py-3.5 text-center">
+                  {approvedAlloc?.containers > 0 ? (
+                    <div className="inline-flex flex-col items-center gap-0.5">
+                      <span className="px-3 py-1 rounded-xl text-[10px] font-black bg-emerald-50 text-emerald-800 border border-emerald-300 inline-flex items-center gap-1.5 shadow-2xs">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        {approvedAlloc.containers}/{normalizedTotalContainers} Containers
+                      </span>
+                      <span className="text-[9px] font-mono font-bold text-emerald-700">
+                        ₹{(approvedAlloc.allocationAmount || 0).toLocaleString('en-IN')}
+                      </span>
+                    </div>
+                  ) : pendingAlloc?.containers > 0 ? (
+                    <div className="inline-flex flex-col items-center gap-0.5">
+                      <span className="px-3 py-1 rounded-xl text-[10px] font-extrabold bg-amber-50 text-amber-800 border border-amber-300 inline-flex items-center gap-1.5 shadow-2xs">
+                        <Clock className="w-3 h-3 text-amber-600 animate-pulse" />
+                        Pending · {pendingAlloc.containers} Ctr
+                      </span>
+                      <span className="text-[9px] font-mono text-slate-500">
+                        ₹{(pendingAlloc.allocationAmount || 0).toLocaleString('en-IN')}
+                      </span>
+                    </div>
+                  ) : normalizedOpenContainers > 0 ? (
+                    <button
+                      onClick={() => handleAwardQuote(q)}
+                      className="px-3 py-1.5 bg-[#0d7676] hover:bg-[#096464] text-white text-[10px] font-bold rounded-xl shadow-xs transition-all duration-150 inline-flex items-center gap-1.5 hover:shadow-md active:scale-95"
+                    >
+                      <Award className="w-3 h-3" />
+                      Allocate {normalizedOpenContainers} Ctr
+                    </button>
+                  ) : (
+                    <span className="px-3 py-1 rounded-xl text-[10px] font-bold text-slate-400 bg-slate-100 border border-slate-200">
+                      Awarded
+                    </span>
                   )}
+                </td>
+                <td className="px-4 py-3.5 text-center font-bold text-slate-700">
+                  {q.transitDays ? `${q.transitDays}d` : '15d'}
+                </td>
+                <td className="px-4 py-3.5 text-center font-semibold text-slate-600">
+                  {q.vesselEtd ? new Date(q.vesselEtd).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '21 Aug'}
+                </td>
+                <td className="px-4 py-3.5 text-center font-semibold text-slate-600">
+                  {q.vesselEta ? new Date(q.vesselEta).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '30 Aug'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
 
-                  {/* Step Number / Circle Icon */}
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-black shrink-0 relative z-10 ${
-                    isCompleted
-                      ? 'bg-emerald-500 text-white shadow-xs'
-                      : isCurrent
-                      ? 'bg-[#0d7676] text-white ring-4 ring-teal-100 shadow-xs'
-                      : 'bg-white border-2 border-slate-200 text-slate-400'
-                  }`}>
-                    {isCompleted ? <CheckCircle2 className="w-4 h-4" /> : stepItem.step || idx + 1}
+      {/* Expandable Details Section - Improved */}
+      <div className="divide-y divide-slate-100 border-t border-slate-200">
+        {quotesList.map((quote, index) => {
+          const key = quote.quoteId || index;
+          const isExpanded = expandedQuotes[key];
+          return (
+            <div key={key} className="bg-slate-50/40">
+              <button
+                onClick={() => setExpandedQuotes((current) => ({ ...current, [key]: !current[key] }))}
+                className="flex w-full items-center justify-between px-6 py-3 text-xs font-bold text-slate-700 hover:bg-slate-100/80 transition-colors duration-150"
+              >
+                <div className="flex items-center gap-2">
+                  {isExpanded 
+                    ? <ChevronDown className="h-4 w-4 text-[#0d7676] transition-transform" />
+                    : <ChevronRight className="h-4 w-4 text-slate-400 transition-transform" />
+                  }
+                  <span className="font-extrabold text-slate-900">{quote.vendorName}</span>
+                  <span className="text-slate-400 font-normal">— Full Commercial Details</span>
+                </div>
+                <span className="text-[10px] font-bold text-[#0d7676] hover:underline">
+                  {isExpanded ? 'Hide Details' : 'View Breakup'}
+                </span>
+              </button>
+
+              {isExpanded && (
+                <div className="px-6 pb-4 pt-2 border-t border-slate-200/60 bg-white space-y-3">
+                  <div className="grid gap-3 sm:grid-cols-4 text-xs">
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                      <p className="text-[10px] font-extrabold text-slate-400 uppercase">Ocean Freight (USD)</p>
+                      <p className="mt-1 text-sm font-extrabold font-mono text-slate-900">${(Number(quote.oceanFreightUsd) || 0).toLocaleString('en-US')}</p>
+                      <p className="text-[10px] text-slate-500 font-mono mt-0.5">₹{((Number(quote.oceanFreightUsd) || 0) * (quote.exchangeRate || 95.37)).toLocaleString('en-IN')} INR</p>
+                    </div>
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                      <p className="text-[10px] font-extrabold text-slate-400 uppercase">Terminal / ST Charges</p>
+                      <p className="mt-1 text-sm font-extrabold font-mono text-slate-900">₹{(Number(quote.stChargesInr) || 0).toLocaleString('en-IN')}</p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Local Port Handling</p>
+                    </div>
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                      <p className="text-[10px] font-extrabold text-slate-400 uppercase">Other Port Fees</p>
+                      <p className="mt-1 text-sm font-extrabold font-mono text-slate-900">₹{(Number(quote.otherChargesInr) || 0).toLocaleString('en-IN')}</p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Documentation & Misc</p>
+                    </div>
+                    <div className="bg-teal-50 p-3 rounded-xl border border-teal-200">
+                      <p className="text-[10px] font-extrabold text-teal-700 uppercase">Total Rate / Container</p>
+                      <p className="mt-1 text-sm font-extrabold font-mono text-[#0d7676]">₹{(Number(quote.totalInr) || 0).toLocaleString('en-IN')}</p>
+                      <p className="text-[10px] text-teal-600 font-bold mt-0.5">All-Inclusive Rate</p>
+                    </div>
                   </div>
 
-                  {/* Step Title & Metadata */}
-                  <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
-                    <div>
-                      <h4 className={`text-xs font-bold tracking-tight ${isCurrent ? 'text-slate-900 font-extrabold' : isCompleted ? 'text-emerald-800 font-bold' : 'text-slate-400 font-semibold'}`}>
-                        {stepItem.title}
-                      </h4>
-                      <p className={`text-[11px] font-semibold mt-0.5 ${isCurrent ? 'text-[#0d7676]' : isCompleted ? 'text-emerald-600' : 'text-slate-400'}`}>
-                        {isCurrent ? '⏳ Awaiting approval' : isCompleted ? 'Approved' : 'Not started'}
-                      </p>
-                    </div>
-
-                    {stepItem.role && (
-                      <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 text-[10px] font-mono font-semibold shrink-0">
-                        {stepItem.role}
-                      </span>
-                    )}
+                  <div className="grid gap-3 sm:grid-cols-4 text-xs pt-1">
+                    <div><p className="text-[10px] font-bold text-slate-400 uppercase">Free Days</p><p className="font-bold text-slate-700">{quote.freeDays || '14 Days'}</p></div>
+                    <div><p className="text-[10px] font-bold text-slate-400 uppercase">Rate Validity</p><p className="font-bold text-slate-700">{quote.rateValidity || '30 Days'}</p></div>
+                    <div><p className="text-[10px] font-bold text-slate-400 uppercase">Vessel Route</p><p className="font-bold text-slate-700">{quote.vesselRoute || 'SHANGHAI → NHAVA SHEVA'}</p></div>
+                    <div><p className="text-[10px] font-bold text-slate-400 uppercase">Remarks / Note</p><p className="font-bold text-slate-700">{quote.remarks || 'No special conditions.'}</p></div>
                   </div>
                 </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  )}
+
+  {/* Vendors Tab - Improved */}
+  {activeTab === 'vendors' && (
+    <div className="p-6 space-y-4">
+      {showVendorManager && (
+        <div className="mb-4 p-5 rounded-xl border border-teal-200 bg-gradient-to-br from-teal-50/60 to-emerald-50/40">
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Users className="w-4 h-4 text-teal-600" />
+                Manage Invited Vendors
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">Vendors with submitted quotes cannot be removed</p>
+            </div>
+            <button onClick={() => setShowVendorManager(false)} className="p-1 hover:bg-slate-100 rounded-lg transition-colors">
+              <X className="h-4 w-4 text-slate-400" />
+            </button>
+          </div>
+
+          <CustomInput 
+            value={vendorSearch} 
+            onChange={(e) => setVendorSearch(e.target.value)} 
+            placeholder="Search vendors by name or code..." 
+            size="sm" 
+            clearable 
+            className="mb-4"
+          />
+
+          <div className="max-h-72 divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            {filteredManagerVendors.map((vendor) => {
+              const selected = managedVendorIds.includes(vendor.id) || managedVendorIds.includes(vendor.sapVendorCode);
+              const locked = quoteMatchesVendor(vendor);
+              return (
+                <label key={vendor.id} className={`
+                  flex items-center justify-between gap-4 p-3.5 transition-colors duration-150
+                  ${locked ? 'bg-slate-50/50 cursor-not-allowed' : 'hover:bg-teal-50/40 cursor-pointer'}
+                `}>
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <input 
+                      type="checkbox" 
+                      checked={selected || locked} 
+                      disabled={locked} 
+                      onChange={() => toggleManagedVendor(vendor)}
+                      className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500 disabled:opacity-50"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-900 truncate">{vendor.companyName}</p>
+                      <p className="font-mono text-[10px] text-slate-400">{vendor.sapVendorCode}</p>
+                    </div>
+                  </div>
+                  {locked && (
+                    <span className="flex-shrink-0 px-2.5 py-1 rounded-full bg-blue-50 text-blue-600 text-[9px] font-bold border border-blue-200">
+                      Quote Submitted
+                    </span>
+                  )}
+                </label>
               );
             })}
+          </div>
+
+          <div className="flex items-center justify-between mt-4 pt-3 border-t border-teal-200/50">
+            <p className="text-xs font-medium text-slate-500">
+              {managedVendorIds.length} vendor{managedVendorIds.length !== 1 ? 's' : ''} selected
+            </p>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => setShowVendorManager(false)} 
+                className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors duration-200"
+              >
+                Cancel
+              </button>
+              <button 
+                disabled={savingVendors} 
+                onClick={saveManagedVendors}
+                className="px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-xs font-bold text-white disabled:opacity-50 transition-colors duration-200 inline-flex items-center gap-2"
+              >
+                {savingVendors ? (
+                  <>
+                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  'Save Vendor List'
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Your Action Required Box Matching Reference Screenshot */}
-      {(rfq.status === 'pending_approval' || rfq.approvalProgress?.status?.toLowerCase().includes('pending')) && (
-        <div className="rounded-2xl border border-amber-200/80 bg-amber-50/60 p-5 space-y-3 font-sans text-left">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-amber-900 font-bold text-xs">
-              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-              <span className="text-sm font-extrabold text-amber-950">Your Action Required</span>
+      {/* Vendor List */}
+      <div className="space-y-2">
+        {(rfq.invitedVendors || []).map((v, idx) => {
+          const hasQuote = quotesList.some(
+            (quote) => quote.vendorId === v.vendorId || quote.vendorId === v.sapVendorCode || quote.vendorName === v.companyName
+          );
+          return (
+            <div key={idx} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 flex items-center justify-between hover:bg-slate-50 transition-colors duration-150">
+              <div>
+                <p className="text-xs font-semibold text-slate-900">{v.companyName || (typeof v === 'string' ? v : '')}</p>
+                <p className="text-[10px] font-mono text-slate-400">{v.sapVendorCode || ''}</p>
+              </div>
+              <span className={`
+                px-3 py-1 rounded-full text-[10px] font-bold
+                ${hasQuote ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}
+              `}>
+                {hasQuote ? '✓ Quote Submitted' : 'Invited'}
+              </span>
             </div>
-            <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md">
-              {rfq.approvalProgress?.requiredRole || 'procurement_head'}
-            </span>
-          </div>
+          );
+        })}
+      </div>
+    </div>
+  )}
 
-          <textarea
-            rows={3}
-            value={actionComments}
-            onChange={(e) => setActionComments(e.target.value)}
-            placeholder="Comments (required for return or reject)..."
-            className="w-full rounded-xl border border-amber-200 bg-white p-3 text-xs font-medium text-slate-900 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 transition resize-none"
-          />
-
-          <div className="grid grid-cols-3 gap-2 pt-1">
-            <button
-              type="button"
-              disabled={submittingAction}
-              onClick={() => handleApprovalAction('approve')}
-              className="px-3 py-2 rounded-xl border border-emerald-300 bg-white hover:bg-emerald-50 text-emerald-700 text-xs font-extrabold transition shadow-2xs inline-flex items-center justify-center gap-1 active:scale-95 disabled:opacity-50"
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" /> Approve
-            </button>
-
-            <button
-              type="button"
-              disabled={submittingAction}
-              onClick={() => handleApprovalAction('return')}
-              className="px-3 py-2 rounded-xl border border-amber-300 bg-white hover:bg-amber-50 text-amber-700 text-xs font-extrabold transition shadow-2xs inline-flex items-center justify-center gap-1 active:scale-95 disabled:opacity-50"
-            >
-              <span className="text-sm leading-none">↺</span> Return
-            </button>
-
-            <button
-              type="button"
-              disabled={submittingAction}
-              onClick={() => handleApprovalAction('reject')}
-              className="px-3 py-2 rounded-xl border border-rose-300 bg-white hover:bg-rose-50 text-rose-700 text-xs font-extrabold transition shadow-2xs inline-flex items-center justify-center gap-1 active:scale-95 disabled:opacity-50"
-            >
-              Reject
-            </button>
-          </div>
+  {/* BL Entries Tab - Improved */}
+  {activeTab === 'bl' && (
+    <div className="p-6">
+      {(rfq.blEntries || []).length ? (
+        <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden">
+          {rfq.blEntries.map((entry) => (
+            <div key={entry.blId || entry._id} className="grid gap-4 p-4 text-xs hover:bg-slate-50/50 transition-colors duration-150 sm:grid-cols-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">BL Number</p>
+                <p className="font-mono font-semibold text-slate-800">{entry.blNumber}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Shipping Line</p>
+                <p className="font-medium text-slate-700">{entry.shippingLine || '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">ETA</p>
+                <p className="font-medium text-slate-700">{entry.etaDate ? new Date(entry.etaDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Status</p>
+                <span className={`
+                  inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold
+                  ${entry.status === 'approved' ? 'bg-emerald-50 text-emerald-700' : 
+                    entry.status === 'pending_approval' ? 'bg-amber-50 text-amber-700' : 
+                    'bg-slate-50 text-slate-600'}
+                `}>
+                  <span className={`
+                    w-1.5 h-1.5 rounded-full
+                    ${entry.status === 'approved' ? 'bg-emerald-500' : 
+                      entry.status === 'pending_approval' ? 'bg-amber-500' : 
+                      'bg-slate-400'}
+                  `} />
+                  {String(entry.status || 'submitted').replaceAll('_', ' ').toUpperCase()}
+                </span>
+              </div>
+            </div>
+          ))}
         </div>
-      )} 
-          {/* Card: Shipment Requirements */}
-          <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
-            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100 pb-2">
-              SHIPMENT REQUIREMENTS
-            </h3>
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Shipping Terms</span>
-                <span className="font-bold text-slate-900">{cargo.shippingTerms || 'FOB'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Port of Loading</span>
-                <span className="font-bold text-slate-900">{cargo.portOfOrigin || 'SHANGHAI'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Port of Discharge</span>
-                <span className="font-bold text-slate-900">{cargo.portOfDestination || 'NHAVA SHEVA'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Cargo Type</span>
-                <span className="font-bold text-slate-900">{cargo.cargoType || 'SOLAR CELL'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-medium">Container Type</span>
-                <span className="font-bold text-slate-900">{cargo.containerType || '40 FT'}</span>
-              </div>
-            </div>
-          </div>
+      ) : (
+        <div className="py-12 text-center">
+          <Ship className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+          <p className="text-sm text-slate-400 font-medium">No Bill of Lading entries yet</p>
+          <p className="text-xs text-slate-300 mt-1">Entries will appear here once created</p>
         </div>
+      )}
+    </div>
+  )}
 
-        {/* Right Column: Quotes & Vendors Matrix Matching Screenshot 2 */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden lg:col-span-2">
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 pt-3">
-            {/* Tabs */}
-            <div className="flex items-center gap-1 text-xs font-bold">
-              <button
-                onClick={() => setActiveTab('quotes')}
-                className={`flex items-center gap-1.5 border-b-2 px-3 pb-3 transition ${
-                  activeTab === 'quotes'
-                    ? 'border-[#0d7676] text-[#0d7676]'
-                    : 'border-transparent text-slate-400 hover:text-slate-600'
-                }`}
-              >
-                <FileText className="h-3.5 w-3.5" />Quotes <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">{quotesList.length}</span>
-              </button>
-              <button
-                onClick={() => setActiveTab('vendors')}
-                className={`flex items-center gap-1.5 border-b-2 px-3 pb-3 transition ${
-                  activeTab === 'vendors'
-                    ? 'border-[#0d7676] text-[#0d7676]'
-                    : 'border-transparent text-slate-400 hover:text-slate-600'
-                }`}
-              >
-                <Users className="h-3.5 w-3.5" />Vendors <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">{(rfq.invitedVendors || []).length}</span>
-              </button>
-              <button onClick={() => setActiveTab('bl')} className={`flex items-center gap-1.5 border-b-2 px-3 pb-3 transition ${activeTab === 'bl' ? 'border-[#0d7676] text-[#0d7676]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><Ship className="h-3.5 w-3.5" />BL Entries <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">{(rfq.blEntries || []).length}</span></button>
-              <button onClick={() => setActiveTab('documents')} className={`flex items-center gap-1.5 border-b-2 px-3 pb-3 transition ${activeTab === 'documents' ? 'border-[#0d7676] text-[#0d7676]' : 'border-transparent text-slate-400 hover:text-slate-600'}`}><FileText className="h-3.5 w-3.5" />Documents</button>
-            </div>
-
-            <div className="mb-2 flex items-center gap-2">
-              {quotesList.length > 0 && rfq.status !== 'awarded' && <button onClick={() => handleAwardQuote(quotesList[0])} className="px-3 py-1.5 border border-amber-300 bg-amber-50 text-amber-700 text-xs font-bold rounded-xl transition inline-flex items-center gap-1"><Award className="w-3.5 h-3.5" />Award Vendors</button>}
-              {rfq.status === 'awarded' && rfq.approvalProgress?.status === 'Approved & Dispatched' && <button onClick={handleReassignRfq} className="px-3 py-1.5 border border-blue-300 bg-blue-50 text-blue-700 text-xs font-bold rounded-xl transition inline-flex items-center gap-1"><Award className="w-3.5 h-3.5" />Reassign RFQ</button>}
-              <button onClick={() => { setActiveTab('vendors'); setShowVendorManager(true); }} className="px-3 py-1.5 border border-teal-200 bg-teal-50 text-[#0d7676] text-xs font-bold rounded-xl transition inline-flex items-center gap-1"><Users className="w-3.5 h-3.5" />Manage Vendors</button>
-            </div>
-          </div>
-
-          {/* Quotes Table Matching Screenshot 2 */}
-          {activeTab === 'quotes' && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-[11px]">
-                <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-semibold text-slate-500">
-                  <tr>
-                    <th className="p-3">Vendor</th>
-                    <th className="p-3">Shipping Line</th>
-                    <th className="p-3">Route</th>
-                    <th className="p-3 text-right">Ocean Freight (USD)</th>
-                    <th className="p-3 text-right">St. Charges (INR)</th>
-                    <th className="p-3 text-right">Other (INR)</th>
-                    <th className="p-3 text-right">Total (INR)</th>
-                    <th className="p-3 text-center">Transit</th>
-                    <th className="p-3 text-center">ETD</th>
-                    <th className="p-3 text-center">ETA</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-semibold text-slate-800">
-                  {quotesList.map((q, idx) => (
-                    <tr key={q.quoteId || idx} className="hover:bg-slate-50/80">
-                      <td className="p-3 font-bold text-slate-900 flex items-center gap-1.5">
-                        <span className="w-8 h-8 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold flex items-center justify-center">
-                          {q.rank || `L${idx + 1}`}
-                        </span>
-                        {q.vendorName}
-                      </td>
-                      <td className="p-3 font-bold text-slate-700">{q.shippingLine}</td>
-                      <td className="p-3 text-slate-500">{q.vesselRoute || '—'}</td>
-                      <td className="p-3 text-right font-mono font-bold text-slate-900">
-                        USD {(Number(q.oceanFreightUsd) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </td>
-                      <td className="p-3 text-right font-mono font-bold text-slate-900">
-                        ₹{(Number(q.stChargesInr) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </td>
-                      <td className="p-3 text-right font-mono font-bold text-slate-700">
-                        {q.otherChargesInr ? `₹${Number(q.otherChargesInr).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
-                      </td>
-                      <td className="bg-slate-50/50 p-3 text-right font-mono">
-                        <div className="font-extrabold text-emerald-700 text-xs">
-                          ₹{(Number(q.totalInr) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </div>
-                        <div className="text-[9px] font-semibold text-slate-400">
-                          @{q.exchangeRate || 95.371}/USD
-                        </div>
-                      </td>
-                      <td className="hidden">
-                        {rfq.status === 'awarded' && rfq.awardedVendorName === q.vendorName ? (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                            Awarded
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => handleAwardQuote(q)}
-                            className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10px] rounded-lg shadow-2xs transition cursor-pointer"
-                          >
-                            Award RFQ
-                          </button>
-                        )}
-                      </td>
-                      <td className="p-3 text-center text-slate-500">{q.transitDays ? `${q.transitDays}d` : '—'}</td>
-                      <td className="p-3 text-center text-slate-500">{q.vesselEtd ? new Date(q.vesselEtd).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '—'}</td>
-                      <td className="p-3 text-center text-slate-500">{q.vesselEta ? new Date(q.vesselEta).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="divide-y divide-slate-100 border-t border-slate-100">
-                {quotesList.map((quote, index) => {
-                  const key = quote.quoteId || index;
-                  return <div key={key}><button type="button" onClick={() => setExpandedQuotes((current) => ({ ...current, [key]: !current[key] }))} className="flex w-full items-center gap-2 bg-slate-50/80 px-5 py-3 text-left text-xs font-bold text-slate-800 outline-none transition hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-teal-300">{expandedQuotes[key] ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}<span>{quote.vendorName} — full details</span></button>{expandedQuotes[key] && <div className="grid gap-4 border-t border-slate-100 bg-white p-4 sm:grid-cols-2 lg:grid-cols-3">{[
-                    ['Cost Particular', quote.costParticular], ['Free Days', quote.freeDays], ['Cutoff Date', quote.cutoffDate ? new Date(quote.cutoffDate).toLocaleDateString('en-GB') : '—'], ['Rate Validity', quote.rateValidity], ['Remarks', quote.remarks], ['Vessel ETD', quote.vesselEtd ? new Date(quote.vesselEtd).toLocaleDateString('en-GB') : '—'], ['Vessel ETA', quote.vesselEta ? new Date(quote.vesselEta).toLocaleDateString('en-GB') : '—'], ['Transit Time', quote.transitDays ? `${quote.transitDays} days` : '—'], ['Decision', rfq.status === 'awarded' && rfq.awardedVendorName === quote.vendorName ? <span className="text-emerald-700">Awarded to this vendor</span> : <button type="button" onClick={() => handleAwardQuote(quote)} className="rounded-lg bg-amber-500 px-3 py-1.5 text-[10px] font-bold text-white hover:bg-amber-600">Award RFQ</button>]
-                  ].map(([label, value]) => <div key={label} className={label === 'Cost Particular' || label === 'Remarks' ? 'sm:col-span-2' : ''}><p className="text-[10px] font-bold uppercase text-slate-400">{label}</p><p className="mt-1 whitespace-pre-wrap text-xs font-semibold text-slate-800">{value || '—'}</p></div>)}</div>}</div>;
-                })}
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'vendors' && (
-            <div className="p-4 space-y-2">
-              {showVendorManager && <div className="mb-4 space-y-3 rounded-xl border border-teal-200 bg-teal-50/40 p-4">
-                <div className="flex items-start justify-between"><div><h3 className="text-sm font-bold text-slate-900">Manage Invited Vendors</h3><p className="text-[11px] text-slate-500">Vendors with submitted quotes are locked and cannot be removed.</p></div><button type="button" onClick={() => setShowVendorManager(false)}><X className="h-4 w-4 text-slate-400" /></button></div>
-                <input value={vendorSearch} onChange={(event) => setVendorSearch(event.target.value)} placeholder="Search vendor name or code..." className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-teal-300" />
-                <div className="max-h-64 divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200 bg-white">
-                  {filteredManagerVendors.map((vendor) => { const selected = managedVendorIds.includes(vendor.id) || managedVendorIds.includes(vendor.sapVendorCode); const locked = quoteMatchesVendor(vendor); return <label key={vendor.id} className={`flex items-center justify-between gap-3 p-3 ${locked ? 'bg-slate-50' : 'cursor-pointer hover:bg-teal-50/40'}`}><div className="flex items-center gap-3"><input type="checkbox" checked={selected || locked} disabled={locked} onChange={() => toggleManagedVendor(vendor)} className="h-4 w-4 accent-[#0d7676]" /><div><p className="text-xs font-bold text-slate-900">{vendor.companyName}</p><p className="font-mono text-[10px] text-slate-400">{vendor.sapVendorCode}</p></div></div>{locked && <span className="rounded-full bg-blue-50 px-2 py-1 text-[9px] font-bold text-blue-600">Quote submitted</span>}</label>; })}
-                </div>
-                <div className="flex items-center justify-between"><p className="text-[10px] font-semibold text-slate-500">{managedVendorIds.length} vendor(s) selected</p><div className="flex gap-2"><button type="button" onClick={() => setShowVendorManager(false)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold">Cancel</button><button type="button" disabled={savingVendors} onClick={saveManagedVendors} className="rounded-lg bg-[#0d7676] px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{savingVendors ? 'Saving...' : 'Save Vendor List'}</button></div></div>
-              </div>}
-              {(rfq.invitedVendors || []).map((v, idx) => (
-                <div key={idx} className="p-3 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-bold text-slate-900">{v.companyName || (typeof v === 'string' ? v : '')}</p>
-                    <p className="text-[10px] font-mono text-slate-400">{v.sapVendorCode || ''}</p>
-                  </div>
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${quotesList.some((quote) => quote.vendorId === v.vendorId || quote.vendorId === v.sapVendorCode || quote.vendorName === v.companyName) ? 'bg-blue-50 text-blue-700' : 'bg-emerald-100 text-emerald-800'}`}>{quotesList.some((quote) => quote.vendorId === v.vendorId || quote.vendorId === v.sapVendorCode || quote.vendorName === v.companyName) ? 'Quote submitted' : 'Invited'}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          {activeTab === 'bl' && <div className="p-4">{(rfq.blEntries || []).length ? <div className="divide-y divide-slate-100 rounded-xl border border-slate-200">{rfq.blEntries.map((entry) => <div key={entry.blId || entry._id} className="grid gap-3 p-3 text-xs sm:grid-cols-4"><div><p className="text-[10px] uppercase text-slate-400">BL Number</p><p className="font-bold">{entry.blNumber}</p></div><div><p className="text-[10px] uppercase text-slate-400">Shipping Line</p><p className="font-bold">{entry.shippingLine || '—'}</p></div><div><p className="text-[10px] uppercase text-slate-400">ETA</p><p className="font-bold">{entry.etaDate ? new Date(entry.etaDate).toLocaleDateString('en-GB') : '—'}</p></div><div><p className="text-[10px] uppercase text-slate-400">Status</p><p className="font-bold capitalize text-[#0d7676]">{String(entry.status || 'submitted').replaceAll('_', ' ')}</p></div></div>)}</div> : <p className="py-10 text-center text-xs text-slate-400">No Bill of Lading entries have been created for this RFQ.</p>}</div>}
-          
-          {/* Documents Tab */}
-          {activeTab === 'documents' && (
-            <div className="p-5">
-              <DocumentUploader
-                documentableType="RfqHeader"
-                documentableId={rfq.rfqId}
-                documentType="rfq_document"
-                multiple={true}
-              />
-            </div>
-          )}
-        </div>
+  {/* Documents Tab - Enhanced */}
+  {activeTab === 'documents' && (
+    <div className="p-6">
+      <DocumentUploader
+        documentableType="RfqHeader"
+        documentableId={rfq.rfqId}
+        documentType="rfq_document"
+        multiple={true}
+        onDocumentsChange={(docs) => setDocumentCount(docs.length)}
+      />
+    </div>
+  )}
+</div>
       </div>
 
-      {showAwardModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6">
-        <div role="dialog" aria-modal="true" aria-labelledby="award-modal-title" className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-          {/* <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 sm:px-6">
-            <div className="flex gap-3"><span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${rfq.status === 'awarded' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'}`}><Award className="h-5 w-5" /></span><div><h2 id="award-modal-title" className="text-lg font-extrabold text-slate-900">{rfq.status === 'awarded' ? 'Reassign RFQ Vendors' : 'Award Vendors'}</h2><p className="mt-0.5 max-w-2xl text-xs leading-5 text-slate-500">{rfq.status === 'awarded' ? 'Reassign containers to different vendors. This will create a new approval request and go through the approval workflow again.' : 'Allocate containers to one or more quoted vendors. Amounts use each vendor's quoted rate per container and will follow the workflow shown below.'}</p></div></div>
-            <button type="button" aria-label="Close award dialog" onClick={() => setShowAwardModal(false)} className="rounded-lg border border-transparent p-2 text-slate-400 transition hover:border-slate-200 hover:bg-slate-50 hover:text-slate-700"><X className="h-4 w-4" /></button>
-          </div> */}
+      {/* Approval Cycles & Allocation History Card */}
+      {(normalizedAwardAllocations.length > 0 || cycleHistory.length > 0 || normalizedIsPendingApproval || rfq.status === 'partially_awarded' || rfq.status === 'awarded') && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50/60">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-[#0d7676]/10 flex items-center justify-center">
+                <Clock className="w-4 h-4 text-[#0d7676]" />
+              </div>
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900 tracking-tight">Allocation & Approval History</h3>
+                <p className="text-[10px] font-semibold text-slate-400">
+                  {currentCycleNumber} total cycle(s) · Full audit trail for {rfq.rfqNumber}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <span className="text-[9px] font-extrabold uppercase px-2.5 py-1.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                {normalizedAllocatedContainers}/{normalizedTotalContainers} Awarded
+              </span>
+              {normalizedInApprovalContainers > 0 && (
+                <span className="text-[9px] font-extrabold uppercase px-2.5 py-1.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                  {normalizedInApprovalContainers} In Approval
+                </span>
+              )}
+              {normalizedOpenContainers > 0 && (
+                <span className="text-[9px] font-extrabold uppercase px-2.5 py-1.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                  {normalizedOpenContainers} Open
+                </span>
+              )}
+            </div>
+          </div>
 
-          <div className="overflow-y-auto px-5 py-5 sm:px-6">
-            {rfq.status === 'awarded' && rfq.awardedVendorName && (
-              <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4">
-                <p className="text-xs font-bold text-blue-900">Current Award</p>
-                <p className="mt-1 text-sm font-extrabold text-blue-700">{rfq.awardedVendorName}</p>
-                <p className="mt-0.5 text-[10px] text-blue-600">{rfq.allocatedQuantity || 0} containers allocated</p>
+          <div className="divide-y divide-slate-100">
+            {/* ── CURRENT ACTIVE CYCLE (pending_approval) ── */}
+            {normalizedIsPendingApproval && normalizedPendingAllocations.length > 0 && (() => {
+              const cycleTotal = normalizedPendingAllocations.reduce((s, a) => s + (Number(a.allocationAmount) || 0), 0);
+              const cycleCont = normalizedPendingAllocations.reduce((s, a) => s + (Number(a.containers) || 0), 0);
+              return (
+                <div className="p-5 bg-amber-50/40 space-y-3.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center text-xs font-black shadow-sm shrink-0">
+                        #{currentCycleNumber}
+                      </div>
+                      <div>
+                        <p className="text-xs font-extrabold text-slate-900">
+                          Cycle #{currentCycleNumber} — {cycleCont} Container(s) Pending Approval
+                        </p>
+                        <p className="text-[10px] font-semibold text-amber-700 mt-0.5">
+                          Approval ID: <span className="font-mono">{rfq.awardApprovalId || '—'}</span>
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-[9px] font-extrabold uppercase px-2.5 py-1.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 inline-flex items-center gap-1 shrink-0">
+                      <Clock className="w-3 h-3" /> Awaiting Approval
+                    </span>
+                  </div>
+
+                  {/* Approval steps mini view */}
+                  {approvalProgress.steps && approvalProgress.steps.length > 0 && (
+                    <div className="flex items-center gap-0">
+                      {approvalProgress.steps.map((step, idx) => (
+                        <div key={step.step} className="flex items-center flex-1">
+                          <div className={`flex-1 h-0.5 ${idx === 0 ? 'hidden' : step.state === 'completed' ? 'bg-emerald-400' : 'bg-slate-200'}`} />
+                          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black border-2 ${step.state === 'current' ? 'bg-amber-500 border-amber-500 text-white' :
+                              step.state === 'completed' ? 'bg-emerald-500 border-emerald-500 text-white' :
+                                'bg-white border-slate-200 text-slate-400'
+                            }`}>
+                            {step.state === 'completed' ? '✓' : step.step}
+                          </div>
+                          <div className={`flex-1 h-0.5 ${idx === approvalProgress.steps.length - 1 ? 'hidden' : step.state === 'completed' ? 'bg-emerald-400' : 'bg-slate-200'}`} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {approvalProgress.steps && (
+                    <div className="flex justify-between">
+                      {approvalProgress.steps.map(step => (
+                        <div key={step.step} className="flex-1 text-center">
+                          <p className={`text-[9px] font-bold ${step.state === 'current' ? 'text-amber-700' : step.state === 'completed' ? 'text-emerald-700' : 'text-slate-400'}`}>{step.title}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Vendor rows */}
+                  <div className="space-y-2">
+                    {normalizedPendingAllocations.map((alloc, i) => (
+                      <div key={i} className="flex items-center justify-between bg-white rounded-xl border border-amber-200 px-4 py-3 shadow-2xs">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center text-amber-600 font-black text-[10px] shrink-0">
+                            {alloc.containers}
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-slate-900">{alloc.vendorName}</p>
+                            <p className="text-[10px] font-medium text-slate-500">
+                              {alloc.containers} ctr × ₹{(alloc.ratePerContainer || 0).toLocaleString('en-IN')}/ctr
+                              {alloc.remark ? ` · "${alloc.remark}"` : ''}
+                            </p>
+                            {alloc.quoteId && <p className="text-[9px] font-mono text-slate-300 mt-0.5">{alloc.quoteId}</p>}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-extrabold font-mono text-amber-700 text-xs">₹{(alloc.allocationAmount || 0).toLocaleString('en-IN')}</p>
+                          <p className="text-[9px] text-slate-400">Pending</p>
+                        </div>
+                      </div>
+                    ))}
+                    {normalizedPendingAllocations.length > 1 && (
+                      <div className="flex justify-end pr-1">
+                        <span className="text-[10px] font-extrabold font-mono text-amber-700">
+                          Total: ₹{cycleTotal.toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── APPROVED CURRENT ALLOCATIONS (partially_awarded / awarded) ── */}
+            {normalizedApprovedAllocations.length > 0 && (
+              <div className="p-5 space-y-3.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs font-black shadow-sm shrink-0">
+                      ✓
+                    </div>
+                    <div>
+                      <p className="text-xs font-extrabold text-slate-900">
+                        {normalizedApprovedAllocations.reduce((s, a) => s + (Number(a.containers) || 0), 0)} Container(s) — Approved & Awarded
+                      </p>
+                      <p className="text-[10px] font-semibold text-emerald-700 mt-0.5">Formally confirmed and completed</p>
+                    </div>
+                  </div>
+                  <span className="text-[9px] font-extrabold uppercase px-2.5 py-1.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 inline-flex items-center gap-1 shrink-0">
+                    <CheckCircle2 className="w-3 h-3" /> Awarded
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {normalizedApprovedAllocations.map((alloc, i) => (
+                    <div key={i} className="flex items-center justify-between bg-white rounded-xl border border-emerald-200 px-4 py-3 shadow-2xs">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600 font-black text-[10px] shrink-0">
+                          {alloc.containers}
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-slate-900">{alloc.vendorName}</p>
+                          <p className="text-[10px] font-medium text-slate-500">
+                            {alloc.containers} ctr × ₹{(alloc.ratePerContainer || 0).toLocaleString('en-IN')}/ctr
+                            {alloc.remark ? ` · "${alloc.remark}"` : ''}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-extrabold font-mono text-emerald-700 text-xs">₹{(alloc.allocationAmount || 0).toLocaleString('en-IN')}</p>
+                        <p className="text-[9px] text-emerald-600 font-semibold">Awarded</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {normalizedAllocatedContainers >= normalizedTotalContainers && normalizedTotalContainers > 0 && (
+                  <div className="flex items-center gap-2 bg-emerald-50 rounded-xl px-4 py-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                    <p className="text-xs font-extrabold text-emerald-800">
+                      All {normalizedTotalContainers} containers fully awarded · {rfq.awardedVendorName || 'Completed'}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
-            
-            <div className="mb-4 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500">RFQ containers</p><p className="mt-1 text-xl font-extrabold text-slate-900">{totalContainers}</p></div>
-              <div className={`rounded-xl border p-3 bg-teal-50 border-teal-200`}><p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500">Allocation progress</p><p className={`mt-1 text-xl font-extrabold text-teal-700`}>{awardAllocated} containers</p><p className="mt-0.5 text-[10px] text-slate-500">Ready to submit</p></div>
-              <div className="rounded-xl border border-teal-200 bg-teal-50/60 p-3"><p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500">Total award value</p><p className="mt-1 text-xl font-extrabold text-[#0d7676]">₹{awardTotal.toLocaleString('en-IN')}</p></div>
+
+            {/* ── HISTORICAL CYCLES from reassignmentHistory ── */}
+            {cycleHistory.length > 0 && (
+              <div className="divide-y divide-slate-100">
+                <div className="px-5 py-2.5 bg-slate-50/80">
+                  <p className="text-[9px] font-extrabold uppercase tracking-widest text-slate-400">Previous Allocation Cycles</p>
+                </div>
+                {[...cycleHistory].reverse().map((hist, revIdx) => {
+                  const histIdx = cycleHistory.length - 1 - revIdx;
+                  const cycleNum = histIdx + 1;
+                  const histAllocs = hist.newAllocations || [];
+                  const histTotal = histAllocs.reduce((s, a) => s + (Number(a.allocationAmount) || 0), 0);
+                  const histCont = hist.newAllocatedQuantity || histAllocs.reduce((s, a) => s + (Number(a.containers) || 0), 0);
+                  return (
+                    <div key={hist._id || histIdx} className="p-5 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-slate-300 text-slate-700 flex items-center justify-center text-xs font-black shrink-0">
+                            #{cycleNum}
+                          </div>
+                          <div>
+                            <p className="text-xs font-extrabold text-slate-700">
+                              Cycle #{cycleNum} — {histCont} Container(s) Submitted
+                            </p>
+                            <p className="text-[10px] font-mono text-slate-400 mt-0.5">{hist.approvalId || '—'}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[9px] font-extrabold uppercase px-2 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200 block">
+                            Superseded
+                          </span>
+                          <p className="text-[9px] font-semibold text-slate-400 mt-0.5">
+                            {hist.reassignedAt ? new Date(hist.reassignedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Submitted allocations in this cycle */}
+                      {histAllocs.length > 0 && (
+                        <div className="space-y-1.5">
+                          {histAllocs.map((alloc, ai) => (
+                            <div key={ai} className="flex items-center justify-between bg-slate-50 rounded-lg border border-slate-200 px-3.5 py-2.5">
+                              <div>
+                                <p className="text-[10px] font-bold text-slate-700">{alloc.vendorName}</p>
+                                <p className="text-[9px] font-medium text-slate-400">
+                                  {alloc.containers} ctr × ₹{(alloc.ratePerContainer || 0).toLocaleString('en-IN')}/ctr
+                                  {alloc.remark ? ` · "${alloc.remark}"` : ''}
+                                </p>
+                              </div>
+                              <span className="font-bold font-mono text-slate-600 text-[10px]">
+                                ₹{(alloc.allocationAmount || 0).toLocaleString('en-IN')}
+                              </span>
+                            </div>
+                          ))}
+                          {histAllocs.length > 0 && (
+                            <div className="flex justify-between text-[9px] font-semibold text-slate-400 px-1">
+                              <span>Submitted by: {hist.reassignedBy || 'System Admin'}</span>
+                              {histTotal > 0 && <span className="font-mono">Total: ₹{histTotal.toLocaleString('en-IN')}</span>}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* No data fallback */}
+            {normalizedAwardAllocations.length === 0 && cycleHistory.length === 0 && !normalizedIsPendingApproval && (
+              <div className="p-10 text-center">
+                <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center mx-auto mb-3">
+                  <Award className="w-5 h-5 text-slate-400" />
+                </div>
+                <p className="text-xs font-bold text-slate-500">No allocation history</p>
+                <p className="text-[10px] text-slate-400 mt-1">Use <strong>Award Vendors</strong> to begin allocation.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showAwardModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-2 sm:p-4 backdrop-blur-xs">
+        <div role="dialog" aria-modal="true" aria-labelledby="award-modal-title" className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 bg-slate-50/60">
+            <div className="flex items-center gap-2.5">
+              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${rfq.status === 'awarded' ? 'bg-blue-50 text-blue-600 border border-blue-200' : 'bg-teal-50 text-teal-700 border border-teal-200'}`}>
+                <Award className="h-4 w-4" />
+              </span>
+              <div>
+                <h2 id="award-modal-title" className="text-sm font-extrabold text-slate-900 leading-none">
+                  {rfq.status === 'awarded' ? 'Reassign RFQ Vendors' : 'Award Vendors'}
+                </h2>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Allocate containers to quoted vendors and trigger the approval workflow.
+                </p>
+              </div>
+            </div>
+            <button type="button" aria-label="Close award dialog" onClick={() => setShowAwardModal(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="overflow-y-auto px-4 py-3 space-y-3">
+            {rfq.status === 'awarded' && rfq.awardedVendorName && (
+              <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-2.5 flex items-center justify-between text-xs">
+                <div>
+                  <p className="text-[10px] font-bold text-blue-800 uppercase">Current Award</p>
+                  <p className="font-extrabold text-blue-900">{rfq.awardedVendorName}</p>
+                </div>
+                <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold text-[10px]">
+                  {rfq.allocatedQuantity || 0} containers allocated
+                </span>
+              </div>
+            )}
+
+            <div className="grid gap-2 grid-cols-2 sm:grid-cols-4 text-xs">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-2.5">
+                <p className="text-[9px] font-extrabold uppercase text-slate-500">RFQ CONTAINERS</p>
+                <p className="mt-0.5 text-lg font-black text-slate-900">{normalizedTotalContainers}</p>
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-2.5">
+                <p className="text-[9px] font-extrabold uppercase text-emerald-800">ALREADY AWARDED</p>
+                <p className="mt-0.5 text-lg font-black text-emerald-700">{normalizedAllocatedContainers} <span className="text-[10px] font-bold text-emerald-600">ctr</span></p>
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-2.5">
+                <p className="text-[9px] font-extrabold uppercase text-amber-800">UNALLOCATED PENDING</p>
+                <p className="mt-0.5 text-lg font-black text-amber-700">{normalizedOpenContainers} <span className="text-[10px] font-bold text-amber-600">ctr</span></p>
+              </div>
+              <div className="rounded-xl border border-teal-200 bg-teal-50/60 p-2.5">
+                <p className="text-[9px] font-extrabold uppercase text-[#0d7676]">CYCLE SELECTION</p>
+                <p className="mt-0.5 text-lg font-black text-[#0d7676]">{awardAllocated} <span className="text-[10px] font-bold text-teal-600">ctr</span></p>
+                <p className="text-[9px] font-bold text-slate-500 font-mono">₹{awardTotal.toLocaleString('en-IN')}</p>
+              </div>
             </div>
 
             <div className="overflow-hidden rounded-xl border border-slate-200">
-              <div className="grid grid-cols-[minmax(170px,1.45fr)_64px_minmax(90px,.75fr)_minmax(105px,.85fr)_minmax(200px,1.55fr)] gap-2.5 bg-slate-50 px-3 py-2.5 pr-12 text-[9px] font-extrabold uppercase tracking-wide text-slate-500 lg:gap-3 lg:pl-4"><span>Quoted vendor</span><span>Qty</span><span>Rate / container</span><span>Allocated value</span><span>Internal remark</span></div>
-              {awardRows.map((row, index) => { const quote = quotesList.find((item) => item.quoteId === row.quoteId); const duplicate = row.quoteId && awardRows.some((item, rowIndex) => rowIndex !== index && item.quoteId === row.quoteId); return <div key={index} className={`relative grid grid-cols-[minmax(170px,1.45fr)_64px_minmax(90px,.75fr)_minmax(105px,.85fr)_minmax(200px,1.55fr)] items-center gap-2.5 border-t px-3 py-3 pr-12 lg:gap-3 lg:pl-4 ${duplicate ? 'border-rose-200 bg-rose-50/40' : 'border-slate-100 bg-white'}`}>
-                <div><SearchableSelect options={quotesList.map((item) => ({ label: `${item.vendorName} · ${item.rank || 'Rank pending'}`, value: item.quoteId }))} value={row.quoteId} onChange={(val) => setAwardRows((current) => current.map((item, rowIndex) => rowIndex === index ? { ...item, quoteId: val } : item))} placeholder="Select vendor quote" size="sm" searchable={false} />{duplicate && <p className="mt-1 text-[9px] font-bold text-rose-600">Vendor already selected</p>}</div>
-                <input aria-label={`Containers for allocation ${index + 1}`} type="number" min="1" max={totalContainers} step="1" value={row.containers} onChange={(event) => setAwardRows((current) => current.map((item, rowIndex) => rowIndex === index ? { ...item, containers: event.target.value } : item))} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold outline-none focus:border-teal-400 focus:ring-2 focus:ring-teal-100" />
-                <span className="whitespace-nowrap text-[11px] font-bold text-slate-700">₹{Number(quote?.totalInr || 0).toLocaleString('en-IN')}</span><span className="whitespace-nowrap text-xs font-extrabold text-slate-900">₹{((Number(quote?.totalInr) || 0) * (Number(row.containers) || 0)).toLocaleString('en-IN')}</span>
-                <textarea aria-label={`Remark for allocation ${index + 1}`} rows="3" value={row.remark} onChange={(event) => setAwardRows((current) => current.map((item, rowIndex) => rowIndex === index ? { ...item, remark: event.target.value } : item))} placeholder="Add an optional decision note, commercial condition, or allocation reason…" spellCheck={false} data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false" className="min-w-0 resize-y rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 outline-none focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-100" />
-                <button type="button" aria-label={`Remove allocation ${index + 1}`} title="Remove this vendor allocation" disabled={awardRows.length === 1} onClick={() => setAwardRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="absolute right-3 top-3 rounded-lg border border-slate-200 bg-white p-2 text-slate-400 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-100 disabled:cursor-not-allowed disabled:opacity-30"><X className="h-3.5 w-3.5" /></button>
-              </div>; })}
+              <div className="grid grid-cols-[minmax(150px,1.4fr)_64px_minmax(85px,.75fr)_minmax(95px,.85fr)_minmax(180px,1.5fr)] gap-2 bg-slate-50 px-3 py-2 pr-10 text-[9px] font-extrabold uppercase tracking-wide text-slate-500">
+                <span>Quoted vendor</span><span>Qty</span><span>Rate/ctr</span><span>Allocated value</span><span>Internal remark</span>
+              </div>
+              {awardRows.map((row, index) => {
+                const quote = quotesList.find((item) => item.quoteId === row.quoteId);
+                const duplicate = row.quoteId && awardRows.some((item, rowIndex) => rowIndex !== index && item.quoteId === row.quoteId);
+                return (
+                  <div key={index} className={`relative grid grid-cols-[minmax(150px,1.4fr)_64px_minmax(85px,.75fr)_minmax(95px,.85fr)_minmax(180px,1.5fr)] items-center gap-2 border-t px-3 py-2.5 pr-10 ${duplicate ? 'border-rose-200 bg-rose-50/40' : 'border-slate-100 bg-white'}`}>
+                    <div>
+                      <SearchableSelect options={quotesList.map((item) => ({ label: `${item.vendorName} · ${item.rank || 'Rank pending'}`, value: item.quoteId }))} value={row.quoteId} onChange={(val) => setAwardRows((current) => current.map((item, rowIndex) => rowIndex === index ? { ...item, quoteId: val } : item))} placeholder="Select vendor quote" size="sm" searchable={false} />
+                      {duplicate && <p className="mt-0.5 text-[9px] font-bold text-rose-600">Vendor already selected</p>}
+                    </div>
+                    <CustomInput aria-label={`Containers for allocation ${index + 1}`} type="number" min="1" max={targetContainers} step="1" value={row.containers} onChange={(event) => setAwardRows((current) => current.map((item, rowIndex) => rowIndex === index ? { ...item, containers: event.target.value } : item))} size="sm" />
+                    <span className="whitespace-nowrap text-[11px] font-bold text-slate-700 font-mono">₹{Number(quote?.totalInr || 0).toLocaleString('en-IN')}</span>
+                    <span className="whitespace-nowrap text-xs font-black text-slate-900 font-mono">₹{((Number(quote?.totalInr) || 0) * (Number(row.containers) || 0)).toLocaleString('en-IN')}</span>
+                    <textarea aria-label={`Remark for allocation ${index + 1}`} rows="2" value={row.remark} onChange={(event) => setAwardRows((current) => current.map((item, rowIndex) => rowIndex === index ? { ...item, remark: event.target.value } : item))} placeholder="Optional decision note…" spellCheck={false} className="min-w-0 resize-y rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs outline-none focus:border-teal-400 focus:bg-white focus:ring-1 focus:ring-teal-100" />
+                    <button type="button" aria-label={`Remove allocation ${index + 1}`} title="Remove this vendor allocation" disabled={awardRows.length === 1} onClick={() => setAwardRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="absolute right-2.5 top-2.5 rounded-lg border border-slate-200 bg-white p-1.5 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 transition disabled:opacity-30">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
 
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><button type="button" disabled={awardRows.length >= quotesList.length} onClick={() => setAwardRows((current) => [...current, { quoteId: quotesList.find((quote) => !current.some((row) => row.quoteId === quote.quoteId))?.quoteId || '', containers: 1, remark: '' }])} className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 bg-white px-3 py-2 text-xs font-bold text-[#0d7676] transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-40"><Plus className="h-3.5 w-3.5" />Add vendor allocation</button><p className="text-[10px] text-slate-500">{rfq.status === 'awarded' ? 'Reassign any number of containers to vendors.' : 'One vendor can appear only once. Use positive whole quantities.'}</p></div>
+            <div className="flex items-center justify-between gap-2">
+              <button type="button" disabled={awardRows.length >= quotesList.length} onClick={() => setAwardRows((current) => [...current, { quoteId: quotesList.find((quote) => !current.some((row) => row.quoteId === quote.quoteId))?.quoteId || '', containers: 1, remark: '' }])} className="inline-flex items-center gap-1 rounded-lg border border-teal-200 bg-white px-2.5 py-1.5 text-xs font-bold text-[#0d7676] hover:bg-teal-50 transition disabled:opacity-40">
+                <Plus className="h-3.5 w-3.5" />Add vendor allocation
+              </button>
+              <p className="text-[10px] text-slate-500">Allocating whole container quantities.</p>
+            </div>
 
-            <div className={`mt-5 rounded-xl border p-4 ${awardWorkflowError ? 'border-rose-200 bg-rose-50' : 'border-teal-200 bg-teal-50/60'}`}><div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500">Approval workflow</p>{awardWorkflow && <p className="mt-1 text-xs font-bold text-slate-900">{awardWorkflow.slab}</p>}</div>{awardReady && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-bold text-emerald-700"><CheckCircle2 className="h-3 w-3" />Ready for approval</span>}</div>{awardWorkflowError ? <p className="mt-2 text-xs font-semibold text-rose-700">{awardWorkflowError}</p> : awardWorkflow ? <div className="mt-3 flex flex-wrap items-center gap-2">{awardWorkflow.steps.map((step, index) => <React.Fragment key={step.step}><span className="rounded-lg border border-teal-200 bg-white px-3 py-2 text-[10px] font-bold text-[#0d7676]"><span className="mr-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-teal-100">{index + 1}</span>{step.title}</span>{index < awardWorkflow.steps.length - 1 && <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}</React.Fragment>)}</div> : <p className="mt-2 inline-flex items-center gap-2 text-xs text-slate-500"><Loader2 className="h-3.5 w-3.5 animate-spin" />Selecting workflow for ₹{awardTotal.toLocaleString('en-IN')}…</p>}</div>
+            <div className={`rounded-xl border p-3 ${awardWorkflowError ? 'border-rose-200 bg-rose-50' : 'border-teal-200 bg-teal-50/50'}`}>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] font-extrabold uppercase text-slate-500">Approval workflow</p>
+                  {awardWorkflow && <p className="text-xs font-bold text-slate-900">{awardWorkflow.slab}</p>}
+                </div>
+                {awardReady && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-black text-emerald-800 border border-emerald-300">
+                    <CheckCircle2 className="h-3 w-3 text-emerald-600" />Ready for approval
+                  </span>
+                )}
+              </div>
+              {awardWorkflowError ? (
+                <p className="mt-1.5 text-xs font-bold text-rose-700">{awardWorkflowError}</p>
+              ) : awardWorkflow ? (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  {awardWorkflow.steps.map((step, index) => (
+                    <React.Fragment key={step.step}>
+                      <span className="rounded-lg border border-teal-200 bg-white px-2.5 py-1 text-[10px] font-bold text-[#0d7676]">
+                        <span className="mr-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-teal-100 text-[9px]">{index + 1}</span>
+                        {step.title}
+                      </span>
+                      {index < awardWorkflow.steps.length - 1 && <ChevronRight className="h-3 w-3 text-slate-400" />}
+                    </React.Fragment>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-slate-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />Selecting workflow...
+                </p>
+              )}
+            </div>
 
-            {!awardReady && !awardWorkflowError && <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-semibold text-amber-800">{hasDuplicateAwardVendor ? 'Remove the duplicate vendor allocation.' : 'Complete all vendor selections to continue.'}</div>}
+            {!awardReady && !awardWorkflowError && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[10px] font-bold text-amber-900">
+                {hasDuplicateAwardVendor ? 'Remove the duplicate vendor allocation.' : exceedsTotalContainers ? `Selected quantity (${awardAllocated}) exceeds total RFQ capacity (${normalizedTotalContainers} containers).` : 'Complete all vendor selections to continue.'}
+              </div>
+            )}
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/80 px-5 py-4 sm:px-6"><p className="text-[10px] text-slate-500">{rfq.status === 'awarded' ? 'Reassignment creates a new approval request and goes through the full workflow.' : 'Submitting creates an approval request; it does not immediately award the RFQ.'}</p><div className="flex gap-2"><button type="button" onClick={() => setShowAwardModal(false)} className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50">Cancel</button><button type="button" disabled={submittingAward || !awardReady} onClick={submitAwardAllocations} className="inline-flex items-center gap-2 rounded-lg bg-[#0d7676] px-5 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-[#096464] disabled:cursor-not-allowed disabled:opacity-45">{submittingAward && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{submittingAward ? 'Submitting…' : rfq.status === 'awarded' ? 'Submit Reassignment' : 'Submit for Approval'}</button></div></div>
+          <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/60 px-4 py-3 text-xs">
+            <p className="text-[10px] text-slate-500">Submitting triggers the approval workflow.</p>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setShowAwardModal(false)} className="rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 font-bold text-slate-700 hover:bg-slate-100 transition">Cancel</button>
+              <button type="button" disabled={submittingAward || !awardReady} onClick={submitAwardAllocations} className="inline-flex items-center gap-1.5 rounded-lg bg-[#0d7676] px-4 py-1.5 font-bold text-white shadow-xs hover:bg-[#096464] transition disabled:opacity-40">{submittingAward && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{submittingAward ? 'Submitting…' : rfq.status === 'awarded' ? 'Submit Reassignment' : 'Submit for Approval'}</button>
+            </div>
+          </div>
         </div>
       </div>}
 
@@ -833,35 +1453,35 @@ export default function RfqDetailView() {
 
               <div className="space-y-1.5">
                 <label className="block text-xs font-semibold text-slate-700">Shipping Line</label>
-                <input
+                <CustomInput
                   type="text"
                   required
                   value={shippingLine}
                   onChange={(e) => setShippingLine(e.target.value)}
                   placeholder="e.g. MSC / MAERSK"
-                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#0d7676]"
+                  size="sm"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-semibold text-slate-700">Ocean Freight (USD)</label>
-                  <input
+                  <CustomInput
                     type="number"
                     required
                     value={oceanFreightUsd}
                     onChange={(e) => setOceanFreightUsd(e.target.value)}
-                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-900"
+                    size="sm"
                   />
                 </div>
 
                 <div className="space-y-1.5">
                   <label className="block text-xs font-semibold text-slate-700">St. Charges (INR)</label>
-                  <input
+                  <CustomInput
                     type="number"
                     value={stChargesInr}
                     onChange={(e) => setStChargesInr(e.target.value)}
-                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-900"
+                    size="sm"
                   />
                 </div>
               </div>
@@ -880,6 +1500,73 @@ export default function RfqDetailView() {
                   className="px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white text-xs font-bold uppercase rounded-xl shadow-xs"
                 >
                   {submittingQuote ? 'Submitting...' : 'Save Quote to MongoDB'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reopen RFQ Modal */}
+      {showReopenModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-teal-50 text-[#0d7676]">
+                  <RefreshCw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900">Reopen RFQ {rfq.rfqNumber}</h3>
+                  <p className="text-xs text-slate-500 font-semibold">Extend deadline and allow vendor quotations</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowReopenModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleReopenRfq} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  New Closing Date &amp; Time <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="datetime-local"
+                  value={reopenClosingDate}
+                  onChange={(e) => setReopenClosingDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-hidden focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+                  required
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-teal-50/70 border border-teal-200/60 text-xs text-teal-900 space-y-1">
+                <p className="font-extrabold">Reopening Actions:</p>
+                <ul className="list-disc pl-4 space-y-0.5 text-[11px] font-medium text-teal-800">
+                  <li>Changes status back to <strong className="font-extrabold text-teal-950">Published</strong></li>
+                  <li>Enables quotation submission for invited vendors</li>
+                  <li>Extends closing deadline to the specified date</li>
+                </ul>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowReopenModal(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingReopen}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0b6363] text-white text-xs font-extrabold rounded-xl transition shadow-xs disabled:opacity-50"
+                >
+                  {submittingReopen ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  <span>Reopen RFQ Now</span>
                 </button>
               </div>
             </form>

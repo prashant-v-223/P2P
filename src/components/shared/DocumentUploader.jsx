@@ -8,6 +8,7 @@ export default function DocumentUploader({
   documentableId, 
   documentType = 'other',
   onUploadComplete,
+  onDocumentsChange,
   multiple = false,
   existingDocuments = []
 }) {
@@ -101,7 +102,9 @@ export default function DocumentUploader({
       const res = await apiFetch(`/api/documents?documentableType=${documentableType}&documentableId=${documentableId}`);
       const json = await res.json();
       if (json.success) {
-        setDocuments(json.data || []);
+        const docs = json.data || [];
+        setDocuments(docs);
+        if (onDocumentsChange) onDocumentsChange(docs);
       }
     } catch (error) {
       console.error('Failed to load documents:', error);

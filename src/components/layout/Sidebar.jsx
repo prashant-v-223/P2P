@@ -109,7 +109,7 @@ const NavItem = React.memo(({ item, collapsed, onNavigate, badgeValue }) => {
         <>
           <div className="flex items-center gap-3 min-w-0">
             <Icon className={cn(
-              "flex-shrink-0 transition-colors", 
+              "flex-shrink-0 transition-colors",
               collapsed ? "w-5 h-5" : "w-[18px] h-[18px]",
               isActive ? "text-white" : "text-slate-400 group-hover:text-slate-600"
             )} />
@@ -226,24 +226,11 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
       )}>
         <Link to={homePath} onClick={onNavigate} className="flex items-center gap-3 overflow-hidden transition-all duration-200">
           {collapsed ? (
-            /* Collapsed Logo - Icon Only */
-            <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-[#0d9488] to-[#0f766e] shadow-sm">
-              <span className="text-white font-black text-[17px]">R</span>
-            </div>
+
+            <img src="/favicon.ico" alt="logo" srcset="" width={30} height={20} />
           ) : (
-            /* Full Logo with Company Name */
             <>
-              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-[#0d9488] to-[#0f766e] shadow-sm">
-                <span className="text-white font-black text-[17px]">R</span>
-              </div>
-              <div className="flex flex-col -space-y-0.5">
-                <span className="text-[16px] font-black text-slate-800 tracking-tight leading-tight">
-                  RAYZON
-                </span>
-                <span className="text-[11px] font-medium text-slate-500 tracking-wide leading-tight uppercase">
-                  Solar
-                </span>
-              </div>
+              <img src="/logo.png" alt="logo" srcset="" width={150} height={25}  />
             </>
           )}
         </Link>

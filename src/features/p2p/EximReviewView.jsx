@@ -112,7 +112,7 @@ function EximList() {
       const dataBl = await resBl.json();
       const dataAgents = await resAgents.json();
 
-      if (resBl.ok) setEntries(dataBl.entries || []);
+      if (resBl.ok) setEntries(dataBl.data || []);
       else setError(dataBl.error || 'Failed to load BL entries.');
 
       if (resAgents.ok) setAgents(dataAgents.agents || []);
@@ -324,52 +324,6 @@ function EximDetail({ blId }) {
           </div>
         </div>
       </section>
-
-      {/* EXIM Approval Action Form */}
-      {entry.status !== 'custom_cleared' && entry.status !== 'rejected' && (
-        <section className="rounded-2xl border border-amber-200 bg-amber-50/50 p-5 space-y-3">
-          <h2 className="text-xs font-bold text-amber-900 flex items-center gap-2">
-            <Clock className="w-4 h-4 text-amber-600" />
-            Process EXIM Approval Cycle Decision
-          </h2>
-          <div>
-            <textarea
-              rows={2}
-              placeholder="Enter EXIM review notes or remarks..."
-              value={remarks}
-              onChange={(e) => setRemarks(e.target.value)}
-              className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-[#0d7676]"
-            />
-          </div>
-          <div className="flex gap-2 justify-end pt-1">
-            <button
-              type="button"
-              disabled={actionLoading}
-              onClick={() => handleWorkflowAction('return')}
-              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-orange-800 bg-orange-100 hover:bg-orange-200 rounded-lg border border-orange-200 transition"
-            >
-              <CornerUpLeft className="w-3.5 h-3.5" /> Return for Correction
-            </button>
-            <button
-              type="button"
-              disabled={actionLoading}
-              onClick={() => handleWorkflowAction('reject')}
-              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition"
-            >
-              <XCircle className="w-3.5 h-3.5" /> Reject BL Entry
-            </button>
-            <button
-              type="button"
-              disabled={actionLoading}
-              onClick={() => handleWorkflowAction('approve')}
-              className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-[#0d7676] hover:bg-[#0a5c5c] rounded-lg transition shadow-xs"
-            >
-              {actionLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-              Approve BL Entry
-            </button>
-          </div>
-        </section>
-      )}
 
       <section className="grid gap-4 rounded-2xl border bg-white p-5 text-xs shadow-sm sm:grid-cols-3">
         <div><p className="text-slate-400">EXIM Reviewed</p><strong>{dateText(entry.eximReviewedAt, true)}</strong></div>

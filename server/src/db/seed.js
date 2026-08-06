@@ -354,6 +354,7 @@ import { LogisticsPayment } from '../models/LogisticsPayment.js';
 import { Document } from '../models/Document.js';
 import { User } from '../models/User.js';
 import { Vendor } from '../models/Vendor.js';
+import { PurchaseOrder } from '../models/PurchaseOrder.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DUMMY USERS — 15+ users across all 10 roles
@@ -461,6 +462,53 @@ export const seedDatabase = async () => {
         { id: 'v-ff-7', supplierId: 'FF-11001776', sapVendorCode: '11001776', companyName: 'Kgl Network Pvt. Ltd.', contactPerson: 'Network Manager', phone: '+91 22 6677 8899', email: 'ops@kglnetwork.com', vendorType: 'Freight Forwarder', category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days', gstin: '27AAACK0006K1Z1', pan: 'AAACK0006K', bankName: 'HDFC Bank', branch: 'Navi Mumbai', accountNumber: '**** 6677', ifscCode: 'HDFC0001001', portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash },
         { id: 'v-ff-8', supplierId: 'FF-11001920', sapVendorCode: '11001920', companyName: 'Isgfl India Pvt. Ltd.', contactPerson: 'Shipping Head', phone: '+91 22 7788 9900', email: 'shipping@isgfl.com', vendorType: 'Shipping Line', category: 'Shipping Line', status: 'Active', paymentTerms: '45 Days', gstin: '27AAACI0007I1Z1', pan: 'AAACI0007I', bankName: 'Citibank', branch: 'Mumbai', accountNumber: '**** 7788', ifscCode: 'CITI0000001', portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash },
         { id: 'v-ff-9', supplierId: 'FF-11002010', sapVendorCode: '11002010', companyName: 'Seaways Shipping & Logistics Ltd', contactPerson: 'Logistics Head', phone: '+91 22 8899 0011', email: 'ops@seawaysshipping.com', vendorType: 'Freight Forwarder', category: 'Freight Forwarder', status: 'Active', paymentTerms: '30 Days', gstin: '27AAACS0008S1Z1', pan: 'AAACS0008S', bankName: 'HDFC Bank', branch: 'Nhava Sheva', accountNumber: '**** 8899', ifscCode: 'HDFC0002001', portalAccessEnabled: true, loginUrl: '/vendor/login', passwordHash: ffPassHash },
+      ]);
+    }
+
+    // ── Purchase Orders ───────────────────────────────────────────────────────
+    const poCount = await PurchaseOrder.countDocuments();
+    if (poCount === 0) {
+      console.log('[DB] Seeding default Purchase Orders...');
+      await PurchaseOrder.insertMany([
+        {
+          poId: '4100005638',
+          poNumber: '4100005638',
+          sapPoNumber: '4100005638',
+          supplierId: '11001810',
+          supplierName: 'Fast Forward Logistics India',
+          companyCode: '1000',
+          currency: 'INR',
+          totalAmount: 500000,
+          status: 'open',
+          documentDate: new Date(),
+          items: [{ itemNumber: '10', description: 'Solar Material Freight 40HC', quantity: 5, unitPrice: 100000, totalPrice: 500000, uom: 'PCS' }]
+        },
+        {
+          poId: '4700000251',
+          poNumber: '4700000251',
+          sapPoNumber: '4700000251',
+          supplierId: '11002010',
+          supplierName: 'Seaways Shipping & Logistics Ltd',
+          companyCode: '1000',
+          currency: 'INR',
+          totalAmount: 750000,
+          status: 'open',
+          documentDate: new Date(),
+          items: [{ itemNumber: '10', description: 'Solar Cell Freight 40HC', quantity: 5, unitPrice: 150000, totalPrice: 750000, uom: 'PCS' }]
+        },
+        {
+          poId: '4100005639',
+          poNumber: '4100005639',
+          sapPoNumber: '4100005639',
+          supplierId: '11001450',
+          supplierName: 'Fairwinds Shipping Private Limited',
+          companyCode: '1000',
+          currency: 'INR',
+          totalAmount: 320000,
+          status: 'open',
+          documentDate: new Date(),
+          items: [{ itemNumber: '10', description: 'Solar Glass Transport', quantity: 4, unitPrice: 80000, totalPrice: 320000, uom: 'PCS' }]
+        }
       ]);
     }
 

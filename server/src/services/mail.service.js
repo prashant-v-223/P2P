@@ -414,3 +414,126 @@ export const sendReturnedEmail = async ({
       footer: 'Please update your request in Rayzon P2P based on the remarks above and resubmit.',
     }),
   });
+
+// ─── Logistics & BL Workflow Emails ──────────────────────────────────────────
+
+/**
+ * Sent to EXIM team when vendor submits a new Bill of Lading (BL) Entry
+ */
+export const sendBlSubmittedEmail = async ({
+  to = 'exim@rayzon.com', blNumber, asnNumber, rfqNumber, vendorName, containerCount
+}) =>
+  SEND({
+    to,
+    subject: `🚢 New BL Entry Submitted: ${blNumber} (${vendorName})`,
+    text: `New BL Entry ${blNumber} (ASN: ${asnNumber}) submitted by ${vendorName} for ${containerCount} containers under RFQ ${rfqNumber}.`,
+    html: frame({
+      badge: '🚢 BL Submitted', badgeBg: '#0d7676',
+      title: 'New Bill of Lading Entry Submitted',
+      subtitle: `Freight Forwarder <strong>${vendorName}</strong> has submitted a new Bill of Lading for EXIM review.`,
+      body: `
+        ${detailBox([
+          ['BL Number', `<span style="color:#0d7676;font-weight:800">${blNumber}</span>`, true],
+          ['ASN Number', `<span style="font-weight:800;color:#0f172a">${asnNumber}</span>`, true],
+          ['RFQ Number', rfqNumber || '—'],
+          ['Vendor / Forwarder', vendorName],
+          ['Containers', `<span style="font-weight:800">${containerCount} Containers</span>`],
+          ['Status', '<span style="color:#0d7676;font-weight:800">Submitted — Awaiting EXIM Review</span>'],
+        ])}
+        ${alertBanner('📋', `A new BL entry has been logged. Please review the shipping documents and assign a Customs Agent for clearance.`, '#f0fdfa', '#99f6e4', '#0f766e')}
+        ${ctaButton('Review BL Entry in EXIM Portal', `${APP_URL}/exim/review`, '#0d7676')}
+      `,
+      footer: 'You are receiving this alert as a member of the Rayzon Solar EXIM & Logistics team.',
+    }),
+  });
+
+/**
+ * Sent to Customs Agent when EXIM assigns a BL entry for clearance
+ */
+export const sendBlAssignedToAgentEmail = async ({
+  to, agentName, blNumber, asnNumber, rfqNumber, vendorName, containerCount, vesselName, eximNotes
+}) =>
+  SEND({
+    to,
+    subject: `⚡ Customs Clearance Assignment: BL ${blNumber} (ASN: ${asnNumber})`,
+    text: `Hello ${agentName}, you have been assigned Customs Clearance for BL ${blNumber} (ASN: ${asnNumber}). Forwarder: ${vendorName}. Containers: ${containerCount}.`,
+    html: frame({
+      badge: '⚡ Action Required', badgeBg: '#0284c7',
+      title: 'Assigned for Customs Clearance',
+      subtitle: `Hello <strong>${agentName}</strong>, the EXIM team has assigned you to handle Customs Clearance for BL <strong>${blNumber}</strong>.`,
+      body: `
+        ${detailBox([
+          ['BL Number', `<span style="color:#0284c7;font-weight:800">${blNumber}</span>`, true],
+          ['ASN Number', `<span style="font-weight:800;color:#0f172a">${asnNumber}</span>`, true],
+          ['RFQ Number', rfqNumber || '—'],
+          ['Forwarder', vendorName || '—'],
+          ['Containers', `${containerCount} Containers`],
+          ['Vessel / Cargo', vesselName || 'Solar Cargo'],
+        ])}
+        ${eximNotes ? alertBanner('📝', `<strong>EXIM Instructions:</strong><br>"${eximNotes}"`, '#f0f9ff', '#bae6fd', '#0369a1') : ''}
+        ${alertBanner('📦', `Please log in to the Customs Agent Portal to upload Bill of Entry (BOE) documents and update clearance status.`, '#f8fafc', '#e2e8f0', '#475569')}
+        ${ctaButton('Open Customs Agent Portal', `${APP_URL}/customs-agent/portal`, '#0284c7')}
+      `,
+      footer: 'You are receiving this assignment notification as a designated Rayzon Customs Clearing Agent.',
+    }),
+  });
+
+/**
+ * Sent to Vendor and EXIM team when Customs Agent completes Customs Clearance
+ */
+export const sendBlCustomsClearedEmail = async ({
+  to, vendorName, blNumber, asnNumber, rfqNumber, clearedDate, agentNotes
+}) =>
+  SEND({
+    to,
+    subject: `✅ Customs Cleared: BL ${blNumber} (ASN: ${asnNumber}) — Ready for Invoicing`,
+    text: `Hello ${vendorName}, Customs Clearance is COMPLETE for BL ${blNumber} (ASN: ${asnNumber}) on ${clearedDate || 'today'}. You may now raise your invoice.`,
+    html: frame({
+      badge: '✅ Customs Cleared', badgeBg: '#059669',
+      title: 'Customs Clearance Complete!',
+      subtitle: `Customs clearance has been successfully processed for BL <strong>${blNumber}</strong> (ASN: <strong>${asnNumber}</strong>).`,
+      body: `
+        ${detailBox([
+          ['BL Number', `<span style="color:#059669;font-weight:800">${blNumber}</span>`, true],
+          ['ASN Number', `<span style="font-weight:800;color:#0f172a">${asnNumber}</span>`, true],
+          ['RFQ Number', rfqNumber || '—'],
+          ['Clearance Date', clearedDate || new Date().toLocaleDateString('en-IN')],
+          ['Status', '<span style="color:#059669;font-weight:800">Customs Cleared — Ready for Invoicing ✓</span>'],
+        ])}
+        ${agentNotes ? alertBanner('💬', `<strong>Customs Agent Notes:</strong><br>"${agentNotes}"`, '#f0fdf4', '#bbf7d0', '#166534') : ''}
+        ${alertBanner('💳', `You can now log in to the Vendor Portal to raise your freight invoice against this cleared BL entry.`, '#f0fdf4', '#bbf7d0', '#166534')}
+        ${ctaButton('Raise Freight Invoice', `${APP_URL}/vendor/rfqs`, '#059669')}
+      `,
+      footer: 'This is an automated operational status notification from Rayzon Solar P2P Engine.',
+    }),
+  });
+
+/**
+ * Sent to Freight Forwarder when an RFQ is awarded to them
+ */
+export const sendRfqAwardedEmail = async ({
+  to, vendorName, rfqNumber, title, awardedContainers, totalContainers, awardedRate, totalAmount
+}) =>
+  SEND({
+    to,
+    subject: `🎉 Congratulations! RFQ ${rfqNumber} Awarded to ${vendorName}`,
+    text: `Hello ${vendorName}, congratulations! Your quotation for RFQ ${rfqNumber} (${title}) has been approved and awarded for ${awardedContainers} containers.`,
+    html: frame({
+      badge: '🎉 RFQ Awarded', badgeBg: '#059669',
+      title: 'Congratulations! RFQ Awarded',
+      subtitle: `Hello <strong>${vendorName}</strong>, your quotation for RFQ <strong>${rfqNumber}</strong> has been approved and awarded.`,
+      body: `
+        ${detailBox([
+          ['RFQ Number', `<span style="color:#0d7676;font-weight:800">${rfqNumber}</span>`, true],
+          ['Title', title],
+          ['Awarded Capacity', `<span style="font-weight:800;color:#059669">${awardedContainers} of ${totalContainers} Containers</span>`],
+          ['Awarded Rate', `<span style="font-weight:700">$ ${awardedRate} / Container</span>`],
+          ['Total Value', `<span style="font-weight:800;color:#0f172a">$ ${Number(totalAmount).toLocaleString('en-US')}</span>`],
+          ['Status', '<span style="color:#059669;font-weight:800">Award Approved ✓</span>'],
+        ])}
+        ${alertBanner('🚢', `Please log in to the Vendor Portal to start submitting Bill of Lading (BL) entries for your allocated containers.`, '#f0fdf4', '#bbf7d0', '#166534')}
+        ${ctaButton('Submit BL Entries in Vendor Portal', `${APP_URL}/vendor/rfqs`, '#0d7676')}
+      `,
+      footer: 'Thank you for your business partnership with Rayzon Solar Limited.',
+    }),
+  });

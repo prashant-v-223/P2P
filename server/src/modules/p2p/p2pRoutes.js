@@ -15,7 +15,7 @@ import { User } from '../../models/User.js';
 import { broadcastEvent } from '../../services/sse.service.js';
 import { sendApprovalCreatedEmails } from '../../services/notification.service.js';
 import { authenticateToken, optionalAuth } from '../../middleware/auth.middleware.js';
-import { sendRfqInvitationEmail } from '../../services/mail.service.js';
+import { sendRfqInvitationEmail, sendBlSubmittedEmail, sendBlAssignedToAgentEmail, sendBlCustomsClearedEmail, sendRfqAwardedEmail } from '../../services/mail.service.js';
 import crypto from 'node:crypto';
 import { WorkflowAudit } from '../../models/WorkflowAudit.js';
 import { ensureRfqAwardWorkflows, ensureBlInvoiceWorkflows } from '../workflows/workflowDefaults.js';
@@ -110,11 +110,24 @@ async function validateVendorOwnsPo(req, po) {
 router.get('/dashboard/analytics', optionalAuth, async (req, res) => {
   try {
     const appReg = /approved|dispatched|paid/i;
+    const range = (req.query.range || '7d').toLowerCase();
+
+    // Determine number of days for the selected range
+    let daysCount = 7;
+    if (range === '30d') daysCount = 30;
+    else if (range === '90d') daysCount = 90;
+    else if (range === '1y') daysCount = 365;
+
+    const now = new Date();
+    const rangeStartDate = new Date(now.getTime() - daysCount * 24 * 60 * 60 * 1000);
+    const prevPeriodStartDate = new Date(now.getTime() - (daysCount * 2) * 24 * 60 * 60 * 1000);
 
     const [
       poCount,
+      prevPoCount,
       pendingCount,
       rfqCount,
+      prevRfqCount,
       rfqAwardedCount,
       rfqDraftCount,
       rfqPublishedCount,
@@ -127,11 +140,15 @@ router.get('/dashboard/analytics', optionalAuth, async (req, res) => {
       dutiesList,
       blInvoicesList,
       pendingList,
-      allApprovals
+      allApprovals,
+      recentPos,
+      recentRfqs
     ] = await Promise.all([
       PurchaseOrder.countDocuments().catch(() => 0),
+      PurchaseOrder.countDocuments({ createdAt: { $gte: prevPeriodStartDate, $lt: rangeStartDate } }).catch(() => 0),
       Approval.countDocuments({ status: { $nin: ['Approved & Dispatched', 'Approved', 'Rejected'] } }).catch(() => 0),
       RfqHeader.countDocuments().catch(() => 0),
+      RfqHeader.countDocuments({ createdAt: { $gte: prevPeriodStartDate, $lt: rangeStartDate } }).catch(() => 0),
       RfqHeader.countDocuments({ status: 'awarded' }).catch(() => 0),
       RfqHeader.countDocuments({ status: 'draft' }).catch(() => 0),
       RfqHeader.countDocuments({ status: { $in: ['published', 'active', 'open'] } }).catch(() => 0),
@@ -142,106 +159,239 @@ router.get('/dashboard/analytics', optionalAuth, async (req, res) => {
       AdvancePayment.find().lean().catch(() => []),
       InvoicePayment.find().lean().catch(() => []),
       CustomDutyPayment.find().lean().catch(() => []),
-      LogisticsPayment.find().lean().catch(() => []),
-      Approval.find({ status: { $nin: ['Approved & Dispatched', 'Approved', 'Rejected'] } }).sort({ createdAt: -1 }).limit(6).lean().catch(() => []),
-      Approval.find().lean().catch(() => [])
+      RfqBlEntry.find().lean().catch(() => []),
+      Approval.find({ status: { $nin: ['Approved & Dispatched', 'Approved', 'Rejected'] } }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
+      Approval.find().lean().catch(() => []),
+      PurchaseOrder.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
+      RfqHeader.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => [])
     ]);
 
     const approvedAdvances = advancesList.filter(a => appReg.test(a.status || ''));
     const approvedInvoices = invoicesList.filter(i => appReg.test(i.status || ''));
     const approvedDuties   = dutiesList.filter(d => appReg.test(d.status || ''));
-    const approvedBls      = blInvoicesList.filter(b => appReg.test(b.status || ''));
 
     const sumAdvances = approvedAdvances.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
     const sumInvoices = approvedInvoices.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
     const sumDuties   = approvedDuties.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
 
-    // Dynamic Approval Pipelines from DB
-    const pipelines = {
-      invoices: {
-        pending: allApprovals.filter(a => (a.type || '').toLowerCase().includes('invoice') && !appReg.test(a.status || '')).length,
-        approved: allApprovals.filter(a => (a.type || '').toLowerCase().includes('invoice') && appReg.test(a.status || '')).length
+    // Dynamic Approval Pipelines computed directly from MongoDB collections
+    const approvalPipeline = {
+      advance: {
+        pending: advancesList.filter(a => !appReg.test(a.status || '') && !(a.status || '').toLowerCase().includes('reject')).length,
+        approved: approvedAdvances.length,
+        rejected: advancesList.filter(a => (a.status || '').toLowerCase().includes('reject')).length
       },
-      rfqs: {
+      invoice: {
+        pending: invoicesList.filter(i => !appReg.test(i.status || '') && !(i.status || '').toLowerCase().includes('reject')).length,
+        approved: approvedInvoices.length,
+        rejected: invoicesList.filter(i => (i.status || '').toLowerCase().includes('reject')).length
+      },
+      rfq: {
         pending: allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && !appReg.test(a.status || '')).length,
-        approved: rfqAwardedCount || allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && appReg.test(a.status || '')).length
+        approved: rfqAwardedCount || allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && appReg.test(a.status || '')).length,
+        rejected: allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && (a.status || '').toLowerCase().includes('reject')).length
       },
-      blInvoices: {
-        pending: allApprovals.filter(a => (a.type || '').toLowerCase().includes('bl') && !appReg.test(a.status || '')).length,
-        approved: allApprovals.filter(a => (a.type || '').toLowerCase().includes('bl') && appReg.test(a.status || '')).length
+      blInvoice: {
+        pending: blInvoicesList.filter(b => !appReg.test(b.status || '') && !(b.status || '').toLowerCase().includes('reject')).length,
+        approved: blInvoicesList.filter(b => appReg.test(b.status || '')).length,
+        rejected: blInvoicesList.filter(b => (b.status || '').toLowerCase().includes('reject')).length
       }
     };
 
-    // Dynamic Status Mix from DB
+    // Real Currency Distribution counts from Database
+    const inrInvoices = invoicesList.filter(i => (i.currency || 'INR').toUpperCase() === 'INR').length;
+    const usdInvoices = invoicesList.filter(i => (i.currency || '').toUpperCase() === 'USD').length;
+    const inrAdvances = advancesList.filter(a => (a.currency || 'INR').toUpperCase() === 'INR').length;
+    const usdAdvances = advancesList.filter(a => (a.currency || '').toUpperCase() === 'USD').length;
+
+    const currencyDistribution = {
+      inrTxns: inrInvoices + inrAdvances,
+      usdTxns: usdInvoices + usdAdvances,
+      inrAdvances,
+      usdAdvances,
+      inrInvoices,
+      usdInvoices
+    };
+
+    // Real Payment Status Mix
     const statusMix = {
       draft: allApprovals.filter(a => (a.status || '').toLowerCase().includes('draft')).length,
-      pending: allApprovals.filter(a => (a.status || '').toLowerCase().includes('pending')).length,
+      pending: pendingCount || allApprovals.filter(a => (a.status || '').toLowerCase().includes('pending')).length,
       approved: allApprovals.filter(a => appReg.test(a.status || '')).length,
       rejected: allApprovals.filter(a => (a.status || '').toLowerCase().includes('reject')).length,
       total: allApprovals.length
     };
 
-    // Dynamic Month-by-Month breakdown from actual MongoDB document counts
-    const monthNames = ['Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'];
-    const monthlyTrends = monthNames.map((mName, i) => {
-      return {
-        month: mName,
-        pos: Math.round(poCount * ((i + 1) / 6)),
-        invoices: Math.round(allApprovals.length * ((i + 1) / 6)),
-        rfqs: Math.round(rfqCount * ((i + 1) / 6))
-      };
+    // Real percentage trends
+    const poTrend = prevPoCount > 0 ? Math.round(((poCount - prevPoCount) / prevPoCount) * 100) : 0;
+    const rfqTrend = prevRfqCount > 0 ? Math.round(((rfqCount - prevRfqCount) / prevRfqCount) * 100) : 0;
+
+    // Real Month-by-Month Activity breakdown for last 6 months
+    const monthNames6 = [];
+    for (let i = 5; i >= 0; i--) {
+      const mDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      monthNames6.push({
+        label: mDate.toLocaleDateString('en-IN', { month: 'short' }),
+        start: mDate,
+        end: new Date(mDate.getFullYear(), mDate.getMonth() + 1, 1)
+      });
+    }
+
+    const last6MonthsActivity = await Promise.all(
+      monthNames6.map(async ({ label, start, end }) => {
+        const query = { createdAt: { $gte: start, $lt: end } };
+        const [advCount, invCount, rCount, bCount] = await Promise.all([
+          AdvancePayment.countDocuments(query).catch(() => 0),
+          InvoicePayment.countDocuments(query).catch(() => 0),
+          RfqHeader.countDocuments(query).catch(() => 0),
+          RfqBlEntry.countDocuments(query).catch(() => 0),
+        ]);
+        return {
+          month: label,
+          Advances: advCount,
+          Invoices: invCount,
+          RFQs: rCount,
+          BlEntries: bCount
+        };
+      })
+    );
+
+    // Time-series chart points for selected range
+    const stepCount = daysCount <= 7 ? 7 : daysCount <= 30 ? 6 : 6;
+    const intervalMs = (daysCount * 24 * 60 * 60 * 1000) / stepCount;
+
+    const chartData = await Promise.all(
+      Array.from({ length: stepCount }, (_, i) => {
+        const stepStart = new Date(rangeStartDate.getTime() + i * intervalMs);
+        const stepEnd = new Date(stepStart.getTime() + intervalMs);
+        const queryRange = { createdAt: { $gte: stepStart, $lt: stepEnd } };
+
+        let label = '';
+        if (daysCount <= 7) {
+          label = stepStart.toLocaleDateString('en-IN', { weekday: 'short' });
+        } else if (daysCount <= 30) {
+          label = `W${i + 1} (${stepStart.getDate()} ${stepStart.toLocaleDateString('en-IN', { month: 'short' })})`;
+        } else {
+          label = stepStart.toLocaleDateString('en-IN', { month: 'short' });
+        }
+
+        return Promise.all([
+          PurchaseOrder.countDocuments(queryRange).catch(() => 0),
+          InvoicePayment.countDocuments(queryRange).catch(() => 0),
+          RfqHeader.countDocuments(queryRange).catch(() => 0),
+          AdvancePayment.countDocuments(queryRange).catch(() => 0),
+        ]).then(([pos, invoices, rfqs, advances]) => ({
+          label,
+          pos,
+          invoices,
+          rfqs,
+          advances,
+        }));
+      })
+    );
+
+    // Synthesize real recent activity audit feed from actual DB documents
+    const recentActivity = [];
+
+    recentPos.forEach(po => {
+      recentActivity.push({
+        badge: 'PO',
+        badgeColor: 'blue',
+        code: po.poNumber || `PO-${po.id}`,
+        date: new Date(po.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+        title: po.supplierName ? `PO for ${po.supplierName}` : `Purchase Order #${po.poNumber || po.id}`
+      });
     });
+
+    recentRfqs.forEach(rfq => {
+      recentActivity.push({
+        badge: 'RFQ',
+        badgeColor: 'green',
+        code: rfq.rfqNumber || `RFQ-${rfq.id}`,
+        date: new Date(rfq.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+        title: rfq.title || 'RFQ Logistics Sourcing'
+      });
+    });
+
+    advancesList.slice(0, 3).forEach(adv => {
+      recentActivity.push({
+        badge: 'ADVANCE',
+        badgeColor: 'teal',
+        code: adv.advanceNumber || `ADV-${adv.id}`,
+        date: new Date(adv.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+        title: adv.vendorName ? `Advance to ${adv.vendorName}` : 'Advance Request'
+      });
+    });
+
+    recentActivity.sort((a, b) => new Date(b.date) - new Date(a.date));
 
     const formatINR = (val) => {
       if (!val || val === 0) return '₹0';
       if (val >= 10000000) return `₹${(val / 10000000).toFixed(2)} Cr`;
       if (val >= 100000) return `₹${(val / 100000).toFixed(2)} L`;
+      if (val >= 1000) return `₹${(val / 1000).toFixed(1)}K`;
       return `₹${val.toLocaleString()}`;
     };
 
     return res.json({
       success: true,
+      range,
       stats: {
         purchaseOrders: poCount,
-        purchaseOrdersSub: `${poCount} open POs in DB`,
+        purchaseOrdersSub: `${poCount} open`,
+        poTrend,
         pendingApprovals: pendingCount,
-        pendingApprovalsSub: `${pendingCount} awaiting decision`,
+        pendingApprovalsSub: 'Awaiting action',
         rfqs: rfqCount,
-        rfqsSub: `${rfqAwardedCount} awarded RFQs`,
+        rfqsSub: `${rfqAwardedCount} awarded`,
+        rfqTrend,
         blEntries: blCount,
-        blEntriesSub: `${blClearedCount} cleared entries`,
+        blEntriesSub: `${blClearedCount} cleared`,
         activeVendors: vendorCount,
-        activeVendorsSub: `${activeUserCount} active users`,
+        activeVendorsSub: 'Supplier base',
         advancesPaid: formatINR(sumAdvances),
-        advancesPaidSub: `${approvedAdvances.length} paid advances`,
+        advancesPaidSub: 'Released payments',
         invoicesPaid: formatINR(sumInvoices),
-        invoicesPaidSub: `${approvedInvoices.length} paid invoices`,
+        invoicesPaidSub: 'Completed Invoices',
         dutyPaid: formatINR(sumDuties),
-        dutyPaidSub: `${approvedDuties.length} paid duty entries`
+        dutyPaidSub: 'Cleared duties'
       },
-      pipelines,
-      statusMix,
-      monthlyTrends,
+      last6MonthsActivity,
+      paymentStatusMix: statusMix,
+      currencyDistribution,
+      approvalPipeline,
       rfqFunnel: {
         draft: rfqDraftCount,
-        published: rfqPublishedCount,
+        sent: 0,
+        quoted: 0,
         awarded: rfqAwardedCount,
+        closed: 0,
         total: rfqCount
       },
       blPipeline: {
-        assigned: blCount,
-        cleared: blClearedCount
+        assigned: blInvoicesList.filter(b => /assign/i.test(b.status || '')).length,
+        cleared: blInvoicesList.filter(b => /clear/i.test(b.status || '')).length,
+        invPending: blInvoicesList.filter(b => /pending|draft/i.test(b.status || '')).length,
+        pmtReq: blInvoicesList.filter(b => /pmt|req|payment/i.test(b.status || '')).length,
+        approved: blInvoicesList.filter(b => /approved/i.test(b.status || '')).length,
+        paid: blInvoicesList.filter(b => /paid|dispatched/i.test(b.status || '')).length,
+        total: blInvoicesList.length || blCount
       },
-      recentPendingApprovals: pendingList.map(a => ({
-        id: a.id,
-        vendorName: a.vendorName || a.requestedBy || 'Logistics Provider',
-        amountINR: a.amountINR || a.amountOriginal || 0,
-        currentStep: a.currentStep || 1,
-        totalSteps: a.totalSteps || 1,
-        date: new Date(a.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-        type: a.type || 'BL Freight Invoice',
-        priority: (a.amountINR || a.amountOriginal) > 500000 ? 'High' : 'Normal'
-      }))
+      recentPendingApprovals: [
+        ...pendingList.map(a => ({
+          id: a.id || a.approvalId || 'REQ-01',
+          stepText: `Step ${a.currentStep || 1}/${a.totalSteps || 1}`,
+          dateText: new Date(a.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+          type: a.type || 'Approval',
+        })),
+        ...blInvoicesList.filter(b => !appReg.test(b.status || '') && !(b.status || '').toLowerCase().includes('reject')).map(b => ({
+          id: b.blId || b.blNumber || b.referenceNo || 'BLI-ENTRY',
+          stepText: `Step ${b.currentStep || 1}/${b.totalSteps || 1}`,
+          dateText: new Date(b.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+          type: 'BL Freight Invoice'
+        }))
+      ].slice(0, 6),
+      recentActivity: recentActivity.slice(0, 8)
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -542,11 +692,31 @@ async function syncExistingBlInvoicesToApprovals() {
 
 router.post('/seed', async (req, res) => {
   try {
-    res.json({ success: true, message: 'P2P Master Data seeded' });
+    const { seedDatabase } = await import('../../db/seed.js');
+    await seedDatabase();
+
+    const [poCount, vendorCount, userCount, rfqCount] = await Promise.all([
+      PurchaseOrder.countDocuments(),
+      Vendor.countDocuments(),
+      User.countDocuments(),
+      RfqHeader.countDocuments()
+    ]);
+
+    res.json({
+      success: true,
+      message: 'P2P Master Data successfully seeded and stored in MongoDB database.',
+      data: {
+        purchaseOrders: poCount,
+        vendors: vendorCount,
+        users: userCount,
+        rfqs: rfqCount
+      }
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PURCHASE ORDERS
@@ -561,7 +731,7 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
 
     let poCount = await PurchaseOrder.countDocuments();
 
-    const filter = {};
+    const filter = { isDeleted: { $ne: true } };
     if (req.user?.role === 'Vendor') {
       const vendorCode = String(req.user.sapVendorCode || '');
       const vendorName = String(req.user.companyName || '');
@@ -670,6 +840,54 @@ router.get('/purchase-orders/:id', async (req, res) => {
   }
 });
 
+router.post('/purchase-orders/create', authenticateToken, async (req, res) => {
+  try {
+    const { poNumber, sapPoNumber, supplierId, supplierName, totalAmount, currency, description } = req.body;
+    const number = String(poNumber || sapPoNumber || '').trim();
+    if (!number) {
+      return res.status(400).json({ success: false, error: 'PO Number is required.' });
+    }
+
+    let po = await PurchaseOrder.findOne({
+      $or: [{ poNumber: number }, { sapPoNumber: number }]
+    });
+
+    if (po) {
+      po.status = 'open';
+      if (totalAmount && Number(totalAmount) > 0) po.totalAmount = Number(totalAmount);
+      await po.save();
+      return res.status(200).json({ success: true, message: `PO ${number} is open in database.`, data: po });
+    }
+
+    po = await PurchaseOrder.create({
+      poNumber: number,
+      sapPoNumber: number || number,
+      supplierId: supplierId || '11001810',
+      supplierName: supplierName || 'Rayzon Logistics Master Vendor',
+      companyCode: '1000',
+      totalAmount: Number(totalAmount) > 0 ? Number(totalAmount) : 500000,
+      currency: currency || 'INR',
+      documentDate: new Date(),
+      status: 'open',
+      items: [
+        {
+          itemNumber: '10',
+          description: description || 'Solar Freight Logistics Sourcing',
+          quantity: 5,
+          unitPrice: (Number(totalAmount) || 500000) / 5,
+          totalPrice: Number(totalAmount) || 500000,
+          uom: 'PCS'
+        }
+      ]
+    });
+
+    return res.status(201).json({ success: true, message: `PO ${number} added to DB successfully.`, data: po });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ADVANCE PAYMENTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -680,9 +898,7 @@ const getAdvancesHandler = async (req, res) => {
     const search = String(req.query.q || req.query.search || '').trim();
     const statusFilter = String(req.query.status || '').trim();
 
-    let advCount = await AdvancePayment.countDocuments();
-
-    const filter = {};
+    const filter = { isDeleted: { $ne: true } };
     if (search) {
       const regex = new RegExp(escapeRegex(search), 'i');
       filter.$or = [
@@ -712,7 +928,12 @@ router.get('/advance-payments', getAdvancesHandler);
 
 const getSingleAdvanceHandler = async (req, res) => {
   try {
-    const adv = await AdvancePayment.findOne(buildAdvanceFilter(req.params.id)).lean();
+    const adv = await AdvancePayment.findOne({
+      $and: [
+        buildAdvanceFilter(req.params.id),
+        { isDeleted: { $ne: true } }
+      ]
+    }).lean();
     if (!adv) return res.status(404).json({ success: false, error: 'Advance payment not found' });
     const approval = await Approval.findOne({ $or: [{ id: adv.advanceId }, { id: req.params.id }] }).lean();
     return res.json({ success: true, data: { ...adv, approval: approval || null } });
@@ -971,7 +1192,7 @@ router.get('/invoices', async (req, res) => {
     // Remove old static seed invoices
     await InvoicePayment.deleteMany({ invoicePaymentId: { $in: ['INV-PAY-901', 'INV-PAY-902', 'INV-PAY-903'] } }).catch(() => {});
 
-    const filter = {};
+    const filter = { isDeleted: { $ne: true } };
     if (search) {
       const regex = new RegExp(escapeRegex(search), 'i');
       filter.$or = [
@@ -1002,7 +1223,12 @@ router.get('/invoices', async (req, res) => {
 
 router.get('/invoices/:id', async (req, res) => {
   try {
-    const inv = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id)).lean();
+    const inv = await InvoicePayment.findOne({
+      $and: [
+        buildInvoiceFilter(req.params.id),
+        { isDeleted: { $ne: true } }
+      ]
+    }).lean();
     if (!inv) return res.status(404).json({ success: false, error: 'Invoice payment not found' });
     const approval = await Approval.findOne({ $or: [{ id: inv.invoicePaymentId }, { id: req.params.id }] }).lean();
     return res.json({ success: true, data: { ...inv, approval: approval || null } });
@@ -1354,7 +1580,7 @@ router.get('/rfqs', authenticateToken, async (req, res) => {
     const search = String(req.query.q || req.query.search || '').trim();
     const statusFilter = String(req.query.status || '').trim();
 
-    const filter = {};
+    const filter = { isDeleted: { $ne: true } };
     if (search) {
       const rx = new RegExp(escapeRegex(search), 'i');
       filter.$or = [{ rfqNumber: rx }, { title: rx }, { poId: rx }, { sapPoNumber: rx }];
@@ -1800,7 +2026,27 @@ function isRfqClosed(closingDate) {
     deadline.setUTCHours(23, 59, 59, 999);
   }
   return deadline < new Date();
-}
+}router.post('/rfqs/:id/reopen', authenticateToken, async (req, res) => {
+  try {
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
+    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found.' });
+
+    const newClosingDate = req.body.closingDate ? new Date(req.body.closingDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    rfq.status = 'published';
+    rfq.closingDate = newClosingDate;
+    await rfq.save();
+
+    broadcastEvent('RFQ_REOPENED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, closingDate: rfq.closingDate });
+
+    return res.json({
+      success: true,
+      message: `RFQ ${rfq.rfqNumber} reopened successfully until ${new Date(rfq.closingDate).toLocaleDateString('en-IN')}.`,
+      data: rfq
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 router.get('/vendor-rfqs', authenticateToken, async (req, res) => {
   try {
@@ -1844,8 +2090,8 @@ router.post('/vendor-rfqs/:id/quote', authenticateToken, async (req, res) => {
     if (!vendor) return res.status(403).json({ success: false, error: 'Freight Forwarder access is required.' });
     const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
     if (!rfq || !isFreightVendorInvited(rfq.toObject(), vendor)) return res.status(404).json({ success: false, error: 'Assigned RFQ not found.' });
-    if (String(rfq.status).toLowerCase() !== 'published' || isRfqClosed(rfq.closingDate)) {
-      return res.status(400).json({ success: false, error: 'This RFQ is not open for quotations.' });
+    if (String(rfq.status).toLowerCase() === 'closed' || String(rfq.status).toLowerCase() !== 'published' || isRfqClosed(rfq.closingDate)) {
+      return res.status(400).json({ success: false, error: 'This RFQ is closed. Quote submission deadline has passed.' });
     }
     const ocean = Number(req.body.oceanFreightUsd);
     const shipping = Number(req.body.stChargesInr);
@@ -1891,18 +2137,102 @@ router.get('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) =>
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
+router.get('/validate-asn', authenticateToken, async (req, res) => {
+  try {
+    const asnNumber = String(req.query.asnNumber || '').trim().toUpperCase();
+    const rfqId = String(req.query.rfqId || '').trim();
+
+    if (!asnNumber) {
+      return res.status(400).json({ success: false, valid: false, error: 'ASN Number is required.' });
+    }
+    if (asnNumber.length < 3 || asnNumber.length > 30) {
+      return res.status(400).json({ success: false, valid: false, error: 'ASN Number must be between 3 and 30 characters.' });
+    }
+    if (!/^[A-Z0-9\-_/]+$/i.test(asnNumber)) {
+      return res.status(400).json({ success: false, valid: false, error: 'ASN Number can only contain letters, numbers, hyphens, and slashes.' });
+    }
+
+    // 1. Duplicate check in BL Entries
+    const existsInBl = await RfqBlEntry.exists({ $or: [{ asnNumber }, { autoAsnNumber: asnNumber }] });
+    if (existsInBl) {
+      return res.json({ success: true, valid: false, error: `ASN Number "${asnNumber}" has already been used for a BL entry.` });
+    }
+
+    // 2. Check if matching InvoicePayment record exists for PO / RFQ
+    let matchingInvoice = null;
+    if (rfqId) {
+      const rfq = await RfqHeader.findOne({ $or: [{ rfqId }, { rfqNumber: rfqId }] }).lean();
+      const poKeys = rfq ? [rfq.poId, rfq.sapPoNumber, rfq.poNumber, rfq.rfqId, rfq.rfqNumber].filter(Boolean) : [rfqId];
+      matchingInvoice = await InvoicePayment.findOne({
+        $and: [
+          { asnNumber: { $regex: new RegExp(`^${asnNumber.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') } },
+          { $or: [{ poId: { $in: poKeys } }, { sapPoNumber: { $in: poKeys } }, { poNumber: { $in: poKeys } }, { asnNumber: { $exists: true, $ne: '' } }] }
+        ]
+      }).lean();
+    } else {
+      matchingInvoice = await InvoicePayment.findOne({
+        asnNumber: { $regex: new RegExp(`^${asnNumber.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') }
+      }).lean();
+    }
+
+    if (!matchingInvoice) {
+      return res.json({
+        success: true,
+        valid: false,
+        error: `ASN Number "${asnNumber}" does not match any invoice record for the linked Purchase Order (PO).`
+      });
+    }
+
+    return res.json({ success: true, valid: true, message: `ASN Number "${asnNumber}" is valid and matched with Purchase Order (PO) invoice records.` });
+  } catch (err) {
+    return res.status(500).json({ success: false, valid: false, error: err.message });
+  }
+});
+
 router.post('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) => {
   try {
     const context = await resolveVendorAwardedRfq(req);
     if (context.error) return res.status(context.status).json({ success: false, error: context.error });
-    let blNumber = String(req.body.blNumber || '').trim().toUpperCase();
+    const blNumber = String(req.body.blNumber || '').trim().toUpperCase();
     if (!blNumber) {
-      blNumber = `BL-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+      return res.status(400).json({ success: false, error: 'BL Number is required.' });
     }
+    if (!/^[A-Z0-9\-_/]{3,30}$/i.test(blNumber)) {
+      return res.status(400).json({ success: false, error: 'BL Number must be between 3 and 30 characters (letters, numbers, hyphens, slashes).' });
+    }
+
+    const asnNumber = String(req.body.asnNumber || '').trim().toUpperCase();
+    if (!asnNumber) {
+      return res.status(400).json({ success: false, error: 'ASN Number (Advance Shipping Notice) is required to link with RFQ & PO records.' });
+    }
+    if (!/^[A-Z0-9\-_/]{3,30}$/i.test(asnNumber)) {
+      return res.status(400).json({ success: false, error: 'ASN Number must be between 3 and 30 characters (letters, numbers, hyphens, slashes).' });
+    }
+
     const containerCount = Number(req.body.containerCount);
-    const duplicate = await RfqBlEntry.exists({ blNumber });
-    if (duplicate) {
-      blNumber = `BL-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const duplicateBl = await RfqBlEntry.exists({ blNumber });
+    if (duplicateBl) {
+      return res.status(400).json({ success: false, error: `BL Number "${blNumber}" already exists in the system.` });
+    }
+
+    const duplicateAsn = await RfqBlEntry.exists({ $or: [{ asnNumber }, { autoAsnNumber: asnNumber }] });
+    if (duplicateAsn) {
+      return res.status(400).json({ success: false, error: `ASN Number "${asnNumber}" has already been used for a BL entry.` });
+    }
+
+    const poKeys = [context.rfq?.poId, context.rfq?.sapPoNumber, context.rfq?.poNumber, context.rfq?.rfqId, context.rfq?.rfqNumber].filter(Boolean);
+    const matchingInvoice = await InvoicePayment.findOne({
+      $and: [
+        { asnNumber: { $regex: new RegExp(`^${asnNumber.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') } },
+        { $or: [{ poId: { $in: poKeys } }, { sapPoNumber: { $in: poKeys } }, { poNumber: { $in: poKeys } }, { asnNumber: { $exists: true, $ne: '' } }] }
+      ]
+    }).lean();
+
+    if (!matchingInvoice) {
+      return res.status(400).json({
+        success: false,
+        error: `ASN Number "${asnNumber}" does not match any invoice record for the linked Purchase Order (PO).`
+      });
     }
     const vendorKeys = freightVendorKeys(context.vendor);
     const existing = await RfqBlEntry.find({ rfqId: context.rfq.rfqId }).lean();
@@ -1917,7 +2247,7 @@ router.post('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) =
       blNumber, containerCount, vendorId: context.vendor.sapVendorCode || context.vendor.supplierId || context.vendor.id,
       vendorName: context.vendor.companyName, remarks: String(req.body.remarks || '').trim(),
       vesselName: context.rfq.title, shippingLine: context.rfq.awardedVendorName || context.vendor.companyName,
-      autoAsnNumber: String(req.body.asnNumber || '').trim(), status: 'submitted', documents
+      asnNumber, autoAsnNumber: asnNumber, status: 'submitted', documents
     });
     broadcastEvent('BL_SUBMITTED', { blId: entry.blId, blNumber, rfqId: context.rfq.rfqId, vendorName: context.vendor.companyName });
     return res.status(201).json({ success: true, message: 'BL entry submitted for EXIM review.', data: entry });
@@ -1993,7 +2323,16 @@ console.log("blWorkflow",blWorkflow);
 router.get('/rfqs/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] }).lean();
+    let rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }, { awardApprovalId: id }] }).lean();
+
+    if (!rfq) {
+      const app = await Approval.findOne({ $or: [{ id }, { referenceId: id }] }).lean();
+      if (app && app.transactionSnapshot?.rfqId) {
+        const targetId = app.transactionSnapshot.rfqId;
+        rfq = await RfqHeader.findOne({ $or: [{ rfqId: targetId }, { rfqNumber: targetId }] }).lean();
+      }
+    }
+
     if (!rfq) {
       return res.status(404).json({ success: false, error: 'RFQ not found' });
     }
@@ -2030,6 +2369,8 @@ router.get('/rfqs/:id', authenticateToken, async (req, res) => {
       }
 
       const canAct = roleCanAct(userRoles, requiredRole);
+      const isAdmin = ['admin', 'system_admin', 'super_admin'].includes(String(req.user?.role || '').toLowerCase());
+
       approvalProgress = {
         id: approval.id,
         status: approval.status,
@@ -2037,8 +2378,8 @@ router.get('/rfqs/:id', authenticateToken, async (req, res) => {
         currentStep: Number(approval.currentStep || 1),
         totalSteps: steps.length || Number(approval.totalSteps || 0),
         requiredRole,
-        canCurrentUserAct: !terminalApproved && !terminalRejected && !isOwnRequest && canAct,
-        blockedReason: terminalApproved ? 'Approval completed.' : terminalRejected ? 'Approval rejected.' : isOwnRequest ? 'The requester cannot approve their own request.' : canAct ? '' : `Waiting for a user with the ${requiredRole || 'required'} role.`,
+        canCurrentUserAct: !terminalApproved && !terminalRejected && (isAdmin || (!isOwnRequest && canAct)),
+        blockedReason: terminalApproved ? 'Approval completed.' : terminalRejected ? 'Approval rejected.' : (!isAdmin && isOwnRequest) ? 'The requester cannot approve their own request.' : (isAdmin || canAct) ? '' : `Waiting for a user with the ${requiredRole || 'required'} role.`,
         submittedAt: approval.submittedAt,
         actionHistory: approval.actionHistory || [],
         steps: steps.map((step) => ({
@@ -2268,8 +2609,8 @@ router.post('/rfqs/:id/award', authenticateToken, async (req, res) => {
     const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
     if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
     
-    // Allow reassignment for awarded RFQs, and allow further allocations for partially awarded RFQs
-    const allowedStatuses = isReassignment ? ['published', 'partially_awarded', 'awarded'] : ['published', 'partially_awarded'];
+    // Allow awarding, incremental allocations, and reassignments
+    const allowedStatuses = ['published', 'open', 'partially_awarded', 'awarded'];
     if (!allowedStatuses.includes(rfq.status)) {
       return res.status(409).json({ success: false, error: `RFQ cannot be awarded while it is ${rfq.status.replace('_', ' ')}.` });
     }
@@ -2336,8 +2677,16 @@ router.post('/rfqs/:id/award', authenticateToken, async (req, res) => {
         : `Container allocation for ${rfq.rfqNumber}`;
       await approval.save();
       
-      // Store reassignment history if this is a reassignment
-      if (isReassignment && rfq.status === 'awarded') {
+      const isFullReassignment = Boolean(isReassignment) && rfq.status === 'awarded' && (Number(rfq.allocatedQuantity) >= totalContainers);
+      
+      // Preserve any previously-approved allocations from earlier cycles (unless this is a full reassignment after 100% completion)
+      const previouslyApprovedAllocations = isFullReassignment
+        ? []
+        : (rfq.get('awardAllocations') || []).filter(a => a.approved === true);
+      const previouslyAllocatedQty = previouslyApprovedAllocations.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
+
+      // Store reassignment history if this is a full reassignment
+      if (isFullReassignment) {
         const reassignmentHistory = rfq.get('reassignmentHistory') || [];
         reassignmentHistory.push({
           reassignedAt: new Date(),
@@ -2352,12 +2701,20 @@ router.post('/rfqs/:id/award', authenticateToken, async (req, res) => {
         });
         rfq.set('reassignmentHistory', reassignmentHistory);
       }
-      
+
+      // New cycle: mark new allocations as pending, preserve previously-approved ones
+      const pendingAllocations = normalized.map(a => ({ ...a, approved: false, cycleApprovalId: approvalId }));
+      const combinedAllocations = [
+        ...previouslyApprovedAllocations,
+        ...pendingAllocations
+      ];
+
       rfq.status = 'pending_approval';
       rfq.totalQuantity = totalContainers;
-      rfq.allocatedQuantity = 0;
-      rfq.pendingAllocation = totalContainers;
-      rfq.set('awardAllocations', normalized);
+      // Preserve already-approved container count; pendingAllocation = only what's going for approval now
+      rfq.allocatedQuantity = previouslyAllocatedQty;
+      rfq.pendingAllocation = totalContainers - previouslyAllocatedQty;
+      rfq.set('awardAllocations', combinedAllocations);
       rfq.set('awardApprovalId', approvalId);
       await rfq.save();
       
@@ -2567,6 +2924,16 @@ router.post('/customs-agent/clear', authenticateToken, async (req, res) => {
     await bl.save();
 
     broadcastEvent('BL_CUSTOMS_CLEARED', { blId: bl.blId, blNumber: bl.blNumber, rfqId: bl.rfqId, vendorId: bl.vendorId, clearedAt: bl.customsClearedAt });
+
+    sendBlCustomsClearedEmail({
+      to: 'vendor@rayzon.com',
+      vendorName: bl.vendorName,
+      blNumber: bl.blNumber,
+      asnNumber: bl.asnNumber || bl.autoAsnNumber,
+      rfqNumber: bl.rfqNumber,
+      clearedDate: new Date(bl.customsClearedAt).toLocaleDateString('en-IN'),
+      agentNotes: bl.customsClearanceNotes
+    }).catch((err) => console.warn('[BL Email] sendBlCustomsClearedEmail error:', err.message));
 
     return res.json({ success: true, message: 'Marked as Customs Cleared! Invoicing options enabled.', bl });
   } catch (err) {
@@ -2961,6 +3328,73 @@ router.get('/audit/:entityId', optionalAuth, async (req, res) => {
       count: combined.length,
       auditLogs: combined
     });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// CUSTOM DUTIES CRUD ROUTES
+router.get('/custom-duties', optionalAuth, async (req, res) => {
+  try {
+    const duties = await CustomDutyPayment.find().sort({ createdAt: -1 }).lean();
+    return res.json({ success: true, duties, count: duties.length });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/custom-duties', authenticateToken, async (req, res) => {
+  try {
+    const { blNumber, boeNumber, dutyAmount, portCode, customAgentName, vesselName, icegateRef, remarks, documents } = req.body;
+    if (!blNumber || !dutyAmount) {
+      return res.status(400).json({ success: false, error: 'BL Number and Duty Amount are required.' });
+    }
+
+    const numAmount = Number(dutyAmount);
+    const dutyId = `DUTY-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const wf = await resolveWorkflowFromDB('Custom Duty', numAmount, { currency: 'INR' });
+    const approval = await createApprovalRecord({
+      referenceId: dutyId,
+      type: 'Custom Duty',
+      vendorName: customAgentName || 'Customs House Agent',
+      amountFormatted: `INR ${numAmount}`,
+      poRef: blNumber,
+      requestedBy: req.user?.name || req.user?.email || 'System User',
+      requestedById: req.user?.id || req.user?.email,
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: { blNumber, boeNumber, dutyAmount: numAmount, portCode, customAgentName, icegateRef },
+      wf
+    });
+
+    const duty = await CustomDutyPayment.create({
+      dutyId,
+      blId: String(blNumber).trim().toUpperCase(),
+      blNumber: String(blNumber).trim().toUpperCase(),
+      boeNumber: boeNumber || `BOE-${blNumber.slice(-6)}`,
+      vesselName: vesselName || 'EVER GIVEN V-104E',
+      portCode: portCode || 'INNHAV (Nhava Sheva)',
+      dutyAmount: numAmount,
+      customAgentName: customAgentName || 'Magnesh - Fast Forward Logistics India',
+      icegateRef: icegateRef || `ICEGATE-${Math.floor(1000000 + Math.random() * 9000000)}`,
+      status: approval.status,
+      remarks: remarks || '',
+      documents: documents || [],
+      approvalInstanceId: approval._id,
+      createdBy: req.user?.name || req.user?.email || 'System User'
+    });
+
+    return res.status(201).json({ success: true, message: 'Custom Duty payment created successfully.', duty, approval });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.delete('/custom-duties/:id', authenticateToken, async (req, res) => {
+  try {
+    const duty = await CustomDutyPayment.findOneAndDelete({ $or: [{ dutyId: req.params.id }, { _id: req.params.id }] });
+    if (!duty) return res.status(404).json({ success: false, error: 'Custom Duty record not found.' });
+    return res.json({ success: true, message: 'Custom Duty record deleted successfully.' });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }

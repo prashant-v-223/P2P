@@ -18,13 +18,13 @@ function formatActorName(log) {
   const remarks = log.remarks || log.reason || '';
 
   // Extract real name from remarks if available (e.g. "Approve by Harish Solanki" or "Approve by Suresh Kumar")
-  const match = remarks.match(/(?:Approved|Approve|Rejected|Returned)\s+by\s+([A-Za-z0-9\s]+)/i);
+  const match = remarks.match(/(?:Approved|Approve|Rejected|Returned|Submitted|Created|Actioned)\s+by\s+([A-Za-z0-9\s]+)/i);
   if (match && match[1] && match[1].trim()) {
     return match[1].trim();
   }
 
-  if (!name || name === 'Approver' || name === 'User' || name === 'system') {
-    return log.actorRole ? formatRoleName(log.actorRole) : 'System Admin';
+  if (!name || name === 'Approver' || name === 'User' || name === 'system' || name === 'undefined') {
+    return log.actorRole ? formatRoleName(log.actorRole) : 'Authorized User';
   }
   return name;
 }
@@ -50,7 +50,11 @@ export default function RecordDbInfoDrawer({ entityId, entityType, recordData })
       const res = await apiFetch(`/api/p2p/audit/${queryId}`);
       if (res.ok) {
         const json = await res.json();
-        setAuditLogs(json.auditLogs || []);
+        const logs = (json.auditLogs || []).filter(log => {
+          const act = String(log.action || log.eventType || '').toLowerCase();
+          return !act.includes('delete');
+        });
+        setAuditLogs(logs);
       }
     } catch (e) {
       console.error('Error fetching audit trail:', e);

@@ -1,19 +1,25 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import { ServerPagination } from '../../components/ui/server-pagination';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { CustomInput } from '../../components/ui/custom-input';
-import { ShieldCheck, CheckCircle2, Plus, FileCheck2, Loader2, X, Search } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, Plus, FileCheck2, Loader2, X, Search, Trash2 } from 'lucide-react';
 import DocumentUploader from '../../components/shared/DocumentUploader';
 
 export default function CustomDutyView() {
+  const navigate = useNavigate();
   const { showToast } = useToast();
+  const { user } = useSelector((state) => state.auth);
 
   const [duties, setDuties] = useState([]);
   const [loadingDuties, setLoadingDuties] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+
+  const canCreate = user?.role === 'admin' || user?.role === 'System Admin' || user?.role === 'finance' || user?.role === 'exim';
 
   const fetchDuties = async () => {
     try {
@@ -129,13 +135,15 @@ export default function CustomDutyView() {
           </div>
         </div>
 
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
-        >
-          <Plus className="w-4 h-4" />
-          <span>New Custom Duty Payout</span>
-        </button>
+        {canCreate && (
+          <button
+            onClick={() => navigate('/p2p/custom-duty/create')}
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>New Custom Duty Payout</span>
+          </button>
+        )}
       </div>
 
       {/* Filter Bar */}

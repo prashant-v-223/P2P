@@ -8,21 +8,8 @@ import VendorNotificationPanel from './VendorNotificationPanel';
 
 export function RayzonLogo() {
   return (
-    <div className="flex items-center gap-2.5 cursor-pointer select-none">
-      <div className="w-9 h-9 rounded-xl bg-[#0d7676] flex items-center justify-center text-white font-extrabold shadow-xs shrink-0 ring-2 ring-teal-100">
-        <Sun className="w-5 h-5 text-amber-300 fill-amber-300" />
-      </div>
-      <div className="flex flex-col leading-tight">
-        <div className="flex items-center gap-1.5">
-          <h1 className="font-extrabold text-slate-900 text-sm tracking-tight flex items-center gap-1.5">
-            Rayzon Solar
-            <span className="text-[9px] bg-teal-50 text-[#0d7676] px-1.5 py-0.5 rounded border border-teal-200 font-mono font-bold">
-              VENDOR
-            </span>
-          </h1>
-        </div>
-        <p className="text-[11px] text-slate-400 font-semibold">Supplier Portal</p>
-      </div>
+    <div className="flex items-center  cursor-pointer select-none">
+      <img src="/logo.png" alt="logo" srcset="" width={130} height={20} className='my-2' />
     </div>
   );
 }
@@ -110,10 +97,9 @@ export default function VendorLayout() {
               <NavLink
                 to="/vendor/dashboard"
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl transition-all ${
-                    isActive
-                      ? 'bg-teal-50 text-[#0d7676] border-2 border-[#0d7676] font-bold shadow-2xs'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                  `flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl transition-all ${isActive
+                    ? 'bg-teal-50 text-[#0d7676] border-2 border-[#0d7676] font-bold shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                   }`
                 }
               >
@@ -129,10 +115,9 @@ export default function VendorLayout() {
               {!isFreightForwarder && <NavLink
                 to="/vendor/invoices"
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl transition-all ${
-                    isActive || location.pathname.startsWith('/vendor/invoices')
-                      ? 'bg-teal-50 text-[#0d7676] border-2 border-[#0d7676] font-bold shadow-2xs'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                  `flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl transition-all ${isActive || location.pathname.startsWith('/vendor/invoices')
+                    ? 'bg-teal-50 text-[#0d7676] border-2 border-[#0d7676] font-bold shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                   }`
                 }
               >
@@ -143,10 +128,9 @@ export default function VendorLayout() {
               {!isFreightForwarder && <NavLink
                 to="/vendor/advances"
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl transition-all ${
-                    isActive
-                      ? 'bg-teal-50 text-[#0d7676] border-2 border-[#0d7676] font-bold shadow-2xs'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                  `flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl transition-all ${isActive
+                    ? 'bg-teal-50 text-[#0d7676] border-2 border-[#0d7676] font-bold shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                   }`
                 }
               >
@@ -157,10 +141,9 @@ export default function VendorLayout() {
               <NavLink
                 to="/vendor/profile"
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl transition-all ${
-                    isActive
-                      ? 'bg-teal-50 text-[#0d7676] border-2 border-[#0d7676] font-bold shadow-2xs'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                  `flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl transition-all ${isActive
+                    ? 'bg-teal-50 text-[#0d7676] border-2 border-[#0d7676] font-bold shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                   }`
                 }
               >
@@ -206,8 +189,7 @@ export default function VendorLayout() {
           <NavLink
             to="/vendor/dashboard"
             className={({ isActive }) =>
-              `flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold ${
-                isActive ? 'bg-teal-50 text-[#0d7676] font-bold' : 'text-slate-600'
+              `flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold ${isActive ? 'bg-teal-50 text-[#0d7676] font-bold' : 'text-slate-600'
               }`
             }
           >
@@ -219,8 +201,7 @@ export default function VendorLayout() {
           >RFQs</NavLink> : <NavLink
             to="/vendor/invoices"
             className={({ isActive }) =>
-              `flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold ${
-                isActive || location.pathname.startsWith('/vendor/invoices') ? 'bg-teal-50 text-[#0d7676] font-bold' : 'text-slate-600'
+              `flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold ${isActive || location.pathname.startsWith('/vendor/invoices') ? 'bg-teal-50 text-[#0d7676] font-bold' : 'text-slate-600'
               }`
             }
           >
@@ -229,8 +210,7 @@ export default function VendorLayout() {
           {!isFreightForwarder && <NavLink
             to="/vendor/advances"
             className={({ isActive }) =>
-              `flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold ${
-                isActive ? 'bg-teal-50 text-[#0d7676] font-bold' : 'text-slate-600'
+              `flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold ${isActive ? 'bg-teal-50 text-[#0d7676] font-bold' : 'text-slate-600'
               }`
             }
           >
@@ -239,8 +219,7 @@ export default function VendorLayout() {
           <NavLink
             to="/vendor/profile"
             className={({ isActive }) =>
-              `flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold ${
-                isActive ? 'bg-teal-50 text-[#0d7676] font-bold' : 'text-slate-600'
+              `flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold ${isActive ? 'bg-teal-50 text-[#0d7676] font-bold' : 'text-slate-600'
               }`
             }
           >

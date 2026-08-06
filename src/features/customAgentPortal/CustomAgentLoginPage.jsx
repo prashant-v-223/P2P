@@ -131,13 +131,6 @@ export default function CustomAgentLoginPage() {
             </a>
           </p>
         </div>
-
-        {/* Demo Credentials */}
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs">
-          <p className="font-bold text-amber-900 mb-2">Demo Credentials:</p>
-          <p className="text-amber-800 font-mono">Email: magnesh@fflindia.com</p>
-          <p className="text-amber-800 font-mono">Password: Agent@2026</p>
-        </div>
       </div>
     </div>
   );

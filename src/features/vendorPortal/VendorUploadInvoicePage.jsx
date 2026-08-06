@@ -41,7 +41,7 @@ export default function VendorUploadInvoicePage() {
   const [apiSearchResults, setApiSearchResults] = useState([]);
 
   const [invoiceNumber, setInvoiceNumber] = useState(generateUniqueInvoiceNumber());
-  const [asnNumber, setAsnNumber] = useState(generateASNNumber());
+  const [asnNumber, setAsnNumber] = useState('');
   const isImportVendor = String(vendorProfile?.vendorType || '').trim().toLowerCase().includes('import');
   const [invoiceDate, setInvoiceDate] = useState(getLocalISODate());
   const [currency, setCurrency] = useState('INR');
@@ -246,12 +246,18 @@ export default function VendorUploadInvoicePage() {
       return;
     }
 
+    // ASN validation for Import vendors
+    const cleanAsn = asnNumber.trim().toUpperCase();
+    if (isImportVendor && (!cleanAsn || cleanAsn.length < 3)) {
+      const msg = 'Invalid ASN Number. ASN Number (Advance Shipping Notice) is required for import invoice entries.';
+      setErrorMsg(msg);
+      showToast({ title: 'Invalid ASN Number', description: msg, type: 'error' });
+      return;
+    }
+    const finalAsn = isImportVendor ? cleanAsn : cleanAsn;
+
     setIsSubmitting(true);
     try {
-      // ASN applies only to Import vendors.
-      const finalAsn = isImportVendor ? (asnNumber.trim() || generateASNNumber()) : '';
-      if (isImportVendor && !asnNumber.trim()) setAsnNumber(finalAsn);
-
       await addInvoice({
         poNumber,
         invoiceNumber: invoiceNumber.trim(),

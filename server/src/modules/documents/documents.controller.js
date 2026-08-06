@@ -224,7 +224,7 @@ export const listDocuments = async (req, res) => {
   try {
     const { documentableType, documentableId, documentType } = req.query;
 
-    const filter = {};
+    const filter = { isDeleted: { $ne: true } };
     if (documentableType) filter.documentableType = documentableType;
     if (documentableId) filter.documentableId = documentableId;
     if (documentType) filter.documentType = documentType;

@@ -35,12 +35,9 @@ export default function VendorLoginPage() {
       <div className="w-full max-w-[420px] space-y-6">
         {/* Top Brand Logo Header */}
         <div className="text-center space-y-3">
-          <div className="mx-auto w-12 h-12 bg-[#0d7676] rounded-2xl flex items-center justify-center shadow-sm">
-            <Sun className="w-6 h-6 text-amber-300 fill-amber-300" />
-          </div>
+          <img src="/logo.png" alt="logo" srcset="" width={150} height={25} className='mx-auto d-black' />
 
           <div className="space-y-1">
-            <h1 className="text-2xl font-extrabold text-slate-950 tracking-tight">Vendor Portal</h1>
             <p className="text-xs text-slate-500 font-medium">
               Sign in to access your RFQs, Invoices & payment status
             </p>

@@ -170,11 +170,6 @@ export default function InvoicePaymentFormView() {
     setErrorMsg('');
 
     if (po.currency) setCurrency(po.currency);
-    if (String(po.vendorType || '').toLowerCase().includes('import')) {
-      setAsnNumber((current) => current || generateASNNumber());
-    } else {
-      setAsnNumber('');
-    }
     if (!invoiceAmount) setInvoiceAmount(po.remainingInvoiceAmount ?? po.totalAmount ?? '');
     if (po.paymentTerms) {
       const match = String(po.paymentTerms).match(/\d+/);
@@ -254,10 +249,12 @@ export default function InvoicePaymentFormView() {
       showToast({ title: 'Invoice Type Required', description: msg, type: 'error' });
       return;
     }
-    if (!documents.length && !isEditMode) {
-      const msg = 'At least one invoice document is required.';
+    const isImportPO = String(selectedPoObj?.vendorType || '').toLowerCase().includes('import');
+    const cleanAsn = asnNumber.trim().toUpperCase();
+    if (isImportPO && (!cleanAsn || cleanAsn.length < 3)) {
+      const msg = 'Invalid ASN Number. ASN Number (Advance Shipping Notice) is required for import PO invoice requests.';
       setErrorMsg(msg);
-      showToast({ title: 'Invoice Document Required', description: msg, type: 'error' });
+      showToast({ title: 'Invalid ASN Number', description: msg, type: 'error' });
       return;
     }
 
@@ -268,7 +265,7 @@ export default function InvoicePaymentFormView() {
       const payload = {
         poNumber,
         invoiceNumber: invoiceNumber.trim(),
-        asnNumber: asnNumber.trim() || generateASNNumber(),
+        asnNumber: cleanAsn,
         invoiceDate,
         dueDays: Number(dueDays),
         dueDate: calculateDueDate(),

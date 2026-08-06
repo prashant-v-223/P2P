@@ -15,12 +15,12 @@ function formatRoleTitle(roleKey = '') {
 }
 
 function canRoleActOnStep(userRoleInput, stepRoleInput) {
-  if (!userRoleInput) return true; // Default allow for authenticated portal users
+  if (!userRoleInput) return false; // Require a valid logged-in user role
   const u = String(userRoleInput).toLowerCase().replace(/[\s_-]+/g, '').trim();
   const s = String(stepRoleInput || '').toLowerCase().replace(/[\s_-]+/g, '').trim();
 
   if (['admin', 'systemadmin', 'superadmin', 'md'].includes(u)) return true;
-  if (!s) return true;
+  if (!s) return false;
 
   if (u.includes('procurement') && s.includes('procurement')) return true;
   if (u.includes('finance') && s.includes('finance')) return true;
@@ -36,6 +36,7 @@ export default function UniversalApprovalWorkflowCard({
   vendorName = '', 
   amountFormatted = '', 
   poRef = '',
+  requireExplicitSubmission = true,
   onStatusChange 
 }) {
   const currentUser = useSelector((state) => state.auth.user);
@@ -64,7 +65,13 @@ export default function UniversalApprovalWorkflowCard({
         }
       }
 
-      // Fallback synthesis if approval document does not exist yet
+      // If requireExplicitSubmission is true and backend has no approval document for this ID, do NOT render fake card
+      if (requireExplicitSubmission) {
+        setApproval(null);
+        return;
+      }
+
+      // Optional fallback synthesis ONLY if explicit submission is not required
       const defaultSteps = [
         { step: 1, title: 'Procurement Head Approval', roleKey: 'procurement_head', roleName: 'Procurement Head', statusKey: 'Pending Procurement Head Approval' },
         { step: 2, title: 'Finance Approval', roleKey: 'finance_lead', roleName: 'Finance Lead', statusKey: 'Pending Finance Approval' }
@@ -87,6 +94,7 @@ export default function UniversalApprovalWorkflowCard({
       });
     } catch (e) {
       console.error('[Approval Card] Error loading approval workflow:', e);
+      setApproval(null);
     } finally {
       setLoading(false);
     }
@@ -167,7 +175,7 @@ export default function UniversalApprovalWorkflowCard({
   const canActOnCurrentStep = !isTerminal && canRoleActOnStep(currentUser?.role, activeRoleKey);
 
   return (
-    <div className="rounded-3xl bg-white border border-slate-200 shadow-sm p-6 sm:p-7 space-y-6 text-left font-sans antialiased">
+    <div className="rounded-3xl bg-white border border-slate-200 shadow-sm p-3 space-y-2 text-left font-sans antialiased">
       {/* 1. Header Bar matching exact screenshot */}
       <div className="flex items-center justify-between border-b border-slate-100 pb-4">
         <div>

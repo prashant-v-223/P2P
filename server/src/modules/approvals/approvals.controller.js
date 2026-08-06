@@ -349,7 +349,23 @@ export const processApprovalAction = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Action must be Approve, Return, or Reject.' });
     }
 
-    let approval = await Approval.findOne({ id: req.params.id });
+    let approval = await Approval.findOne({
+      $or: [
+        { id: req.params.id },
+        { referenceId: req.params.id },
+        { referenceNumber: req.params.id },
+        { 'transactionSnapshot.rfqId': req.params.id }
+      ]
+    }).sort({ createdAt: -1 });
+
+    if (!approval) {
+      const { RfqHeader } = await import('../../models/RfqLogistics.js');
+      const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] }).lean();
+      if (rfq?.awardApprovalId) {
+        approval = await Approval.findOne({ id: rfq.awardApprovalId });
+      }
+    }
+
     if (!approval) {
       return res.status(404).json({ success: false, error: 'Approval not found.' });
     }
@@ -475,44 +491,54 @@ export const processApprovalAction = async (req, res) => {
     } else if (approval.type === 'RFQ Vendor Award') {
       try {
         const { RfqHeader, RfqQuote } = await import('../../models/RfqLogistics.js');
-        const rfq = await RfqHeader.findOne({ awardApprovalId: approval.id });
+        // Look up via transactionSnapshot.rfqId (most reliable) or awardApprovalId
+        const rfqId = approval.transactionSnapshot?.rfqId;
+        const rfq = await RfqHeader.findOne(
+          rfqId
+            ? { $or: [{ rfqId }, { awardApprovalId: approval.id }] }
+            : { awardApprovalId: approval.id }
+        );
         if (rfq) {
           if (newStatus === 'Approved & Dispatched') {
-            const newAllocations = approval.allocations || [];
-            const newQty = newAllocations.reduce((sum, item) => sum + (Number(item.containers) || 0), 0);
+            // Newly approved allocations for this specific approval cycle
+            const newlyApproved = (approval.allocations || []).map(a => ({
+              ...a,
+              approved: true,
+              cycleApprovalId: approval.id
+            }));
             const totalQty = Number(rfq.totalQuantity) || Number(rfq.cargoDetails?.containerCount) || 1;
 
-            // Merge allocations carefully
+            // Preserve all previously approved allocations from prior cycles
             const existingAllocations = Array.isArray(rfq.awardAllocations) ? rfq.awardAllocations : [];
-            const mergedAllocations = [...existingAllocations];
+            const alreadyApproved = existingAllocations.filter(a => a.approved === true);
+            const otherPending = existingAllocations.filter(a => a.approved !== true && a.cycleApprovalId !== approval.id);
 
-            newAllocations.forEach(newItem => {
-              const existingIdx = mergedAllocations.findIndex(e => e.quoteId === newItem.quoteId || e.vendorId === newItem.vendorId);
-              if (existingIdx >= 0) {
-                mergedAllocations[existingIdx] = newItem;
-              } else {
-                mergedAllocations.push(newItem);
-              }
-            });
+            const mergedAllocations = [...alreadyApproved, ...newlyApproved, ...otherPending];
 
-            const totalAllocated = mergedAllocations.reduce((sum, item) => sum + (Number(item.containers) || 0), 0);
-            const finalAllocated = Math.min(totalQty, totalAllocated);
-            const remainingQty = Math.max(0, totalQty - finalAllocated);
+            const totalAllocated = mergedAllocations.filter(a => a.approved === true).reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
+            const remainingQty = Math.max(0, totalQty - totalAllocated);
 
-            rfq.allocatedQuantity = finalAllocated;
+            rfq.allocatedQuantity = totalAllocated;
             rfq.pendingAllocation = remainingQty;
-            rfq.status = remainingQty === 0 ? 'awarded' : finalAllocated > 0 ? 'partially_awarded' : 'published';
+            rfq.status = remainingQty === 0 ? 'awarded' : totalAllocated > 0 ? 'partially_awarded' : 'published';
             rfq.set('awardAllocations', mergedAllocations);
-            rfq.awardedVendorId = mergedAllocations.map((item) => item.vendorId).join(',');
-            rfq.awardedVendorName = mergedAllocations.map((item) => item.vendorName).join(', ');
-            rfq.awardedQuoteId = mergedAllocations.map((item) => item.quoteId).join(',');
+            rfq.awardedVendorId = mergedAllocations.filter(a => a.approved).map(a => a.vendorId).join(',');
+            rfq.awardedVendorName = mergedAllocations.filter(a => a.approved).map(a => a.vendorName).join(', ');
+            rfq.awardedQuoteId = mergedAllocations.filter(a => a.approved).map(a => a.quoteId).join(',');
 
-            await Promise.all(newAllocations.map((item) => RfqQuote.updateOne({ quoteId: item.quoteId }, { status: 'awarded' })));
-            newAllocations.forEach((item) => broadcastEvent('RFQ_AWARDED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, vendorId: item.vendorId, vendorName: item.vendorName, containers: item.containers, awardedAt: new Date(), isPartial: remainingQty > 0 }));
+            await Promise.all(newlyApproved.map(item => RfqQuote.updateOne({ quoteId: item.quoteId }, { status: 'awarded' })));
+            newlyApproved.forEach(item => broadcastEvent('RFQ_AWARDED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, vendorId: item.vendorId, vendorName: item.vendorName, containers: item.containers, awardedAt: new Date(), isPartial: remainingQty > 0 }));
           } else if (newStatus === 'Rejected' || newStatus === 'Returned for changes') {
-            const currentAllocated = Number(rfq.allocatedQuantity) || 0;
+            // On reject/return: revert pending allocations, restore status to prior approved state
+            const existingAllocations = Array.isArray(rfq.awardAllocations) ? rfq.awardAllocations : [];
+            const approvedAllocations = existingAllocations.filter(a => a.approved === true);
+            const currentApprovedQty = approvedAllocations.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
             const totalQty = Number(rfq.totalQuantity) || Number(rfq.cargoDetails?.containerCount) || 1;
-            rfq.status = currentAllocated > 0 ? (currentAllocated >= totalQty ? 'awarded' : 'partially_awarded') : 'published';
+            rfq.allocatedQuantity = currentApprovedQty;
+            rfq.pendingAllocation = Math.max(0, totalQty - currentApprovedQty);
+            rfq.status = currentApprovedQty >= totalQty ? 'awarded' : currentApprovedQty > 0 ? 'partially_awarded' : 'published';
+            // Remove pending (non-approved) allocations on reject/return
+            rfq.set('awardAllocations', approvedAllocations);
           }
           await rfq.save();
         }
@@ -564,8 +590,15 @@ export const getApprovalById = async (req, res) => {
     const matcher = new RegExp(escapeRegex(id), 'i');
 
     let approval = await Approval.findOne({
-      $or: [{ id }, { id: matcher }, { referenceNumber: id }, { referenceNumber: matcher }]
-    }).lean();
+      $or: [
+        { id }, 
+        { id: matcher }, 
+        { referenceNumber: id }, 
+        { referenceNumber: matcher },
+        { 'transactionSnapshot.rfqId': id },
+        { 'transactionSnapshot.rfqId': matcher }
+      ]
+    }).sort({ createdAt: -1 }).lean();
 
     if (!approval) {
       const { InvoicePayment } = await import('../../models/InvoicePayment.js');
@@ -582,6 +615,24 @@ export const getApprovalById = async (req, res) => {
         Vendor.findOne({ $or: [{ id }, { sapVendorCode: id }] }).lean().catch(() => null)
       ]);
 
+      if (rfq && rfq.awardApprovalId) {
+        approval = await Approval.findOne({ id: rfq.awardApprovalId }).lean();
+        if (approval) {
+          return res.json({ success: true, approval });
+        }
+      }
+
+      const rawStatus = (inv?.status || adv?.status || rfq?.status || po?.status || '').toLowerCase();
+
+      // If no approval document exists and the underlying record is in published, draft, open, or created status, return null
+      if (!inv && !adv && !rfq && !po && !vendor) {
+        return res.json({ success: true, approval: null });
+      }
+
+      if (['published', 'draft', 'open', 'created'].includes(rawStatus)) {
+        return res.json({ success: true, approval: null });
+      }
+
       const recordType = inv ? 'Invoice Payment' : adv ? 'Advance Payment' : rfq ? 'Freight RFQ' : po ? 'Purchase Order' : vendor ? 'Vendor Account' : 'Approval Workflow';
       const vendorName = inv?.vendorName || adv?.vendorName || rfq?.title || po?.vendorName || vendor?.companyName || 'Vendor';
       const poRef = inv?.sapPoNumber || inv?.poId || adv?.sapPoNumber || adv?.poId || rfq?.linkedPoId || po?.poNumber || '';
@@ -593,7 +644,6 @@ export const getApprovalById = async (req, res) => {
         { step: 2, title: 'Finance Approval', roleKey: 'finance_lead', roleName: 'Finance Lead', statusKey: 'Pending Finance Approval' }
       ];
 
-      const rawStatus = (inv?.status || adv?.status || rfq?.status || po?.status || 'pending').toLowerCase();
       const currentStatus = rawStatus === 'approved' || rawStatus === 'paid' ? 'Approved & Dispatched' : rawStatus === 'rejected' ? 'Rejected' : rawStatus === 'returned' ? 'Returned for changes' : 'Pending Procurement Head Approval';
 
       approval = {
