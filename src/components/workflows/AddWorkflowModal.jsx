@@ -140,7 +140,6 @@ export default function AddWorkflowModal({ isOpen, onClose, editingSlab, onSucce
       if (res.ok) {
         showToast({ title: editingSlab ? 'Workflow updated' : 'Workflow created', description: `${name.trim()} was saved successfully.` });
         onSuccess();
-        onClose();
       } else {
         throw new Error(data.error || 'Unable to save workflow.');
       }

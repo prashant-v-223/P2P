@@ -80,7 +80,7 @@ export const getWorkflows = async (req, res) => {
       slabs: DUMMY_WORKFLOWS
     });
   }
-  const filter = {};
+  const filter = { status: { $in: ['Active', 'active'] } };
 
   if (category && category !== 'All') filter.category = category;
   if (query) {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import {
@@ -6,21 +6,19 @@ import {
   ChevronRight,
   Loader2,
   Search,
-  MessageSquare,
   FileText,
-  User,
   Clock,
-  ExternalLink,
-  Building2,
   Check,
   RotateCcw,
   XCircle,
-  ArrowRightLeft
+  ArrowRightLeft,
+  AlertTriangle,
+  Inbox,
+  X
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../ui/toast';
 import { setPendingCount } from '../../features/approvals/approvalsSlice';
-import { addNotification } from '../../features/notifications/notificationsSlice';
 import { ServerPagination } from '../ui/server-pagination';
 
 // Step display labels per payment type (must match backend WORKFLOW_STEPS status strings)
@@ -62,6 +60,20 @@ const JOURNEY_LABELS = {
   ]
 };
 
+// One distinct color per payment type, so the pill works as a quick visual
+// sort key across a mixed queue instead of every card reading the same emerald.
+const TYPE_STYLES = {
+  'BL Freight Invoice': { bg: 'bg-sky-50', text: 'text-sky-700', border: 'border-sky-200' },
+  'Logistics Payments': { bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-200' },
+  'Logistics Payment': { bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-200' },
+  'Advance Payment': { bg: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200' },
+  'Invoice Payment': { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
+  'RFQ': { bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' },
+  'Custom Duty': { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200' },
+  'Purchase Orders': { bg: 'bg-fuchsia-50', text: 'text-fuchsia-700', border: 'border-fuchsia-200' }
+};
+const DEFAULT_TYPE_STYLE = { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' };
+
 function getStepFromStatus(type, status = '') {
   const stepObjs = JOURNEY_LABELS[type] || JOURNEY_LABELS['Advance Payment'];
   const steps = stepObjs.map(s => s.title);
@@ -87,6 +99,78 @@ const formatCurrency = (amount) => {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(val);
 };
 
+// Relative time gives a quicker sense of urgency than an absolute date alone
+function formatRelativeTime(value) {
+  if (!value) return '';
+  const diffMs = Date.now() - new Date(value).getTime();
+  if (diffMs < 0 || Number.isNaN(diffMs)) return '';
+  const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
+  if (diffHrs < 1) return 'Just now';
+  if (diffHrs < 24) return `${diffHrs}h ago`;
+  const diffDays = Math.floor(diffHrs / 24);
+  return `${diffDays}d ago`;
+}
+
+// Drives the accent rail on each card so aging requests stand out without a wall of red
+function getUrgency(submittedAt) {
+  if (!submittedAt) return 'normal';
+  const diffDays = (Date.now() - new Date(submittedAt).getTime()) / (1000 * 60 * 60 * 24);
+  if (diffDays >= 5) return 'critical';
+  if (diffDays >= 2) return 'warning';
+  return 'normal';
+}
+
+const TERMINAL_STATUSES = ['Approved & Dispatched', 'Rejected', 'Returned for changes'];
+
+const STATUS_STYLES = {
+  'Approved & Dispatched': { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-200' },
+  'Rejected': { dot: 'bg-rose-500', text: 'text-rose-700', bg: 'bg-rose-50', border: 'border-rose-200' },
+  'Returned for changes': { dot: 'bg-amber-500', text: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-200' }
+};
+
+const URGENCY_STYLES = {
+  critical: { accent: 'bg-rose-500', label: 'Aging · act soon', badge: 'bg-rose-50 text-rose-700 border-rose-200' },
+  warning: { accent: 'bg-amber-500', label: 'Awaiting action', badge: 'bg-amber-50 text-amber-700 border-amber-200' },
+  normal: { accent: 'bg-slate-200', label: null, badge: '' }
+};
+
+// Small stat tile for the summary header
+function StatTile({ icon: Icon, label, value, tone = 'slate' }) {
+  const toneMap = {
+    slate: 'bg-slate-50 text-slate-700 border-slate-200',
+    emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    amber: 'bg-amber-50 text-amber-700 border-amber-200',
+    rose: 'bg-rose-50 text-rose-700 border-rose-200'
+  };
+  return (
+    <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${toneMap[tone]}`}>
+      <Icon className="h-4 w-4 shrink-0" />
+      <div className="min-w-0">
+        <span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">{label}</span>
+        <span className="block text-sm font-extrabold truncate">{value}</span>
+      </div>
+    </div>
+  );
+}
+
+// Shown while the queue loads so the layout doesn't jump once data arrives
+function ApprovalCardSkeleton() {
+  return (
+    <div className="p-5 rounded-2xl border border-slate-200 bg-white space-y-4 animate-pulse">
+      <div className="flex items-center gap-3">
+        <div className="h-8 w-8 rounded-lg bg-slate-100" />
+        <div className="h-4 w-32 rounded bg-slate-100" />
+        <div className="h-4 w-20 rounded-full bg-slate-100" />
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-10 rounded-lg bg-slate-100" />)}
+      </div>
+      <div className="h-20 rounded-xl bg-slate-100" />
+      <div className="h-10 rounded-xl bg-slate-100" />
+    </div>
+  );
+}
+
 export default function PendingApprovalsView() {
   const { showToast } = useToast();
   const dispatch = useDispatch();
@@ -96,32 +180,51 @@ export default function PendingApprovalsView() {
   const [approvals, setApprovals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState(null);
+  const [processingAction, setProcessingAction] = useState(null);
   const [remarks, setRemarks] = useState({});
+  const [remarkErrors, setRemarkErrors] = useState({});
+  const [confirmingReject, setConfirmingReject] = useState(null); // id awaiting a second tap before it actually rejects
   const [pagination, setPagination] = useState({ total: 0, page: 1, size: 10, totalPages: 1 });
 
   const currentUserRole = user?.role || 'Finance Lead';
   const query = searchParams.get('q') || '';
   const type = searchParams.get('type') || 'All';
   const sort = searchParams.get('sort') || 'newest';
+  const onlyMine = searchParams.get('mine') === 'true';
   const pageSize = Math.max(1, Number(searchParams.get('size')) || 10);
   const requestedPage = Math.max(1, Number(searchParams.get('page')) || 1);
 
-  const updateFilters = (updates) => {
-    const next = new URLSearchParams(searchParams);
-    Object.entries(updates).forEach(([key, value]) => {
-      if (!value || value === 'All' || (key === 'page' && Number(value) === 1)) next.delete(key);
-      else next.set(key, String(value));
-    });
-    if (!Object.prototype.hasOwnProperty.call(updates, 'page')) next.delete('page');
-    setSearchParams(next, { replace: true });
+  // Local, instantly-editable copy of the search box. The URL (and the fetch it triggers)
+  // only updates after typing pauses, so we're not re-querying on every keystroke.
+  const [searchInput, setSearchInput] = useState(query);
+  useEffect(() => setSearchInput(query), [query]);
+  const debounceRef = useRef(null);
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+
+  const updateFilters = useCallback((updates) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      Object.entries(updates).forEach(([key, value]) => {
+        if (!value || value === 'All' || (key === 'page' && Number(value) === 1)) next.delete(key);
+        else next.set(key, String(value));
+      });
+      if (!Object.prototype.hasOwnProperty.call(updates, 'page')) next.delete('page');
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const handleSearchChange = (value) => {
+    setSearchInput(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => updateFilters({ q: value }), 350);
   };
 
   const totalPages = pagination.totalPages || 1;
   const page = pagination.page || requestedPage;
-  const visibleApprovals = approvals;
-  const types = ['All', ...Object.keys(JOURNEY_LABELS)];
+  const types = useMemo(() => ['All', ...Object.keys(JOURNEY_LABELS)], []);
+  const hasActiveFilters = Boolean(query || type !== 'All' || onlyMine);
 
-  const fetchApprovals = async () => {
+  const fetchApprovals = useCallback(async () => {
     try {
       setLoading(true);
       const params = new URLSearchParams(searchParams);
@@ -133,8 +236,7 @@ export default function PendingApprovalsView() {
       if (!res.ok) throw new Error(data.error || 'Unable to load approvals.');
 
       setApprovals(data.approvals || []);
-      const newTotal = data.total || 0;
-      dispatch(setPendingCount(newTotal));
+      dispatch(setPendingCount(data.total || 0));
 
       setPagination({
         total: data.total || 0,
@@ -147,61 +249,15 @@ export default function PendingApprovalsView() {
     } finally {
       setLoading(false);
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, currentUserRole]);
 
   useEffect(() => {
     fetchApprovals();
-  }, [searchParams]);
-
-  const handleAction = async (id, action) => {
-    try {
-      setProcessingId(id);
-      const res = await apiFetch(`/api/approvals/${id}/action`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${id}:${action.toLowerCase()}:${approvals.find((item) => item.id === id)?.currentStep || 1}` },
-        body: JSON.stringify({
-          action,
-          remarks: remarks[id]?.trim() || '',
-          idempotencyKey: `${id}:${action.toLowerCase()}:${approvals.find((item) => item.id === id)?.currentStep || 1}`
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        // Show role-lock error prominently
-        showToast({
-          type: 'error',
-          title: 'Not authorized for this step',
-          description: data.error || 'Unable to process approval.'
-        });
-        return;
-      }
-      const label = action.toLowerCase() === 'approve' ? 'approved' : action.toLowerCase() === 'return' ? 'returned' : 'rejected';
-      const isFullyApproved = data.data?.status === 'Approved & Dispatched';
-      const actionType = action.toLowerCase() === 'reject'
-        ? 'rejected'
-        : action.toLowerCase() === 'return'
-          ? 'returned'
-          : isFullyApproved ? 'fully_approved' : 'approved';
-
-      showToast({
-        type: action.toLowerCase() === 'reject' ? 'error' : action.toLowerCase() === 'return' ? 'info' : 'success',
-        title: isFullyApproved ? '✅ Fully Approved!' : `Request ${label}`,
-        description: isFullyApproved
-          ? `${id} has completed all approval steps and is Approved & Dispatched.`
-          : `${id} was ${label} successfully.`
-      });
-
-      setRemarks((current) => ({ ...current, [id]: '' }));
-      await fetchApprovals();
-    } catch (error) {
-      showToast({ type: 'error', title: 'Approval action failed', description: error.message });
-    } finally {
-      setProcessingId(null);
-    }
-  };
+  }, [fetchApprovals]);
 
   // Check if logged-in user's role matches the current active step role
-  const canUserActOnApproval = (approval) => {
+  const canUserActOnApproval = useCallback((approval) => {
     const ur = (currentUserRole || '').toLowerCase().replace(/[\s_-]+/g, ' ').trim();
     if (ur === 'admin' || ur === 'system admin') return true;
     const reqRole = (approval.currentStepRole || '').toLowerCase();
@@ -209,366 +265,470 @@ export default function PendingApprovalsView() {
     const ur2 = ur.replace(/[\s_-]+/g, '');
     const req2 = reqRole.replace(/[\s_-]+/g, '');
     return req2.includes(ur2) || ur2.includes(req2);
+  }, [currentUserRole]);
+
+  // Summary derived from the current page — labelled "on page" since the API doesn't
+  // (yet) return aggregate totals for the whole queue.
+  const summary = useMemo(() => {
+    let value = 0;
+    let awaitingMe = 0;
+    let aging = 0;
+    approvals.forEach((approval) => {
+      const amt = typeof approval.amountINR === 'string'
+        ? parseFloat(approval.amountINR.replace(/[^0-9.-]+/g, '')) || 0
+        : (approval.amountINR || 0);
+      value += amt;
+      if (canUserActOnApproval(approval)) awaitingMe += 1;
+      if (getUrgency(approval.submittedAt) === 'critical') aging += 1;
+    });
+    return { value, awaitingMe, aging };
+  }, [approvals, canUserActOnApproval]);
+
+  const handleAction = async (id, action) => {
+    const trimmedRemark = remarks[id]?.trim() || '';
+
+    // Returning or rejecting without a reason leaves the requester guessing why —
+    // require a short note for those two actions before calling the API.
+    if ((action === 'Return' || action === 'Reject') && !trimmedRemark) {
+      setRemarkErrors((current) => ({ ...current, [id]: `Add a note explaining why this is being ${action === 'Return' ? 'returned' : 'rejected'}.` }));
+      return;
+    }
+    // A second tap confirms a rejection, so a stray click can't reject a request outright.
+    if (action === 'Reject' && confirmingReject !== id) {
+      setConfirmingReject(id);
+      return;
+    }
+
+    try {
+      setProcessingId(id);
+      setProcessingAction(action);
+      const step = approvals.find((item) => item.id === id)?.currentStep || 1;
+      const idempotencyKey = `${id}:${action.toLowerCase()}:${step}`;
+      const res = await apiFetch(`/api/approvals/${id}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+        body: JSON.stringify({ action, remarks: trimmedRemark, idempotencyKey })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast({ type: 'error', title: 'Not authorized for this step', description: data.error || 'Unable to process approval.' });
+        return;
+      }
+      const label = action === 'Approve' ? 'approved' : action === 'Return' ? 'returned' : 'rejected';
+      const isFullyApproved = data.data?.status === 'Approved & Dispatched';
+
+      showToast({
+        type: action === 'Reject' ? 'error' : action === 'Return' ? 'info' : 'success',
+        title: isFullyApproved ? 'Fully approved' : `Request ${label}`,
+        description: isFullyApproved
+          ? `${id} has cleared every approval step and is Approved & Dispatched.`
+          : `${id} was ${label}.`
+      });
+
+      setRemarks((current) => ({ ...current, [id]: '' }));
+      setRemarkErrors((current) => ({ ...current, [id]: undefined }));
+      setConfirmingReject(null);
+      await fetchApprovals();
+    } catch (error) {
+      showToast({ type: 'error', title: 'Approval action failed', description: error.message });
+    } finally {
+      setProcessingId(null);
+      setProcessingAction(null);
+    }
   };
 
   return (
     <div className="flex h-[calc(100dvh-5.5rem)] min-h-0 w-full flex-col gap-3 overflow-hidden pb-4 text-left font-sans">
-      
-      {/* Sleek Toolbar */}
+      {/* Toolbar */}
       <div className="surface-card flex flex-col gap-2 p-2.5 lg:flex-row lg:items-center">
         <div className="relative min-w-0 flex-1">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" aria-hidden="true" />
           <input
-            value={query}
-            onChange={(event) => updateFilters({ q: event.target.value })}
+            value={searchInput}
+            onChange={(event) => handleSearchChange(event.target.value)}
             placeholder="Search request ID, vendor, requester, workflow..."
-            className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-xs placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none"
+            aria-label="Search pending approvals"
+            className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-8 text-xs placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none"
           />
+          {searchInput && (
+            <button
+              type="button"
+              onClick={() => handleSearchChange('')}
+              aria-label="Clear search"
+              className="absolute right-2 top-2 text-slate-300 hover:text-slate-500"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
-        <select value={type} onChange={(event) => updateFilters({ type: event.target.value })} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none">
+        <select value={type} onChange={(event) => updateFilters({ type: event.target.value })} aria-label="Filter by payment type" className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100">
           {types.map((item) => <option key={item} value={item}>{item === 'All' ? 'All payment types' : item}</option>)}
         </select>
 
-        <select value={sort} onChange={(event) => updateFilters({ sort: event.target.value })} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none">
+        <select value={sort} onChange={(event) => updateFilters({ sort: event.target.value })} aria-label="Sort order" className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100">
           <option value="newest">Newest first</option>
           <option value="oldest">Oldest first</option>
         </select>
 
-        <select value={pageSize} onChange={(event) => updateFilters({ size: event.target.value })} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none" aria-label="Items per page">
+        <button
+          type="button"
+          onClick={() => updateFilters({ mine: onlyMine ? null : 'true' })}
+          aria-pressed={onlyMine}
+          className={`h-9 rounded-lg border px-3 text-xs font-bold transition-colors ${
+            onlyMine ? 'border-teal-500 bg-teal-50 text-teal-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          Needs your action
+        </button>
+
+        <select value={pageSize} onChange={(event) => updateFilters({ size: event.target.value })} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100" aria-label="Items per page">
           {[5, 10, 20, 50].map((size) => <option key={size} value={size}>{size} per page</option>)}
         </select>
+
+        {hasActiveFilters && (
+          <button
+            type="button"
+            onClick={() => setSearchParams(new URLSearchParams(), { replace: true })}
+            className="h-9 rounded-lg px-3 text-xs font-bold text-slate-500 hover:text-slate-700 hover:underline"
+          >
+            Clear filters
+          </button>
+        )}
       </div>
 
       {loading ? (
-        <div className="surface-card flex min-h-48 items-center justify-center gap-2 text-sm text-slate-500">
-          <Loader2 className="h-4 w-4 animate-spin text-teal-600" /> Loading approval queue...
+        <div className="report-scroll min-h-0 flex-1 space-y-4 overflow-y-auto pr-2">
+          {Array.from({ length: 3 }).map((_, i) => <ApprovalCardSkeleton key={i} />)}
         </div>
-      ) : visibleApprovals.length === 0 ? (
+      ) : approvals.length === 0 ? (
         <div className="surface-card py-16 text-center">
           <CheckCircle2 className="mx-auto h-9 w-9 text-emerald-500" />
-          <h3 className="mt-2 text-sm font-bold text-slate-900">No pending approvals</h3>
+          <h3 className="mt-2 text-sm font-bold text-slate-900">
+            {hasActiveFilters ? 'No approvals match these filters' : 'No pending approvals'}
+          </h3>
           <p className="mt-1 text-xs text-slate-500">
-            There are currently no workflow requests waiting for your approval.
+            {hasActiveFilters
+              ? 'Try widening the search, payment type, or clearing filters.'
+              : 'There are currently no workflow requests waiting for your approval.'}
           </p>
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={() => setSearchParams(new URLSearchParams(), { replace: true })}
+              className="mt-3 text-xs font-bold text-teal-700 hover:underline"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-2.5">
           <div className="report-scroll min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain pr-2">
-          {visibleApprovals.map((approval, approvalIndex) => {
-            const rawStepObjs = (approval.parsedSteps && approval.parsedSteps.length > 0)
-              ? approval.parsedSteps
-              : (JOURNEY_LABELS[approval.type] || JOURNEY_LABELS['BL Freight Invoice']);
+            {approvals.map((approval, approvalIndex) => {
+              const rawStepObjs = (approval.parsedSteps && approval.parsedSteps.length > 0)
+                ? approval.parsedSteps
+                : (JOURNEY_LABELS[approval.type] || JOURNEY_LABELS['BL Freight Invoice']);
 
-            const steps = rawStepObjs.map(s => typeof s === 'string' ? s : s.title);
-            const stepRoles = rawStepObjs.map(s => typeof s === 'string' ? '' : (s.role || s.roleName || ''));
+              const steps = rawStepObjs.map((s) => (typeof s === 'string' ? s : s.title));
+              const stepRoles = rawStepObjs.map((s) => (typeof s === 'string' ? '' : (s.role || s.roleName || '')));
 
-            const activeStep = approval.currentStep
-              ? Math.min(approval.currentStep - 1, steps.length - 1)
-              : getStepFromStatus(approval.type, approval.status);
+              const activeStep = approval.currentStep
+                ? Math.min(approval.currentStep - 1, steps.length - 1)
+                : getStepFromStatus(approval.type, approval.status);
 
-            const isProcessing = processingId === approval.id;
-            const isTerminal = ['Approved & Dispatched', 'Rejected', 'Returned for changes'].includes(approval.status);
+              const isProcessing = processingId === approval.id;
+              const isTerminal = TERMINAL_STATUSES.includes(approval.status);
+              const urgency = isTerminal ? 'normal' : getUrgency(approval.submittedAt);
+              const urgencyStyle = URGENCY_STYLES[urgency];
+              const statusStyle = STATUS_STYLES[approval.status];
+              const typeStyle = TYPE_STYLES[approval.type] || DEFAULT_TYPE_STYLE;
+              const canAct = canUserActOnApproval(approval);
+              const allocations = Array.isArray(approval.allocations) ? approval.allocations : null;
 
-            // Allocation items preview fallback data
-            const allocations = approval.allocations || [
-              {
-                vendorName: approval.vendorName || 'Tvs Scs Global Freight Solutions Ltd',
-                vendorCode: approval.vendorCode || '11001838',
-                containers: approval.containers || 10,
-                ratePerContainer: approval.ratePerContainer || 107783.48,
-                allocationAmount: approval.amountINR ? parseFloat(String(approval.amountINR).replace(/[^0-9.-]+/g, '')) * 0.5 : 1077834.8,
-                remark: approval.remarks || 'As Cargo will be ready by 31st July. We require an ETD of 6th August.'
-              },
-              {
-                vendorName: 'Fast Forward Logistics India Private Limited',
-                vendorCode: '11001811',
-                containers: 10,
-                ratePerContainer: 104430.64,
-                allocationAmount: approval.amountINR ? parseFloat(String(approval.amountINR).replace(/[^0-9.-]+/g, '')) * 0.5 : 1044306.4,
-                remark: 'L1 freight forwarder space confirmed for movement.'
-              }
-            ];
+              return (
+                <div
+                  key={approval.id || approvalIndex}
+                  className="flex overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-2xs transition-all hover:border-teal-400 hover:shadow-xs"
+                >
+                  {/* Urgency accent rail — a quiet signal for how long this has been waiting */}
+                  <div className={`w-1.5 shrink-0 ${isTerminal ? (statusStyle?.dot || 'bg-slate-200') : urgencyStyle.accent}`} aria-hidden="true" />
 
-            return (
-              <div
-                key={approval.id || approvalIndex}
-                className="p-5 rounded-2xl border border-slate-200/90 bg-white shadow-2xs hover:border-teal-400 hover:shadow-xs transition-all space-y-4"
-              >
-                {/* 1. Header Bar: Ref ID + Type Pill | Submitted Time + Step Progress */}
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-                  <div className="flex items-center gap-2.5 flex-wrap">
-                    <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center border border-emerald-200">
-                      <FileText className="w-4 h-4" />
-                    </div>
-                    <Link
-                      to={`/p2p/advance-payments/${approval.id}`}
-                      className="font-mono text-base font-extrabold text-slate-900 hover:text-teal-700 transition-colors"
-                    >
-                      {approval.id}
-                    </Link>
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
-                      {approval.type}
-                    </span>
-                    {approval.delegatedFrom && (
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1">
-                        <ArrowRightLeft className="w-3 h-3 text-amber-600" />
-                        Delegated from {approval.delegatedFrom.name} ({approval.delegatedFrom.role})
-                      </span>
-                    )}
-                    <span className="text-slate-300">·</span>
-                    <span className="text-xs text-slate-500 font-medium flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5 text-slate-400" />
-                      Submitted {formatSubmitted(approval.submittedAt)}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-600">
-                      Step {activeStep + 1} of {steps.length}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      {steps.map((_, idx) => (
-                        <div
-                          key={idx}
-                          className={`h-2 w-6 rounded-full transition-all ${
-                            idx <= activeStep ? 'bg-emerald-500' : 'bg-slate-200'
-                          }`}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* 2. Key Attributes Bar (4 Columns) */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-50/60 p-3.5 rounded-xl border border-slate-100 text-xs">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">AMOUNT</span>
-                    <span className="font-mono text-base font-extrabold text-slate-900 block">
-                      {formatCurrency(approval.amountINR || approval.amountOriginal || 2122141.2)}
-                    </span>
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">VENDOR</span>
-                    <span className="font-bold text-slate-900 block truncate">
-                      {approval.vendorName || `${allocations.length} vendors`}
-                    </span>
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">CURRENT STEP</span>
-                    <span className="font-semibold text-slate-800 block truncate">
-                      {steps[activeStep] || 'Exim HOD Approval'}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">SUBMITTED</span>
-                      <span className="font-medium text-slate-700 block">
-                        {approval.submittedAt ? new Date(approval.submittedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '30 Jul 2026'}
-                      </span>
-                    </div>
-
-                    <Link
-                      to={`/p2p/advance-payments/${approval.id}`}
-                      className="text-xs font-bold text-teal-700 hover:text-teal-800 flex items-center gap-1 hover:underline shrink-0"
-                    >
-                      View details <ChevronRight className="w-3.5 h-3.5" />
-                    </Link>
-                  </div>
-                </div>
-
-                {/* 3. Detailed Allocation Basis / Item Breakdown Container */}
-                <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/20 p-3.5 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-100 pb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-extrabold text-[9px] uppercase tracking-wider">
-                        RFQ ALLOCATION BASIS
-                      </span>
-                      <span className="text-xs font-bold text-slate-800">
-                        {approval.title || 'IMPORT SEA FREIGHT - 20 X 40 FT - LAEM CHABANG (THAILAND) to NHAVA SHEVA (INDIA)'}
-                      </span>
-                      {approval.poReference && (
-                        <span className="font-mono text-[11px] font-semibold text-teal-700 bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
-                          PO {approval.poReference}
+                  <div className="flex-1 space-y-3 p-4">
+                    {/* 1. Header: Ref ID + Type + status/urgency signals */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-2.5">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <div className={`flex h-8 w-8 items-center justify-center rounded-lg border ${typeStyle.border} ${typeStyle.bg} ${typeStyle.text}`}>
+                          <FileText className="h-4 w-4" />
+                        </div>
+                        <Link
+                          to={`/p2p/advance-payments/${approval.id}`}
+                          className="font-mono text-base font-extrabold text-slate-900 transition-colors hover:text-teal-700"
+                        >
+                          {approval.id}
+                        </Link>
+                        <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider ${typeStyle.bg} ${typeStyle.text} ${typeStyle.border}`}>
+                          {approval.type}
                         </span>
-                      )}
+                        {isTerminal && (
+                          <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider ${statusStyle?.bg} ${statusStyle?.text} ${statusStyle?.border}`}>
+                            {approval.status}
+                          </span>
+                        )}
+                        {!isTerminal && urgencyStyle.label && (
+                          <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider ${urgencyStyle.badge}`}>
+                            {urgencyStyle.label}
+                          </span>
+                        )}
+                        {approval.delegatedFrom && (
+                          <span className="flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold text-amber-800">
+                            <ArrowRightLeft className="h-3 w-3 text-amber-600" />
+                            Delegated from {approval.delegatedFrom.name} ({approval.delegatedFrom.role})
+                          </span>
+                        )}
+                        <span className="text-slate-300">·</span>
+                        <span className="flex items-center gap-1 text-xs font-medium text-slate-500" title={formatSubmitted(approval.submittedAt)}>
+                          <Clock className="h-3.5 w-3.5 text-slate-400" />
+                          {formatRelativeTime(approval.submittedAt) || formatSubmitted(approval.submittedAt)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                        <span>Step {activeStep + 1} of {steps.length}</span>
+                        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-slate-700">{steps[activeStep] || '—'}</span>
+                      </div>
                     </div>
-                    <span className="text-xs font-extrabold text-emerald-700">
-                      {approval.containersCount || 20} container(s) submitted
-                    </span>
-                  </div>
 
-                  {/* Vendor Allocation Breakdown Rows */}
-                  <div className="space-y-2.5">
-                    {allocations.map((alloc, aIdx) => (
-                      <div key={aIdx} className="bg-white p-3 rounded-lg border border-slate-200/80 shadow-2xs space-y-1.5 text-xs">
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                          <div>
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">VENDOR</span>
-                            <span className="font-bold text-slate-900 block truncate">{alloc.vendorName}</span>
-                            {alloc.vendorCode && <span className="text-[10px] font-mono text-slate-400 block">{alloc.vendorCode}</span>}
-                          </div>
+                    {/* 2. Key attributes */}
+                    <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-xs md:grid-cols-4">
+                      <div>
+                        <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Amount</span>
+                        <span className="block font-mono text-base font-extrabold text-slate-900">
+                          {formatCurrency(approval.amountINR || approval.amountOriginal || 0)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Vendor</span>
+                        <span className="block truncate font-bold text-slate-900">
+                          {approval.vendorName || (allocations ? `${allocations.length} vendors` : '—')}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Requester</span>
+                        <span className="block truncate font-semibold text-slate-800">{approval.requestedBy || '—'}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Submitted</span>
+                          <span className="block font-medium text-slate-700">{formatSubmitted(approval.submittedAt)}</span>
+                        </div>
+                        <Link
+                          to={`/p2p/advance-payments/${approval.id}`}
+                          className="flex shrink-0 items-center gap-1 text-xs font-bold text-teal-700 hover:text-teal-800 hover:underline"
+                        >
+                          Details <ChevronRight className="h-3.5 w-3.5" />
+                        </Link>
+                      </div>
+                    </div>
 
-                          <div>
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">CONTAINERS</span>
-                            <span className="font-bold text-slate-800 block">{alloc.containers}</span>
+                    {/* 3. Item / allocation breakdown — only rendered when the backend actually supplied it */}
+                    {allocations && allocations.length > 0 && (
+                      <div className="space-y-2.5 rounded-xl border border-emerald-200/80 bg-emerald-50/20 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-100 pb-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded bg-emerald-100 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider text-emerald-800">
+                              Allocation basis
+                            </span>
+                            {approval.title && <span className="text-xs font-bold text-slate-800">{approval.title}</span>}
+                            {approval.poReference && (
+                              <span className="rounded border border-teal-200 bg-teal-50 px-2 py-0.5 font-mono text-[11px] font-semibold text-teal-700">
+                                PO {approval.poReference}
+                              </span>
+                            )}
                           </div>
-
-                          <div>
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">RATE / CONTAINER</span>
-                            <span className="font-mono font-bold text-slate-800 block">{formatCurrency(alloc.ratePerContainer)}</span>
-                          </div>
-
-                          <div>
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">ALLOCATION AMOUNT</span>
-                            <span className="font-mono font-extrabold text-slate-900 block">{formatCurrency(alloc.allocationAmount)}</span>
-                          </div>
+                          {approval.containersCount != null && (
+                            <span className="text-xs font-extrabold text-emerald-700">{approval.containersCount} container(s)</span>
+                          )}
                         </div>
 
-                        {alloc.remark && (
-                          <div className="pt-1 border-t border-slate-100">
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">REMARK</span>
-                            <p className="text-xs text-slate-600 italic mt-0.5">{alloc.remark}</p>
-                          </div>
-                        )}
+                        <div className="space-y-2.5">
+                          {allocations.map((alloc, aIdx) => (
+                            <div key={aIdx} className="space-y-1 rounded-lg border border-slate-200/80 bg-white p-2.5 text-xs shadow-2xs">
+                              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                                <div>
+                                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Vendor</span>
+                                  <span className="block truncate font-bold text-slate-900">{alloc.vendorName}</span>
+                                  {alloc.vendorCode && <span className="block font-mono text-[10px] text-slate-400">{alloc.vendorCode}</span>}
+                                </div>
+                                <div>
+                                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Containers</span>
+                                  <span className="block font-bold text-slate-800">{alloc.containers}</span>
+                                </div>
+                                <div>
+                                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Rate / container</span>
+                                  <span className="block font-mono font-bold text-slate-800">{formatCurrency(alloc.ratePerContainer)}</span>
+                                </div>
+                                <div>
+                                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Allocation amount</span>
+                                  <span className="block font-mono font-extrabold text-slate-900">{formatCurrency(alloc.allocationAmount)}</span>
+                                </div>
+                              </div>
+                              {alloc.remark && (
+                                <div className="border-t border-slate-100 pt-1">
+                                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Remark</span>
+                                  <p className="mt-0.5 text-xs italic text-slate-600">{alloc.remark}</p>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
+                    )}
 
-                {/* 4. Workflow Stepper with Role Badges */}
-                <div className="pt-1 space-y-2">
-                  <div className="flex items-center gap-2 overflow-x-auto text-xs pb-1">
-                    {steps.map((label, index) => {
-                      const isPast = index < activeStep || approval.status === 'Approved & Dispatched';
-                      const isCurrent = index === activeStep && !isTerminal;
-                      const roleName = stepRoles[index];
+                    {/* 4. Workflow stepper with role badges */}
+                    <div className="space-y-1.5 pt-0.5">
+                      <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+                        {steps.map((label, index) => {
+                          const isPast = index < activeStep || approval.status === 'Approved & Dispatched';
+                          const isCurrent = index === activeStep && !isTerminal;
+                          const roleName = stepRoles[index];
 
-                      return (
-                        <React.Fragment key={label}>
-                          <div className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 transition ${
-                            isPast ? 'border-emerald-200 bg-emerald-50 text-emerald-700 font-semibold' :
-                            isCurrent ? 'border-emerald-400 bg-emerald-50/80 text-emerald-900 font-extrabold ring-2 ring-emerald-500/20 shadow-2xs' :
-                            'border-slate-200 bg-slate-50 text-slate-400'
-                          }`}>
-                            <span className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold ${
-                              isPast ? 'bg-emerald-600 text-white' :
-                              isCurrent ? 'bg-emerald-600 text-white' :
-                              'bg-slate-200 text-slate-500'
-                            }`}>
-                              {index + 1}
-                            </span>
-                            <div>
-                              <span className="whitespace-nowrap font-bold block">{label}</span>
-                              {roleName && <span className="text-[9px] font-normal text-slate-400 block capitalize">{roleName}</span>}
-                            </div>
-                          </div>
-                          {index < steps.length - 1 && <ChevronRight className="h-4 w-4 text-slate-300 shrink-0" />}
-                        </React.Fragment>
-                      );
-                    })}
-                  </div>
-
-                  {/* Approval History Timeline Log — real data from DB */}
-                  <div className="space-y-1">
-                    <span className="font-bold text-slate-400 uppercase tracking-wider text-[9px] block">APPROVAL HISTORY</span>
-                    {Array.isArray(approval.actionHistory) && approval.actionHistory.length > 0 ? (
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {approval.actionHistory.map((rec, hi) => {
-                          const actionColors = {
-                            approve: 'bg-emerald-50 text-emerald-800 border-emerald-200',
-                            reject:  'bg-rose-50 text-rose-800 border-rose-200',
-                            return:  'bg-amber-50 text-amber-800 border-amber-200'
-                          };
-                          const dotColors = { approve: 'bg-emerald-500', reject: 'bg-rose-500', return: 'bg-amber-500' };
-                          const c = actionColors[rec.action] || 'bg-slate-50 text-slate-700 border-slate-200';
-                          const d = dotColors[rec.action] || 'bg-slate-400';
                           return (
-                            <div key={hi} className={`flex items-center gap-1.5 border px-2.5 py-0.5 rounded-full font-medium text-[11px] ${c}`}>
-                              <span className={`w-1.5 h-1.5 rounded-full ${d}`} />
-                              <span>{rec.actionedBy || 'User'}</span>
-                              <span>·</span>
-                              <span className="font-bold capitalize">{rec.action}</span>
-                              <span>·</span>
-                              <span>Step {rec.step}</span>
-                              {rec.role && <span className="opacity-60">({rec.role})</span>}
-                            </div>
+                            <React.Fragment key={label}>
+                              <div
+                                className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 transition ${
+                                  isPast ? 'border-emerald-200 bg-emerald-50 font-semibold text-emerald-700'
+                                    : isCurrent ? 'border-emerald-400 bg-emerald-50/80 font-extrabold text-emerald-900 shadow-2xs ring-2 ring-emerald-500/20'
+                                    : 'border-slate-200 bg-slate-50 text-slate-400'
+                                }`}
+                              >
+                                <span
+                                  className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold ${
+                                    isPast || isCurrent ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-500'
+                                  }`}
+                                >
+                                  {isPast ? <Check className="h-3 w-3" /> : index + 1}
+                                </span>
+                                <div>
+                                  <span className="block whitespace-nowrap font-bold">{label}</span>
+                                  {roleName && <span className="block text-[9px] font-normal capitalize text-slate-400">{roleName}</span>}
+                                </div>
+                              </div>
+                              {index < steps.length - 1 && <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />}
+                            </React.Fragment>
                           );
                         })}
                       </div>
-                    ) : (
-                      <span className="text-[11px] text-slate-400 italic">No actions taken yet</span>
+
+                      {/* Approval history */}
+                      <div className="space-y-1">
+                        <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-400">Approval history</span>
+                        {Array.isArray(approval.actionHistory) && approval.actionHistory.length > 0 ? (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {approval.actionHistory.map((rec, hi) => {
+                              const actionColors = {
+                                approve: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+                                reject: 'bg-rose-50 text-rose-800 border-rose-200',
+                                return: 'bg-amber-50 text-amber-800 border-amber-200'
+                              };
+                              const dotColors = { approve: 'bg-emerald-500', reject: 'bg-rose-500', return: 'bg-amber-500' };
+                              const c = actionColors[rec.action] || 'bg-slate-50 text-slate-700 border-slate-200';
+                              const d = dotColors[rec.action] || 'bg-slate-400';
+                              return (
+                                <div key={hi} className={`flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${c}`}>
+                                  <span className={`h-1.5 w-1.5 rounded-full ${d}`} />
+                                  <span>{rec.actionedBy || 'User'}</span>
+                                  <span>·</span>
+                                  <span className="font-bold capitalize">{rec.action}</span>
+                                  <span>·</span>
+                                  <span>Step {rec.step}</span>
+                                  {rec.role && <span className="opacity-60">({rec.role})</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <span className="text-[11px] italic text-slate-400">No actions taken yet</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 5. Comments + actions */}
+                    {!isTerminal && (
+                      <div className="space-y-2.5 border-t border-slate-100 pt-2.5">
+                        {!canAct && (
+                          <div role="status" className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                            <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" />
+                            This step requires <strong className="mx-1">{approval.currentStepRole || 'another role'}</strong> to act. You're logged in as <strong className="ml-1">{currentUserRole}</strong>.
+                          </div>
+                        )}
+
+                        <div className="flex flex-col items-stretch justify-between gap-2.5 md:flex-row md:items-end">
+                          <div className="flex-1 space-y-1">
+                            <label htmlFor={`remark-${approval.id}`} className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                              Comments (required to return or reject)
+                            </label>
+                            <input
+                              id={`remark-${approval.id}`}
+                              value={remarks[approval.id] || ''}
+                              onChange={(event) => {
+                                setRemarks((current) => ({ ...current, [approval.id]: event.target.value }));
+                                setRemarkErrors((current) => ({ ...current, [approval.id]: undefined }));
+                              }}
+                              placeholder="Add a note before acting..."
+                              aria-invalid={Boolean(remarkErrors[approval.id])}
+                              className={`h-10 w-full rounded-xl border bg-slate-50/50 px-3.5 text-xs text-slate-700 outline-none transition-all placeholder:text-slate-400 focus:bg-white focus:ring-2 ${
+                                remarkErrors[approval.id] ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-100' : 'border-slate-200 focus:border-teal-500 focus:ring-teal-100'
+                              }`}
+                            />
+                            {remarkErrors[approval.id] && (
+                              <p className="text-[11px] font-semibold text-rose-600">{remarkErrors[approval.id]}</p>
+                            )}
+                          </div>
+
+                          <div className="flex shrink-0 items-center justify-end gap-2">
+                            <button
+                              onClick={() => handleAction(approval.id, 'Approve')}
+                              disabled={isProcessing || !canAct}
+                              title={!canAct ? `Only ${approval.currentStepRole} can approve this step` : 'Approve this request'}
+                              className="flex h-10 items-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-extrabold text-white shadow-2xs transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {isProcessing && processingAction === 'Approve' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                              Approve
+                            </button>
+
+                            <button
+                              onClick={() => handleAction(approval.id, 'Return')}
+                              disabled={isProcessing || !canAct}
+                              title={!canAct ? `Only ${approval.currentStepRole} can return this step` : 'Return for changes'}
+                              className="flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 text-xs font-bold text-slate-700 transition-all hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {isProcessing && processingAction === 'Return' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5 text-slate-500" />}
+                              Return
+                            </button>
+
+                            <button
+                              onClick={() => handleAction(approval.id, 'Reject')}
+                              onBlur={() => setConfirmingReject((current) => (current === approval.id ? null : current))}
+                              disabled={isProcessing || !canAct}
+                              title={!canAct ? `Only ${approval.currentStepRole} can reject this step` : 'Reject this request'}
+                              className={`flex h-10 items-center gap-1.5 rounded-xl border px-4 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
+                                confirmingReject === approval.id
+                                  ? 'border-rose-600 bg-rose-600 text-white hover:bg-rose-700'
+                                  : 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
+                              }`}
+                            >
+                              {isProcessing && processingAction === 'Reject' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
+                              {confirmingReject === approval.id ? 'Confirm reject?' : 'Reject'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
                     )}
                   </div>
                 </div>
-
-                {/* 5. Bottom Comments Input & Action Buttons */}
-                {!isTerminal && (() => {
-                  const canAct = canUserActOnApproval(approval);
-                  return (
-                    <div className="pt-3 border-t border-slate-100 space-y-3">
-                      {/* Role Lock Banner — shown when user cannot act */}
-                      {!canAct && (
-                        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold">
-                          <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
-                          This step requires <strong className="mx-1">{approval.currentStepRole || 'another role'}</strong> to act. You are logged in as <strong className="ml-1">{currentUserRole}</strong>.
-                        </div>
-                      )}
-
-                      <div className="flex flex-col md:flex-row items-stretch md:items-end justify-between gap-4">
-                        {/* Left: Comments Input */}
-                        <div className="flex-1 space-y-1">
-                          <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">COMMENTS (OPTIONAL)</label>
-                          <input
-                            value={remarks[approval.id] || ''}
-                            onChange={(event) => setRemarks((current) => ({ ...current, [approval.id]: event.target.value }))}
-                            placeholder="Add a note before acting..."
-                            className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 text-xs text-slate-700 placeholder:text-slate-400 focus:bg-white focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none transition-all"
-                          />
-                        </div>
-
-                        {/* Right: Action Buttons — disabled if role mismatch */}
-                        <div className="flex items-center gap-2 shrink-0 justify-end">
-                          <button
-                            onClick={() => handleAction(approval.id, 'Approve')}
-                            disabled={isProcessing || !canAct}
-                            title={!canAct ? `Only ${approval.currentStepRole} can approve this step` : 'Approve this request'}
-                            className="h-10 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 shadow-2xs transition-all flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                          >
-                            {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                            Approve
-                          </button>
-
-                          <button
-                            onClick={() => handleAction(approval.id, 'Return')}
-                            disabled={isProcessing || !canAct}
-                            title={!canAct ? `Only ${approval.currentStepRole} can return this step` : 'Return for changes'}
-                            className="h-10 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs px-4 transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                          >
-                            <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-                            Return
-                          </button>
-
-                          <button
-                            onClick={() => handleAction(approval.id, 'Reject')}
-                            disabled={isProcessing || !canAct}
-                            title={!canAct ? `Only ${approval.currentStepRole} can reject this step` : 'Reject this request'}
-                            className="h-10 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs px-4 transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                          >
-                            <XCircle className="w-3.5 h-3.5 text-rose-600" />
-                            Reject
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-            );
-          })}
+              );
+            })}
           </div>
 
           <ServerPagination
