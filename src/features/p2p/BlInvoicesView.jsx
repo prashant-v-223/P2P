@@ -10,6 +10,8 @@ import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import { userHasPermission } from '../../lib/permissions';
 import UniversalApprovalWorkflowCard from '../../components/common/UniversalApprovalWorkflowCard';
+import { SearchableSelect } from '../../components/ui/searchable-select';
+import { ServerPagination } from '../../components/ui/server-pagination';
 
 // ── Status Badge Component ───────────────────────────────────────────────────
 function StatusBadge({ status }) {
@@ -348,21 +350,33 @@ function SubmitInvoiceModal({ onClose, onCreated }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Charge Type</label>
-              <select value={typeDisplay} onChange={(e) => setTypeDisplay(e.target.value)} className="w-full h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-xs focus:border-teal-600 focus:outline-none">
-                <option value="Freight Invoice">Freight Invoice</option>
-                <option value="Destination Charges (Shipping Line)">Destination Charges (Shipping Line)</option>
-                <option value="Recepted Charges">Recepted Charges</option>
-                <option value="Agency Charges">Agency Charges</option>
-                <option value="Port Storage">Port Storage</option>
-                <option value="Customs Clearance Fee">Customs Clearance Fee</option>
-              </select>
+              <SearchableSelect
+                options={[
+                  { label: 'Freight Invoice', value: 'Freight Invoice' },
+                  { label: 'Destination Charges (Shipping Line)', value: 'Destination Charges (Shipping Line)' },
+                  { label: 'Recepted Charges', value: 'Recepted Charges' },
+                  { label: 'Agency Charges', value: 'Agency Charges' },
+                  { label: 'Port Storage', value: 'Port Storage' },
+                  { label: 'Customs Clearance Fee', value: 'Customs Clearance Fee' }
+                ]}
+                value={typeDisplay}
+                onChange={(val) => setTypeDisplay(val)}
+                size="sm"
+                searchable={false}
+              />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Source</label>
-              <select value={source} onChange={(e) => setSource(e.target.value)} className="w-full h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-xs focus:border-teal-600 focus:outline-none">
-                <option value="Vendor">Vendor</option>
-                <option value="Agent">Agent</option>
-              </select>
+              <SearchableSelect
+                options={[
+                  { label: 'Vendor', value: 'Vendor' },
+                  { label: 'Agent', value: 'Agent' }
+                ]}
+                value={source}
+                onChange={(val) => setSource(val)}
+                size="sm"
+                searchable={false}
+              />
             </div>
           </div>
 
@@ -374,10 +388,16 @@ function SubmitInvoiceModal({ onClose, onCreated }) {
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Currency</label>
-              <select value={currency} onChange={(e) => setCurrency(e.target.value)} className="w-full h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-bold focus:border-teal-600 focus:outline-none">
-                <option value="INR">INR (₹)</option>
-                <option value="USD">USD ($)</option>
-              </select>
+              <SearchableSelect
+                options={[
+                  { label: 'INR (₹)', value: 'INR' },
+                  { label: 'USD ($)', value: 'USD' }
+                ]}
+                value={currency}
+                onChange={(val) => setCurrency(val)}
+                size="sm"
+                searchable={false}
+              />
             </div>
             <div className="col-span-2">
               <label className="block text-xs font-semibold text-slate-700 mb-1">Invoice Amount <span className="text-rose-500">*</span></label>
@@ -444,6 +464,11 @@ export default function BlInvoicesView() {
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  const paginatedInvoices = invoices.slice((page - 1) * pageSize, page * pageSize);
+
   return (
     <div className="flex h-[calc(100dvh-5.5rem)] min-h-0 w-full flex-col gap-4 overflow-hidden pb-4 font-sans antialiased">
       
@@ -456,33 +481,41 @@ export default function BlInvoicesView() {
               type="text"
               placeholder="Search ref#, invoice#, vendor..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#0d7676] focus:outline-none"
             />
           </div>
 
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 focus:outline-none"
-          >
-            <option value="All">All Status</option>
-            <option value="Approved">Approved</option>
-            <option value="Rejected">Rejected</option>
-            <option value="Pending EXIM Approval">Pending EXIM Approval</option>
-            <option value="Pending Finance Approval">Pending Finance Approval</option>
-            <option value="Returned">Returned</option>
-          </select>
+          <div className="w-48">
+            <SearchableSelect
+              options={[
+                { label: 'All Status', value: 'All' },
+                { label: 'Approved', value: 'Approved' },
+                { label: 'Rejected', value: 'Rejected' },
+                { label: 'Pending EXIM Approval', value: 'Pending EXIM Approval' },
+                { label: 'Pending Finance Approval', value: 'Pending Finance Approval' },
+                { label: 'Returned', value: 'Returned' }
+              ]}
+              value={statusFilter}
+              onChange={(val) => { setStatusFilter(val); setPage(1); }}
+              size="sm"
+              searchable={false}
+            />
+          </div>
 
-          <select
-            value={sourceFilter}
-            onChange={(e) => setSourceFilter(e.target.value)}
-            className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 focus:outline-none"
-          >
-            <option value="All">All Sources</option>
-            <option value="Vendor">Vendor</option>
-            <option value="Agent">Agent</option>
-          </select>
+          <div className="w-36">
+            <SearchableSelect
+              options={[
+                { label: 'All Sources', value: 'All' },
+                { label: 'Vendor', value: 'Vendor' },
+                { label: 'Agent', value: 'Agent' }
+              ]}
+              value={sourceFilter}
+              onChange={(val) => { setSourceFilter(val); setPage(1); }}
+              size="sm"
+              searchable={false}
+            />
+          </div>
         </div>
 
         <button
@@ -502,71 +535,82 @@ export default function BlInvoicesView() {
             <span>Loading BL Invoice Payments...</span>
           </div>
         ) : (
-          <div className="report-scroll min-h-0 flex-1 overflow-auto">
-            <table className="data-table w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-extrabold uppercase text-[11px]">
-                <tr>
-                  <th className="py-3.5 px-4">#</th>
-                  <th className="py-3.5 px-4">REFERENCE</th>
-                  <th className="py-3.5 px-4">TYPE</th>
-                  <th className="py-3.5 px-4">FROM</th>
-                  <th className="py-3.5 px-4">INVOICE #</th>
-                  <th className="py-3.5 px-4">BL NUMBER</th>
-                  <th className="py-3.5 px-4">VENDOR/AGENT</th>
-                  <th className="py-3.5 px-4 text-right">AMOUNT</th>
-                  <th className="py-3.5 px-4 text-center">STATUS</th>
-                  <th className="py-3.5 px-4">DATE</th>
-                  <th className="py-3.5 px-4 text-right">ACTIONS</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-medium">
-                {invoices.length === 0 ? (
+          <>
+            <div className="report-scroll min-h-0 flex-1 overflow-auto">
+              <table className="data-table w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-extrabold uppercase text-[11px]">
                   <tr>
-                    <td colSpan={11} className="py-12 text-center text-xs text-slate-400">No BL invoice payment records found.</td>
+                    <th className="py-3.5 px-4">#</th>
+                    <th className="py-3.5 px-4">REFERENCE</th>
+                    <th className="py-3.5 px-4">TYPE</th>
+                    <th className="py-3.5 px-4">FROM</th>
+                    <th className="py-3.5 px-4">INVOICE #</th>
+                    <th className="py-3.5 px-4">BL NUMBER</th>
+                    <th className="py-3.5 px-4">VENDOR/AGENT</th>
+                    <th className="py-3.5 px-4 text-right">AMOUNT</th>
+                    <th className="py-3.5 px-4 text-center">STATUS</th>
+                    <th className="py-3.5 px-4">DATE</th>
+                    <th className="py-3.5 px-4 text-right">ACTIONS</th>
                   </tr>
-                ) : invoices.map((inv, index) => (
-                  <tr key={inv.id || index} className="hover:bg-teal-50/20 transition">
-                    <td className="w-10 font-semibold tabular-nums text-slate-400 px-4 py-3.5">
-                      {index + 1}
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <button
-                        onClick={() => setSelectedInvoice(inv)}
-                        className="font-bold text-teal-700 hover:text-teal-900 font-mono text-xs hover:underline cursor-pointer"
-                      >
-                        {inv.referenceNumber}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <span className="text-slate-800 font-medium">{inv.typeDisplay}</span>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <SourceBadge source={inv.source} />
-                    </td>
-                    <td className="text-slate-600 font-mono px-4 py-3.5">{inv.invoiceNumber}</td>
-                    <td className="px-4 py-3.5 font-bold font-mono text-slate-900">{inv.blNumber}</td>
-                    <td className="px-4 py-3.5 text-slate-800 font-semibold max-w-[220px] truncate">{inv.vendorName}</td>
-                    <td className="px-4 py-3.5 text-right font-extrabold text-slate-900">
-                      {inv.currency === 'USD' ? 'USD ' : 'INR '}{Number(inv.amount).toLocaleString('en-IN')}
-                    </td>
-                    <td className="px-4 py-3.5 text-center">
-                      <StatusBadge status={inv.status} />
-                    </td>
-                    <td className="px-4 py-3.5 text-slate-500 font-medium whitespace-nowrap">{formatDate(inv.submittedAt || inv.createdAt)}</td>
-                    <td className="px-4 py-3.5 text-right">
-                      <button
-                        onClick={() => setSelectedInvoice(inv)}
-                        title="View Invoice & Approval Details"
-                        className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-slate-500 hover:text-teal-700 hover:bg-teal-50 border border-slate-200 transition"
-                      >
-                        <Eye className="w-4 h-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium">
+                  {invoices.length === 0 ? (
+                    <tr>
+                      <td colSpan={11} className="py-12 text-center text-xs text-slate-400">No BL invoice payment records found.</td>
+                    </tr>
+                  ) : paginatedInvoices.map((inv, index) => (
+                    <tr key={inv.id || index} className="hover:bg-teal-50/20 transition">
+                      <td className="w-10 font-semibold tabular-nums text-slate-400 px-4 py-3.5">
+                        {(page - 1) * pageSize + index + 1}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <button
+                          onClick={() => setSelectedInvoice(inv)}
+                          className="font-bold text-teal-700 hover:text-teal-900 font-mono text-xs hover:underline cursor-pointer"
+                        >
+                          {inv.referenceNumber}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className="text-slate-800 font-medium">{inv.typeDisplay}</span>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <SourceBadge source={inv.source} />
+                      </td>
+                      <td className="text-slate-600 font-mono px-4 py-3.5">{inv.invoiceNumber}</td>
+                      <td className="px-4 py-3.5 font-bold font-mono text-slate-900">{inv.blNumber}</td>
+                      <td className="px-4 py-3.5 text-slate-800 font-semibold max-w-[220px] truncate">{inv.vendorName}</td>
+                      <td className="px-4 py-3.5 text-right font-extrabold text-slate-900">
+                        {inv.currency === 'USD' ? 'USD ' : 'INR '}{Number(inv.amount).toLocaleString('en-IN')}
+                      </td>
+                      <td className="px-4 py-3.5 text-center">
+                        <StatusBadge status={inv.status} />
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-500 font-medium whitespace-nowrap">{formatDate(inv.submittedAt || inv.createdAt)}</td>
+                      <td className="px-4 py-3.5 text-right">
+                        <button
+                          onClick={() => setSelectedInvoice(inv)}
+                          title="View Invoice & Approval Details"
+                          className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-slate-500 hover:text-teal-700 hover:bg-teal-50 border border-slate-200 transition"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <ServerPagination
+              page={page}
+              totalPages={Math.ceil(invoices.length / pageSize) || 1}
+              total={invoices.length}
+              pageSize={pageSize}
+              itemLabel="BL invoices"
+              onPageChange={(p) => setPage(p)}
+              onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+            />
+          </>
         )}
       </div>
 

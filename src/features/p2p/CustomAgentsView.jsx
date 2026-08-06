@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Shield, Plus, Search, Loader2, Edit3, Key, Trash2, ToggleLeft, ToggleRight, ExternalLink } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
+import { SearchableSelect } from '../../components/ui/searchable-select';
+import { ServerPagination } from '../../components/ui/server-pagination';
 
 export default function CustomAgentsView() {
   const navigate = useNavigate();
@@ -12,6 +14,8 @@ export default function CustomAgentsView() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All Status');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   // Password reset modal state
   const [resetModal, setResetModal] = useState(null);
@@ -26,8 +30,8 @@ export default function CustomAgentsView() {
         const data = await res.json();
         setAgents(data.agents || []);
       }
-    } catch (e) {
-      console.error('Error fetching custom agents:', e);
+    } catch (err) {
+      console.error('Error fetching custom agents:', err);
     } finally {
       setLoading(false);
     }
@@ -37,110 +41,111 @@ export default function CustomAgentsView() {
     fetchAgents();
   }, []);
 
-  const handleDelete = async (agent) => {
-    const targetId = agent.agentId || agent._id || agent.id;
-    if (!window.confirm(`Are you sure you want to delete custom agent "${agent.agencyName || agent.contactPerson}"?`)) {
-      return;
-    }
+  const handleToggleStatus = async (agent) => {
     try {
-      const res = await apiFetch(`/api/custom-agents/${targetId}`, {
-        method: 'DELETE'
+      const nextStatus = agent.status === 'Active' ? 'Inactive' : 'Active';
+      const res = await apiFetch(`/api/custom-agents/${agent._id || agent.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus })
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) {
-        showToast({ title: 'Deleted', description: 'Custom agent deleted successfully.', type: 'success' });
+      if (res.ok) {
+        showToast({ title: 'Status updated', description: `Agent is now ${nextStatus}`, type: 'success' });
         fetchAgents();
-      } else {
-        showToast({ title: 'Error', description: data.error || 'Failed to delete agent.', type: 'error' });
       }
-    } catch (e) {
-      showToast({ title: 'Error', description: e.message, type: 'error' });
+    } catch (err) {
+      showToast({ type: 'error', title: 'Error updating status' });
     }
   };
 
   const handleTogglePortal = async (agent) => {
-    const targetId = agent.agentId || agent._id || agent.id;
     try {
-      const updatedAccess = !(agent.portalAccessEnabled !== false);
-      const res = await apiFetch(`/api/custom-agents/${targetId}`, {
-        method: 'PUT',
+      const res = await apiFetch(`/api/custom-agents/${agent._id || agent.id}/portal-access`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ portalAccessEnabled: updatedAccess })
+        body: JSON.stringify({ enabled: !agent.portalEnabled })
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) {
-        showToast({
-          title: 'Updated',
-          description: `Portal login ${updatedAccess ? 'enabled' : 'disabled'} for ${agent.agencyName || agent.contactPerson}.`,
-          type: 'success'
-        });
+      if (res.ok) {
+        showToast({ title: 'Portal access updated', description: `Portal login is now ${!agent.portalEnabled ? 'enabled' : 'disabled'}`, type: 'success' });
         fetchAgents();
-      } else {
-        showToast({ title: 'Error', description: data.error || 'Failed to update portal access.', type: 'error' });
       }
-    } catch (e) {
-      showToast({ title: 'Error', description: e.message, type: 'error' });
+    } catch (err) {
+      showToast({ type: 'error', title: 'Error toggling portal access' });
     }
   };
 
-  const handleResetPassword = async (e) => {
-    e.preventDefault();
-    if (!newPass || newPass.length < 6) {
-      showToast({ title: 'Validation Error', description: 'Password must be at least 6 characters.', type: 'error' });
-      return;
-    }
-    const targetId = resetModal.agentId || resetModal._id || resetModal.id;
+  const handleResetPassword = async () => {
+    if (!resetModal) return;
     try {
       setResetting(true);
-      const res = await apiFetch(`/api/custom-agents/${targetId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: newPass })
+      const res = await apiFetch(`/api/custom-agents/${resetModal._id || resetModal.id}/generate-password`, {
+        method: 'POST'
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) {
-        showToast({ title: 'Password Reset', description: 'Password updated successfully.', type: 'success' });
-        setResetModal(null);
-        setNewPass('');
+      const data = await res.json();
+      if (res.ok && data.temporaryPassword) {
+        setNewPass(data.temporaryPassword);
       } else {
-        showToast({ title: 'Error', description: data.error || 'Failed to reset password.', type: 'error' });
+        showToast({ type: 'error', title: 'Failed to reset password' });
       }
-    } catch (e) {
-      showToast({ title: 'Error', description: e.message, type: 'error' });
+    } catch (err) {
+      showToast({ type: 'error', title: 'Error resetting password' });
     } finally {
       setResetting(false);
     }
   };
 
-  const filtered = agents.filter((agent) => {
-    const term = search.toLowerCase();
+  const handleDelete = async (agent) => {
+    if (!window.confirm(`Are you sure you want to delete "${agent.agencyName || agent.contactPerson}"?`)) return;
+    try {
+      const res = await apiFetch(`/api/custom-agents/${agent._id || agent.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        showToast({ title: 'Agent deleted', type: 'success' });
+        fetchAgents();
+      }
+    } catch (err) {
+      showToast({ type: 'error', title: 'Error deleting agent' });
+    }
+  };
+
+  const filtered = agents.filter((a) => {
+    const q = search.toLowerCase();
     const matchesSearch =
-      agent.agencyName?.toLowerCase().includes(term) ||
-      agent.contactPerson?.toLowerCase().includes(term) ||
-      agent.email?.toLowerCase().includes(term) ||
-      agent.licenceNumber?.toLowerCase().includes(term) ||
-      agent.agentId?.toLowerCase().includes(term);
+      !search ||
+      (a.agencyName || '').toLowerCase().includes(q) ||
+      (a.contactPerson || '').toLowerCase().includes(q) ||
+      (a.email || '').toLowerCase().includes(q) ||
+      (a.iecCode || '').toLowerCase().includes(q) ||
+      (a.chaLicenseNo || '').toLowerCase().includes(q);
 
     const matchesStatus =
       statusFilter === 'All Status' ||
-      (statusFilter === 'Active' && agent.status === 'Active') ||
-      (statusFilter === 'Inactive' && agent.status === 'Inactive');
+      (a.status || 'Active').toLowerCase() === statusFilter.toLowerCase();
 
     return matchesSearch && matchesStatus;
   });
 
+  const paginated = filtered.slice((page - 1) * pageSize, page * pageSize);
+
   return (
-    <div className="w-full space-y-4 font-sans pb-12">
-      {/* Header Banner matching Screenshot 1 */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-lg font-extrabold text-slate-900 leading-tight flex items-center gap-2">
-            <Shield className="w-5 h-5 text-[#0d7676]" /> Custom Agent Management
-          </h1>
-          <p className="text-xs text-slate-500 font-medium mt-1">
-            Manage clearing agent portal accounts — create logins, reset passwords, view BL activity
-          </p>
+    <div className="space-y-4 font-sans pb-12">
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-teal-50 text-[#0d7676] flex items-center justify-center font-bold">
+            <Shield className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-base font-extrabold text-slate-900 tracking-tight">Customs Clearing Agents Directory</h1>
+              <span className="bg-teal-50 text-[#0d7676] font-bold text-[10px] px-2 py-0.5 rounded-full border border-teal-200">
+                {agents.length} Total Registered
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              Manage CHA licenses, IEC codes, portal security credentials & assigned Customs Duty clearance activities.
+            </p>
+          </div>
         </div>
+
         <button
           onClick={() => navigate('create')}
           className="flex items-center gap-2 bg-[#0d7676] hover:bg-[#0f766e] text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-xs transition-all shrink-0"
@@ -149,31 +154,32 @@ export default function CustomAgentsView() {
         </button>
       </div>
 
-      {/* Filter Toolbar matching Screenshot 1 */}
       <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-          {/* Search Box */}
           <div className="relative flex-1 sm:w-80">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               placeholder="Search name, company, email, ..."
               className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-1 focus:ring-[#0d7676]"
             />
           </div>
 
-          {/* Status Dropdown */}
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#0d7676]"
-          >
-            <option value="All Status">All Status</option>
-            <option value="Active">Active</option>
-            <option value="Inactive">Inactive</option>
-          </select>
+          <div className="w-36">
+            <SearchableSelect
+              options={[
+                { label: 'All Status', value: 'All Status' },
+                { label: 'Active', value: 'Active' },
+                { label: 'Inactive', value: 'Inactive' }
+              ]}
+              value={statusFilter}
+              onChange={(val) => { setStatusFilter(val); setPage(1); }}
+              size="sm"
+              searchable={false}
+            />
+          </div>
         </div>
 
         <span className="text-xs font-bold text-slate-400">
@@ -181,7 +187,6 @@ export default function CustomAgentsView() {
         </span>
       </div>
 
-      {/* Table Section matching Screenshot 1 */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-20">
@@ -195,36 +200,34 @@ export default function CustomAgentsView() {
             <p className="text-xs text-slate-400">Try adjusting search query or click Add Agent to create one.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-100 bg-slate-50/60 text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
-                  <th className="py-3.5 px-4 w-12 text-center">#</th>
-                  <th className="py-3.5 px-4">AGENT</th>
-                  <th className="py-3.5 px-4">IEC CODE</th>
-                  <th className="py-3.5 px-4">CHA LICENSE</th>
-                  <th className="py-3.5 px-4 text-center">BLS</th>
-                  <th className="py-3.5 px-4">STATUS</th>
-                  <th className="py-3.5 px-4">PORTAL LOGIN</th>
-                  <th className="py-3.5 px-4">ADDED</th>
-                  <th className="py-3.5 px-4 text-right">ACTIONS</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-xs font-medium text-slate-700">
-                {filtered.map((agent, idx) => {
-                  const name = agent.contactPerson || agent.agencyName || 'Custom Agent';
-                  const company = agent.agencyName || agent.contactPerson;
-                  const initial = name[0].toUpperCase();
-                  const addedDate = agent.createdAt ? new Date(agent.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '01 Jul 2026';
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-slate-50/60 text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                    <th className="py-3.5 px-4 w-12 text-center">#</th>
+                    <th className="py-3.5 px-4">AGENT</th>
+                    <th className="py-3.5 px-4">IEC CODE</th>
+                    <th className="py-3.5 px-4">CHA LICENSE</th>
+                    <th className="py-3.5 px-4 text-center">BLS</th>
+                    <th className="py-3.5 px-4">STATUS</th>
+                    <th className="py-3.5 px-4">PORTAL LOGIN</th>
+                    <th className="py-3.5 px-4">ADDED</th>
+                    <th className="py-3.5 px-4 text-right">ACTIONS</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs font-medium text-slate-700">
+                  {paginated.map((agent, idx) => {
+                    const name = agent.contactPerson || agent.agencyName || 'Custom Agent';
+                    const company = agent.agencyName || agent.contactPerson;
+                    const initial = name[0].toUpperCase();
+                    const addedDate = agent.createdAt ? new Date(agent.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '01 Jul 2026';
 
-                  return (
-                    <tr key={agent.agentId || agent._id} className="hover:bg-slate-50/80 transition-colors">
-                      {/* # */}
-                      <td className="py-3.5 px-4 text-center font-mono text-slate-400 text-[11px] font-bold">
-                        {idx + 1}
-                      </td>
-
-                      {/* AGENT */}
+                    return (
+                      <tr key={agent.agentId || agent._id || idx} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3.5 px-4 text-center font-mono text-slate-400 text-[11px] font-bold">
+                          {(page - 1) * pageSize + idx + 1}
+                        </td>
                       <td className="py-3.5 px-4">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 font-extrabold flex items-center justify-center text-xs shrink-0">
@@ -333,6 +336,16 @@ export default function CustomAgentsView() {
               </tbody>
             </table>
           </div>
+          <ServerPagination
+            page={page}
+            totalPages={Math.ceil(filtered.length / pageSize) || 1}
+            total={filtered.length}
+            pageSize={pageSize}
+            itemLabel="custom agents"
+            onPageChange={(p) => setPage(p)}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+          />
+        </>
         )}
       </div>
 

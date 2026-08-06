@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Shield, ArrowLeft, Loader2, Info, CheckCircle2 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
+import { SearchableSelect } from '../../components/ui/searchable-select';
 
 export default function CustomAgentFormView() {
   const navigate = useNavigate();
@@ -187,14 +188,16 @@ export default function CustomAgentFormView() {
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5">Account Status</label>
-                <select
+                <SearchableSelect
+                  options={[
+                    { label: 'Active — Can log in', value: 'Active - Can log in' },
+                    { label: 'Inactive — Access disabled', value: 'Inactive' }
+                  ]}
                   value={form.status}
-                  onChange={(e) => setForm({ ...form, status: e.target.value })}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0d7676]"
-                >
-                  <option value="Active - Can log in">Active — Can log in</option>
-                  <option value="Inactive">Inactive — Access disabled</option>
-                </select>
+                  onChange={(val) => setForm({ ...form, status: val })}
+                  size="md"
+                  searchable={false}
+                />
               </div>
             </div>
           </div>

@@ -11,10 +11,14 @@ export function CustomSelect({
   required = false,
   error,
   helperText,
-  disabled = false
+  disabled = false,
+  className = '',
+  size = 'md',
+  searchable = true,
+  name
 }) {
   return (
-    <div className="space-y-1.5 font-sans">
+    <div className={`space-y-1.5 font-sans ${className}`}>
       {label && (
         <label className="block text-xs font-bold text-slate-700">
           {label} {required && <span className="text-rose-500">*</span>}
@@ -29,6 +33,9 @@ export function CustomSelect({
         searchPlaceholder={searchPlaceholder}
         error={error}
         disabled={disabled}
+        size={size}
+        searchable={searchable}
+        name={name}
       />
 
       {helperText && !error && (
@@ -37,3 +44,4 @@ export function CustomSelect({
     </div>
   );
 }
+

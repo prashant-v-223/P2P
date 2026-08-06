@@ -145,6 +145,7 @@ export default function SettlementLedgerView() {
           pageSize={pageSize}
           itemLabel="settlement payments"
           onPageChange={setCurrentPage}
+          onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1); }}
         />
       </div>
     </div>

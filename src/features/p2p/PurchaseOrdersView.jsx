@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { ServerPagination } from '../../components/ui/server-pagination';
+import { SearchableSelect } from '../../components/ui/searchable-select';
+import { CustomInput } from '../../components/ui/custom-input';
 import { 
   Search, 
   Eye, 
@@ -117,46 +119,60 @@ export default function PurchaseOrdersView() {
       {/* SINGLE UNIFIED CONTROL BAR (Search + Type + Status + Page Size + Action Button) */}
       <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]">
-          <div className="relative min-w-[240px] flex-1">
-            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-            <input
+          <div className="min-w-[240px] flex-1">
+            <CustomInput
               type="text"
               placeholder="Search PO number, vendor..."
               value={searchTerm}
               onChange={handleSearchChange}
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#0d7676] outline-none font-medium"
+              onClear={() => handleSearchChange({ target: { value: '' } })}
+              leftIcon={Search}
+              clearable={true}
+              size="sm"
             />
           </div>
 
-          <select
-            value={typeFilter}
-            onChange={handleTypeChange}
-            className="h-9 px-3 text-xs border border-slate-200 rounded-lg bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-[#0d7676]"
-          >
-            <option value="All Types">All Types</option>
-            <option value="Domestic">Domestic</option>
-            <option value="Import">Import</option>
-          </select>
+          <div className="w-32">
+            <SearchableSelect
+              options={[
+                { label: 'All Types', value: 'All Types' },
+                { label: 'Domestic', value: 'Domestic' },
+                { label: 'Import', value: 'Import' }
+              ]}
+              value={typeFilter}
+              onChange={(val) => updateUrlParams({ type: val, page: '1' })}
+              size="sm"
+              searchable={false}
+            />
+          </div>
 
-          <select
-            value={statusFilter}
-            onChange={handleStatusChange}
-            className="h-9 px-3 text-xs border border-slate-200 rounded-lg bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-[#0d7676]"
-          >
-            <option value="All Status">All Status</option>
-            <option value="Open">Open</option>
-            <option value="Closed">Closed</option>
-          </select>
+          <div className="w-32">
+            <SearchableSelect
+              options={[
+                { label: 'All Status', value: 'All Status' },
+                { label: 'Open', value: 'Open' },
+                { label: 'Closed', value: 'Closed' }
+              ]}
+              value={statusFilter}
+              onChange={(val) => updateUrlParams({ status: val, page: '1' })}
+              size="sm"
+              searchable={false}
+            />
+          </div>
 
-          <select
-            value={pageSize}
-            onChange={handlePageSizeChange}
-            className="h-9 px-3 text-xs border border-slate-200 rounded-lg bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-[#0d7676]"
-          >
-            <option value={10}>10 per page</option>
-            <option value={20}>20 per page</option>
-            <option value={50}>50 per page</option>
-          </select>
+          <div className="w-32">
+            <SearchableSelect
+              options={[
+                { label: '10 per page', value: 10 },
+                { label: '20 per page', value: 20 },
+                { label: '50 per page', value: 50 }
+              ]}
+              value={pageSize}
+              onChange={(val) => { setPageSize(Number(val)); updateUrlParams({ pageSize: String(val), page: '1' }); }}
+              size="sm"
+              searchable={false}
+            />
+          </div>
         </div>
 
         <Link

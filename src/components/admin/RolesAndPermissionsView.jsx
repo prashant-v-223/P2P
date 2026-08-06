@@ -11,6 +11,7 @@ import { Input } from '../ui/input';
 import { Badge } from '../ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { FieldError } from '../ui/field-error';
+import { ServerPagination } from '../ui/server-pagination';
 
 const emptyRole = { roleName: '', description: '', status: 'Active' };
 const emptyPermission = { key: '', name: '', module: '', description: '', status: 'Active' };
@@ -165,10 +166,13 @@ function ManageDialog({ type, record, onClose, onSaved }) {
             </>
           )}
           <label className="block text-xs font-semibold text-slate-700">Status
-            <select value={form.status} onChange={(event) => update('status', event.target.value)} className="mt-1.5 h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm focus:border-teal-600 focus:outline-none focus:ring-4 focus:ring-teal-600/10">
-              <option>Active</option>
-              <option>Inactive</option>
-            </select>
+            <SearchableSelect
+              options={['Active', 'Inactive']}
+              value={form.status}
+              onChange={(val) => update('status', val)}
+              size="md"
+              searchable={false}
+            />
           </label>
           <div className="modal-footer">
             <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
@@ -234,12 +238,20 @@ export default function RolesAndPermissionsView() {
     return [...map.values()];
   }, [effectivePermissions]);
 
+  const [permPage, setPermPage] = useState(1);
+  const [permPageSize, setPermPageSize] = useState(10);
+
   const filteredPermissions = useMemo(() => {
     const query = search.trim().toLowerCase();
     return (permissions.length > 0 ? permissions : FALLBACK_PERMISSIONS).filter((permission) => 
       !query || [permission.key, permission.name, permission.module].some((value) => value?.toLowerCase().includes(query))
     );
   }, [permissions, search]);
+
+  const paginatedPermissions = useMemo(() => {
+    const start = (permPage - 1) * permPageSize;
+    return filteredPermissions.slice(start, start + permPageSize);
+  }, [filteredPermissions, permPage, permPageSize]);
 
   const togglePermission = (moduleKey, action) => {
     if (!selectedRole) return;
@@ -386,7 +398,7 @@ export default function RolesAndPermissionsView() {
               <table className="data-table min-w-[820px] text-xs">
                 <thead className="bg-slate-50 border-b border-slate-200 font-extrabold uppercase text-[11px]"><tr><th className="py-3 px-4">Permission</th><th className="py-3 px-4">Module</th><th className="py-3 px-4">Roles</th><th className="py-3 px-4">Type</th><th className="py-3 px-4 text-right">Actions</th></tr></thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredPermissions.map((permission) => (
+                  {paginatedPermissions.map((permission) => (
                     <tr key={permission.id} className="hover:bg-teal-50/20 transition">
                       <td className="py-3 px-4"><p className="font-mono font-bold text-[#0d7676]">{permission.key}</p><p className="mt-0.5 text-[11px] text-slate-500">{permission.name}</p></td>
                       <td className="py-3 px-4"><Badge variant="secondary">{permission.module}</Badge></td>
@@ -404,6 +416,14 @@ export default function RolesAndPermissionsView() {
               </table>
               {!filteredPermissions.length && <div className="py-12 text-center text-xs text-slate-400">No permissions match your search.</div>}
             </div>
+            <ServerPagination
+              page={permPage}
+              totalPages={Math.ceil(filteredPermissions.length / permPageSize) || 1}
+              total={filteredPermissions.length}
+              pageSize={permPageSize}
+              onPageChange={(p) => setPermPage(p)}
+              onPageSizeChange={(s) => { setPermPageSize(s); setPermPage(1); }}
+            />
           </CardContent>
         </Card>
       )}

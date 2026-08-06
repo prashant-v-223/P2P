@@ -4,6 +4,7 @@ import { useSelector } from 'react-redux';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import FileUploadZone from '../../components/shared/FileUploadZone';
+import { SearchableSelect } from '../../components/ui/searchable-select';
 import {
   Search, Check, Upload, X, FileText, Loader2, AlertCircle,
   ChevronRight, Building2, IndianRupee, Percent, ArrowLeft, Send,
@@ -682,18 +683,20 @@ export default function CreateAdvancePaymentWizard() {
                   <div className="grid lg:grid-cols-2 gap-5">
                     <div>
                       <label className="block text-sm font-bold text-slate-700 mb-1.5">Payment Mode</label>
-                      <select
+                      <SearchableSelect
+                        options={[
+                          { label: 'NEFT', value: 'NEFT' },
+                          { label: 'RTGS', value: 'RTGS' },
+                          { label: 'SWIFT', value: 'SWIFT' },
+                          { label: 'Cheque', value: 'Cheque' },
+                          { label: 'Cash', value: 'Cash' },
+                          { label: 'Bank Transfer', value: 'Bank Transfer' }
+                        ]}
                         value={paymentMode}
-                        onChange={(e) => setPaymentMode(e.target.value)}
-                        className="w-full px-4 py-2.5 text-sm border border-slate-200 rounded-xl outline-none transition-all font-normal bg-white focus:border-teal-500 focus:ring-2 focus:ring-teal-100 hover:border-slate-300"
-                      >
-                        <option value="NEFT">NEFT</option>
-                        <option value="RTGS">RTGS</option>
-                        <option value="SWIFT">SWIFT</option>
-                        <option value="Cheque">Cheque</option>
-                        <option value="Cash">Cash</option>
-                        <option value="Bank Transfer">Bank Transfer</option>
-                      </select>
+                        onChange={(val) => setPaymentMode(val)}
+                        size="md"
+                        searchable={false}
+                      />
                     </div>
                     <div>
                       <label className="block text-sm font-bold text-slate-700 mb-1.5">

@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
+import { SearchableSelect } from '../../components/ui/searchable-select';
+import { ServerPagination } from '../../components/ui/server-pagination';
 
 const statusLabel = (value) => ({
   submitted: 'Submitted',
@@ -61,10 +63,15 @@ function AssignModal({ entry, agents, onClose, onSaved }) {
         <div className="space-y-4 p-5">
           {error && <div className="rounded-lg bg-rose-50 p-3 text-xs font-semibold text-rose-700">{error}</div>}
           <label className="block text-xs font-bold">Select Agent *
-            <select value={agentId} onChange={(e) => setAgentId(e.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 outline-none focus:border-teal-400">
-              <option value="">Search and select agent...</option>
-              {agents.map((agent) => <option key={agent.agentId} value={agent.agentId}>{agent.agencyName} — {agent.contactPerson || agent.email}</option>)}
-            </select>
+            <div className="mt-1.5">
+              <SearchableSelect
+                options={agents.map((agent) => ({ label: `${agent.agencyName} — ${agent.contactPerson || agent.email}`, value: agent.agentId }))}
+                value={agentId}
+                onChange={(val) => setAgentId(val)}
+                placeholder="Search and select agent..."
+                size="md"
+              />
+            </div>
           </label>
           <label className="block text-xs font-bold">Notes for Agent
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows="3" placeholder="Instructions for customs clearance..." className="mt-1.5 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 outline-none focus:border-teal-400" />
@@ -84,22 +91,42 @@ function AssignModal({ entry, agents, onClose, onSaved }) {
 
 function EximList() {
   const navigate = useNavigate();
-  const [entries, setEntries] = useState([]); const [agents, setAgents] = useState([]); const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [query, setQuery] = useState(''); const [status, setStatus] = useState(''); const [selected, setSelected] = useState(null);
+  const [entries, setEntries] = useState([]);
+  const [agents, setAgents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [query, setQuery] = useState('');
+  const [status, setStatus] = useState('');
+  const [selected, setSelected] = useState(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const load = async () => {
     setLoading(true);
+    setError('');
     try {
-      const response = await apiFetch('/api/p2p/exim/bl-entries');
-      const json = await response.json();
-      if (!response.ok) throw new Error(json.error || 'Unable to load BL entries.');
-      setEntries(json.data || []);
-      setAgents(json.agents || []);
-    } catch (e) { setError(e.message); } finally { setLoading(false); }
+      const [resBl, resAgents] = await Promise.all([
+        apiFetch('/api/p2p/exim/bl-entries'),
+        apiFetch('/api/custom-agents')
+      ]);
+      const dataBl = await resBl.json();
+      const dataAgents = await resAgents.json();
+
+      if (resBl.ok) setEntries(dataBl.entries || []);
+      else setError(dataBl.error || 'Failed to load BL entries.');
+
+      if (resAgents.ok) setAgents(dataAgents.agents || []);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { load(); }, []);
 
   const filtered = useMemo(() => entries.filter((entry) => (!status || entry.status === status) && [entry.blNumber, entry.rfqNumber, entry.rfqId, entry.vendorName].some((value) => String(value || '').toLowerCase().includes(query.toLowerCase()))), [entries, query, status]);
+  const paginated = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
 
   return (
     <div className="space-y-5 pb-12">
@@ -114,16 +141,24 @@ function EximList() {
         <div className="flex flex-wrap gap-2 border-b p-4">
           <label className="flex w-72 items-center gap-2 rounded-lg border bg-slate-50 px-3">
             <Search className="h-4 w-4 text-slate-400" />
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search BL #, vendor, RFQ..." className="w-full bg-transparent py-2.5 text-xs outline-none" />
+            <input value={query} onChange={(e) => { setQuery(e.target.value); setPage(1); }} placeholder="Search BL #, vendor, RFQ..." className="w-full bg-transparent py-2.5 text-xs outline-none" />
           </label>
-          <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-44 rounded-lg border bg-slate-50 px-3 text-xs">
-            <option value="">All Status</option>
-            <option value="submitted">Submitted</option>
-            <option value="exim_review">EXIM Reviewed</option>
-            <option value="assigned_to_agent">With Customs Agent</option>
-            <option value="custom_cleared">Customs Cleared</option>
-            <option value="returned_for_correction">Returned</option>
-          </select>
+          <div className="w-48">
+            <SearchableSelect
+              options={[
+                { label: 'All Status', value: '' },
+                { label: 'Submitted', value: 'submitted' },
+                { label: 'EXIM Reviewed', value: 'exim_review' },
+                { label: 'With Customs Agent', value: 'assigned_to_agent' },
+                { label: 'Customs Cleared', value: 'custom_cleared' },
+                { label: 'Returned', value: 'returned_for_correction' }
+              ]}
+              value={status}
+              onChange={(val) => { setStatus(val); setPage(1); }}
+              size="sm"
+              searchable={false}
+            />
+          </div>
         </div>
 
         {loading ? (
@@ -145,9 +180,9 @@ function EximList() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((entry, index) => (
+                {paginated.map((entry, index) => (
                   <tr key={entry.blId} className="border-t hover:bg-slate-50/70">
-                    <td className="px-4 py-4 text-slate-400">{index + 1}</td>
+                    <td className="px-4 py-4 text-slate-400">{(page - 1) * pageSize + index + 1}</td>
                     <td className="font-bold">{entry.blNumber}</td>
                     <td><span className="rounded border bg-slate-50 px-2 py-1 font-mono text-[10px]">{entry.rfqNumber || entry.rfqId}</span></td>
                     <td>{entry.vendorName || '—'}</td>
@@ -165,6 +200,15 @@ function EximList() {
               </tbody>
             </table>
             {!filtered.length && <div className="p-12 text-center text-xs text-slate-400">No BL entries found.</div>}
+            <ServerPagination
+              page={page}
+              totalPages={Math.ceil(filtered.length / pageSize) || 1}
+              total={filtered.length}
+              pageSize={pageSize}
+              itemLabel="BL entries"
+              onPageChange={(p) => setPage(p)}
+              onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+            />
           </div>
         )}
       </section>
@@ -372,14 +416,14 @@ function EximDetail({ blId }) {
       <section className="rounded-2xl border bg-white p-5 shadow-sm">
         <h2 className="flex items-center gap-2 text-sm font-extrabold"><Upload className="h-4 w-4" />Upload EXIM Documents</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-          <select value={docType} onChange={(e) => setDocType(e.target.value)} className="rounded-lg border bg-slate-50 px-3 py-2.5 text-xs">
-            <option value="">Document type</option>
-            <option>Commercial Invoice</option>
-            <option>Packing List</option>
-            <option>Certificate of Origin</option>
-            <option>Insurance Certificate</option>
-            <option>Other EXIM Document</option>
-          </select>
+          <SearchableSelect
+            options={['Commercial Invoice', 'Packing List', 'Certificate of Origin', 'Insurance Certificate', 'Other EXIM Document']}
+            value={docType}
+            onChange={(val) => setDocType(val)}
+            placeholder="Document type"
+            size="md"
+            searchable={false}
+          />
           <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} className="rounded-lg border bg-slate-50 px-3 py-2 text-xs" />
           <button onClick={upload} disabled={uploading || !docType || !file} className="rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">
             {uploading ? 'Uploading...' : 'Upload Documents'}

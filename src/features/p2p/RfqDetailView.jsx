@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
+import { SearchableSelect } from '../../components/ui/searchable-select';
 import DocumentUploader from '../../components/shared/DocumentUploader';
 import RecordDbInfoDrawer from '../../components/common/RecordDbInfoDrawer';
 import UniversalApprovalWorkflowCard from '../../components/common/UniversalApprovalWorkflowCard';
@@ -782,7 +783,7 @@ export default function RfqDetailView() {
             <div className="overflow-hidden rounded-xl border border-slate-200">
               <div className="grid grid-cols-[minmax(170px,1.45fr)_64px_minmax(90px,.75fr)_minmax(105px,.85fr)_minmax(200px,1.55fr)] gap-2.5 bg-slate-50 px-3 py-2.5 pr-12 text-[9px] font-extrabold uppercase tracking-wide text-slate-500 lg:gap-3 lg:pl-4"><span>Quoted vendor</span><span>Qty</span><span>Rate / container</span><span>Allocated value</span><span>Internal remark</span></div>
               {awardRows.map((row, index) => { const quote = quotesList.find((item) => item.quoteId === row.quoteId); const duplicate = row.quoteId && awardRows.some((item, rowIndex) => rowIndex !== index && item.quoteId === row.quoteId); return <div key={index} className={`relative grid grid-cols-[minmax(170px,1.45fr)_64px_minmax(90px,.75fr)_minmax(105px,.85fr)_minmax(200px,1.55fr)] items-center gap-2.5 border-t px-3 py-3 pr-12 lg:gap-3 lg:pl-4 ${duplicate ? 'border-rose-200 bg-rose-50/40' : 'border-slate-100 bg-white'}`}>
-                <div><select aria-label={`Vendor allocation ${index + 1}`} value={row.quoteId} onChange={(event) => setAwardRows((current) => current.map((item, rowIndex) => rowIndex === index ? { ...item, quoteId: event.target.value } : item))} className={`w-full rounded-lg border bg-slate-50 px-3 py-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-teal-100 ${duplicate ? 'border-rose-400' : 'border-slate-200 focus:border-teal-400'}`}><option value="">Select vendor quote</option>{quotesList.map((item) => <option key={item.quoteId} value={item.quoteId} disabled={awardRows.some((rowItem, rowIndex) => rowIndex !== index && rowItem.quoteId === item.quoteId)}>{item.vendorName} · {item.rank || 'Rank pending'}</option>)}</select>{duplicate && <p className="mt-1 text-[9px] font-bold text-rose-600">Vendor already selected</p>}</div>
+                <div><SearchableSelect options={quotesList.map((item) => ({ label: `${item.vendorName} · ${item.rank || 'Rank pending'}`, value: item.quoteId }))} value={row.quoteId} onChange={(val) => setAwardRows((current) => current.map((item, rowIndex) => rowIndex === index ? { ...item, quoteId: val } : item))} placeholder="Select vendor quote" size="sm" searchable={false} />{duplicate && <p className="mt-1 text-[9px] font-bold text-rose-600">Vendor already selected</p>}</div>
                 <input aria-label={`Containers for allocation ${index + 1}`} type="number" min="1" max={totalContainers} step="1" value={row.containers} onChange={(event) => setAwardRows((current) => current.map((item, rowIndex) => rowIndex === index ? { ...item, containers: event.target.value } : item))} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold outline-none focus:border-teal-400 focus:ring-2 focus:ring-teal-100" />
                 <span className="whitespace-nowrap text-[11px] font-bold text-slate-700">₹{Number(quote?.totalInr || 0).toLocaleString('en-IN')}</span><span className="whitespace-nowrap text-xs font-extrabold text-slate-900">₹{((Number(quote?.totalInr) || 0) * (Number(row.containers) || 0)).toLocaleString('en-IN')}</span>
                 <textarea aria-label={`Remark for allocation ${index + 1}`} rows="3" value={row.remark} onChange={(event) => setAwardRows((current) => current.map((item, rowIndex) => rowIndex === index ? { ...item, remark: event.target.value } : item))} placeholder="Add an optional decision note, commercial condition, or allocation reason…" spellCheck={false} data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false" className="min-w-0 resize-y rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 outline-none focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-100" />
@@ -818,15 +819,16 @@ export default function RfqDetailView() {
             <form onSubmit={handleCreateQuoteSubmit} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="block text-xs font-semibold text-slate-700">Vendor Name</label>
-                <select
-                  required
+                <SearchableSelect
+                  options={(rfq.invitedVendors || []).map((vendor) => ({
+                    label: `${vendor.companyName} (${vendor.sapVendorCode || vendor.vendorId || 'No code'})`,
+                    value: vendor.companyName
+                  }))}
                   value={vendorName}
-                  onChange={(e) => setVendorName(e.target.value)}
-                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#0d7676]"
-                >
-                  <option value="">Select an invited vendor</option>
-                  {(rfq.invitedVendors || []).map((vendor) => <option key={vendor.vendorId || vendor.sapVendorCode || vendor.companyName} value={vendor.companyName}>{vendor.companyName} ({vendor.sapVendorCode || vendor.vendorId || 'No code'})</option>)}
-                </select>
+                  onChange={(val) => setVendorName(val)}
+                  placeholder="Select an invited vendor"
+                  size="md"
+                />
               </div>
 
               <div className="space-y-1.5">

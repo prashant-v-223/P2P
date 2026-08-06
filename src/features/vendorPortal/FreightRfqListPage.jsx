@@ -3,12 +3,15 @@ import { Link } from 'react-router-dom';
 import { ClipboardList, Search } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { CustomSelect } from '../../components/ui/custom-select';
+import { ServerPagination } from '../../components/ui/server-pagination';
 
 export default function FreightRfqListPage() {
   const [rfqs, setRfqs] = useState([]);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('All');
   const [error, setError] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     apiFetch('/api/p2p/vendor-rfqs')
@@ -24,6 +27,8 @@ export default function FreightRfqListPage() {
     const q = search.toLowerCase();
     return (!q || `${rfq.rfqNumber} ${rfq.title} ${rfq.poId}`.toLowerCase().includes(q)) && (status === 'All' || rfq.status === status);
   }), [rfqs, search, status]);
+
+  const paginated = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
 
   return (
     <div className="space-y-6 font-sans antialiased text-left max-w-6xl mx-auto pb-10">
@@ -44,7 +49,7 @@ export default function FreightRfqListPage() {
             <Search className="absolute left-3.5 top-2.5 h-4 w-4 text-slate-400" />
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               placeholder="Search reference, vendor..."
               className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-10 pr-3 text-xs font-medium outline-none focus:border-[#0d7676] focus:ring-2 focus:ring-teal-100 transition"
             />
@@ -52,7 +57,7 @@ export default function FreightRfqListPage() {
           <div className="w-full sm:w-44">
             <CustomSelect
               value={status}
-              onChange={(val) => setStatus(val)}
+              onChange={(val) => { setStatus(val); setPage(1); }}
               options={[
                 { label: 'All Status', value: 'All' },
                 { label: 'Published (Open)', value: 'published' },
@@ -79,7 +84,7 @@ export default function FreightRfqListPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
-              {filtered.map((rfq, idx) => {
+              {paginated.map((rfq, idx) => {
                 const isAwarded = rfq.status === 'awarded' || Boolean(rfq.myAllocation);
                 const containerCount = rfq.myAllocation?.containersAllocated || rfq.cargoDetails?.numberOfContainers || 5;
                 const cargoType = rfq.cargoDetails?.cargoType || 'SOLAR CELL';
@@ -91,7 +96,7 @@ export default function FreightRfqListPage() {
 
                 return (
                   <tr key={rfq.rfqId} className="transition hover:bg-slate-50/60">
-                    <td className="p-3.5 pl-4 text-slate-400 font-mono text-xs">{idx + 1}</td>
+                    <td className="p-3.5 pl-4 text-slate-400 font-mono text-xs">{(page - 1) * pageSize + idx + 1}</td>
                     <td className="p-3.5 font-mono font-bold text-slate-700 text-xs">{rfq.rfqNumber}</td>
                     <td className="p-3.5 font-bold text-slate-900 uppercase">{rfq.title}</td>
                     <td className="p-3.5 font-mono text-slate-600">{rfq.poId || '4300001538'}</td>
@@ -139,9 +144,19 @@ export default function FreightRfqListPage() {
 
           {filtered.length === 0 && (
             <div className="p-12 text-center text-xs text-slate-400 font-semibold">
-              No assigned RFQs found matching your query.
+              No RFQs found.
             </div>
           )}
+
+          <ServerPagination
+            page={page}
+            totalPages={Math.ceil(filtered.length / pageSize) || 1}
+            total={filtered.length}
+            pageSize={pageSize}
+            itemLabel="RFQs"
+            onPageChange={(p) => setPage(p)}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+          />
         </div>
       </div>
     </div>

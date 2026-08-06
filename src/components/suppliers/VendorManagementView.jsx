@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { ServerPagination } from '../ui/server-pagination';
+import { SearchableSelect } from '../ui/searchable-select';
 import { useToast } from '../ui/toast';
 
 const initialMeta = { page: 1, pageSize: 20, total: 0, totalPages: 1 };
@@ -158,7 +159,7 @@ export default function VendorManagementView() {
             </tbody>
           </table>
         </div>
-        <ServerPagination {...meta} itemLabel="vendors" onPageChange={load} className="rounded-none border-x-0 border-b-0 shadow-none" />
+        <ServerPagination {...meta} itemLabel="vendors" onPageChange={load} onPageSizeChange={(pageSize) => setMeta((current) => ({ ...current, pageSize }))} className="rounded-none border-x-0 border-b-0 shadow-none" />
       </section>
 
       {password && <PasswordDialog data={password} onClose={() => setPassword(null)} showToast={showToast} />}
@@ -167,7 +168,19 @@ export default function VendorManagementView() {
 }
 
 function Filter({ value, onChange, options, labels = {} }) {
-  return <select value={value} onChange={(event) => onChange(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs">{options.map((option) => <option key={option} value={option}>{labels[option] || (option === 'All' ? 'All values' : option)}</option>)}</select>;
+  const formattedOptions = options.map((opt) => ({
+    label: labels[opt] || (opt === 'All' ? 'All values' : opt),
+    value: opt
+  }));
+  return (
+    <SearchableSelect
+      options={formattedOptions}
+      value={value}
+      onChange={onChange}
+      size="sm"
+      searchable={false}
+    />
+  );
 }
 
 function Status({ active, text }) {

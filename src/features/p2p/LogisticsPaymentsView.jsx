@@ -1,12 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Truck, DollarSign, CheckCircle2, FileText, Building2 } from 'lucide-react';
+import { Truck, DollarSign, CheckCircle2, FileText, Building2, Search } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import DocumentUploader from '../../components/shared/DocumentUploader';
+import { SearchableSelect } from '../../components/ui/searchable-select';
+import { ServerPagination } from '../../components/ui/server-pagination';
 
 export default function LogisticsPaymentsView() {
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedPaymentId, setSelectedPaymentId] = useState('');
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     async function fetchPayments() {
@@ -26,6 +32,20 @@ export default function LogisticsPaymentsView() {
     fetchPayments();
   }, []);
 
+  const filtered = payments.filter(p => {
+    const q = search.toLowerCase();
+    const matchesSearch = !search ||
+      (p.logisticsPaymentId || '').toLowerCase().includes(q) ||
+      (p.providerName || '').toLowerCase().includes(q) ||
+      (p.blNumber || '').toLowerCase().includes(q) ||
+      (p.category || '').toLowerCase().includes(q);
+
+    const matchesStatus = statusFilter === 'All' || (p.status || '').toLowerCase() === statusFilter.toLowerCase();
+    return matchesSearch && matchesStatus;
+  });
+
+  const paginated = filtered.slice((page - 1) * pageSize, page * pageSize);
+
   return (
     <div className="w-full space-y-4 font-sans">
       {/* Clean Toolbar Header */}
@@ -41,10 +61,44 @@ export default function LogisticsPaymentsView() {
         </div>
       </div>
 
+      {/* Filter Toolbar */}
+      <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+          <div className="relative flex-1 sm:w-80">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+              placeholder="Search payment ID, provider, BL#, category..."
+              className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-1 focus:ring-[#0d7676]"
+            />
+          </div>
+
+          <div className="w-36">
+            <SearchableSelect
+              options={[
+                { label: 'All Status', value: 'All' },
+                { label: 'Approved', value: 'approved' },
+                { label: 'Paid', value: 'paid' }
+              ]}
+              value={statusFilter}
+              onChange={(val) => { setStatusFilter(val); setPage(1); }}
+              size="sm"
+              searchable={false}
+            />
+          </div>
+        </div>
+
+        <span className="text-xs font-bold text-slate-400">
+          Showing {filtered.length} of {payments.length} payments
+        </span>
+      </div>
+
       <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden w-full">
         <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
           <h3 className="font-extrabold text-slate-800 text-sm">Logistics Vendor Invoices & Disbursements</h3>
-          <span className="text-xs font-semibold text-slate-500">{payments.length} Payments</span>
+          <span className="text-xs font-semibold text-slate-500">{filtered.length} Payments</span>
         </div>
 
         <div className="overflow-x-auto w-full">
@@ -61,7 +115,7 @@ export default function LogisticsPaymentsView() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-              {payments.map((p) => (
+              {paginated.map((p) => (
                 <tr key={p.logisticsPaymentId} className="hover:bg-slate-50/80 transition-colors">
                   <td className="py-4 px-4 font-bold text-teal-700 font-mono">{p.logisticsPaymentId}</td>
                   <td className="py-4 px-4 font-bold text-slate-900">{p.providerName}</td>
@@ -95,6 +149,17 @@ export default function LogisticsPaymentsView() {
           </table>
         </div>
 
+        <ServerPagination
+          page={page}
+          totalPages={Math.ceil(filtered.length / pageSize) || 1}
+          total={filtered.length}
+          pageSize={pageSize}
+          itemLabel="logistics payments"
+          onPageChange={(p) => setPage(p)}
+          onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+        />
+      </div>
+
       {/* Document Upload Section */}
       {payments.length > 0 && (
         <div className="bg-white rounded-xl border border-slate-200 shadow-2xs p-5 space-y-4">
@@ -105,18 +170,15 @@ export default function LogisticsPaymentsView() {
 
           <div className="space-y-3">
             <label className="block text-xs font-semibold text-slate-700">Select Logistics Payment</label>
-            <select
+            <SearchableSelect
+              options={payments.map(payment => ({
+                label: `${payment.logisticsPaymentId} · ${payment.providerName} · ₹${payment.amount.toLocaleString('en-IN')}`,
+                value: payment.logisticsPaymentId
+              }))}
               value={selectedPaymentId}
-              onChange={(e) => setSelectedPaymentId(e.target.value)}
-              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-[#0d7676] focus:border-[#0d7676]"
-            >
-              <option value="">-- Select a logistics payment to upload documents --</option>
-              {payments.map(payment => (
-                <option key={payment.logisticsPaymentId} value={payment.logisticsPaymentId}>
-                  {payment.logisticsPaymentId} · {payment.providerName} · ₹{payment.amount.toLocaleString('en-IN')}
-                </option>
-              ))}
-            </select>
+              onChange={(val) => setSelectedPaymentId(val)}
+              placeholder="-- Select a logistics payment to upload documents --"
+            />
           </div>
 
           {selectedPaymentId && (
@@ -131,7 +193,6 @@ export default function LogisticsPaymentsView() {
           )}
         </div>
       )}
-      </div>
     </div>
   );
 }

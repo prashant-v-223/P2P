@@ -2,7 +2,19 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Search } from 'lucide-react';
 
-export function SearchableSelect({ options, value, onChange, placeholder = 'Select an option', searchPlaceholder = 'Search options...', error, disabled = false }) {
+export function SearchableSelect({
+  options = [],
+  value,
+  onChange,
+  placeholder = 'Select an option',
+  searchPlaceholder = 'Search options...',
+  error,
+  disabled = false,
+  className = '',
+  size = 'md', // 'sm' | 'md'
+  searchable = true,
+  name
+}) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [highlighted, setHighlighted] = useState(0);
@@ -10,37 +22,61 @@ export function SearchableSelect({ options, value, onChange, placeholder = 'Sele
   const triggerRef = useRef(null);
   const menuRef = useRef(null);
   const [menuStyle, setMenuStyle] = useState({});
-  const normalized = useMemo(() => options.map((option) => typeof option === 'string' ? { label: option, value: option } : option), [options]);
-  const selected = normalized.find((option) => option.value === value);
-  const filtered = normalized.filter((option) => option.label.toLowerCase().includes(query.toLowerCase()));
+
+  const normalized = useMemo(() => {
+    return (options || []).map((option) => {
+      if (option === null || option === undefined) return { label: '', value: '' };
+      if (typeof option === 'string' || typeof option === 'number' || typeof option === 'boolean') {
+        return { label: String(option), value: option };
+      }
+      const val = option.value !== undefined ? option.value : (option.id !== undefined ? option.id : option.code);
+      const lbl = option.label !== undefined ? option.label : (option.name !== undefined ? option.name : option.title || String(val));
+      return { label: String(lbl), value: val };
+    });
+  }, [options]);
+
+  const selected = normalized.find((option) => String(option.value) === String(value));
+
+  const filtered = useMemo(() => {
+    if (!searchable || !query.trim()) return normalized;
+    return normalized.filter((option) => option.label.toLowerCase().includes(query.toLowerCase()));
+  }, [normalized, query, searchable]);
+
   const choose = (option) => {
-    if (!option) return;
-    onChange(option.value);
+    if (!option || disabled) return;
+    if (onChange) {
+      // Pass value directly or synthetic event if needed
+      onChange(option.value);
+    }
     setOpen(false);
     setQuery('');
     setHighlighted(0);
   };
+
   const handleKeys = (event) => {
+    if (disabled) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       setOpen(false);
     } else if (event.key === 'ArrowDown') {
       event.preventDefault();
       if (!open) setOpen(true);
-      else setHighlighted((index) => Math.min(index + 1, filtered.length - 1));
+      else setHighlighted((index) => Math.min(index + 1, Math.max(0, filtered.length - 1)));
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       setHighlighted((index) => Math.max(index - 1, 0));
     } else if (event.key === 'Enter') {
       event.preventDefault();
       if (!open) setOpen(true);
-      else choose(filtered[highlighted]);
+      else if (filtered[highlighted]) choose(filtered[highlighted]);
     }
   };
 
   useEffect(() => {
     const close = (event) => {
-      if (!rootRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) setOpen(false);
+      if (!rootRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) {
+        setOpen(false);
+      }
     };
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
@@ -52,11 +88,12 @@ export function SearchableSelect({ options, value, onChange, placeholder = 'Sele
       const rect = triggerRef.current?.getBoundingClientRect();
       if (!rect) return;
       const availableBelow = window.innerHeight - rect.bottom;
-      const openAbove = availableBelow < 300 && rect.top > availableBelow;
+      const openAbove = availableBelow < 260 && rect.top > availableBelow;
       setMenuStyle({
         left: rect.left,
-        width: rect.width,
-        ...(openAbove ? { bottom: window.innerHeight - rect.top + 8 } : { top: rect.bottom + 8 })
+        width: Math.max(rect.width, 160),
+        minWidth: rect.width,
+        ...(openAbove ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 })
       });
     };
     positionMenu();
@@ -68,25 +105,92 @@ export function SearchableSelect({ options, value, onChange, placeholder = 'Sele
     };
   }, [open]);
 
+  const isSmall = size === 'sm';
+
   return (
-    <div ref={rootRef} className="relative">
-      <button ref={triggerRef} type="button" disabled={disabled} onClick={() => setOpen(!open)} onKeyDown={handleKeys} aria-haspopup="listbox" aria-expanded={open} className={`flex h-10 w-full items-center justify-between rounded-xl border bg-white px-3 text-left text-sm shadow-sm transition focus:outline-none focus:ring-4 focus:ring-teal-600/10 ${error ? 'border-rose-400' : 'border-slate-300 hover:border-slate-400 focus:border-teal-600'}`}>
-        <span className={selected ? 'text-slate-900' : 'text-slate-400'}>{selected?.label || placeholder}</span><ChevronDown className={`h-4 w-4 text-slate-400 transition ${open ? 'rotate-180' : ''}`} />
+    <div ref={rootRef} className={`relative inline-block w-full ${className}`}>
+      {name && <input type="hidden" name={name} value={value ?? ''} />}
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen(!open)}
+        onKeyDown={handleKeys}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={`flex w-full items-center justify-between gap-2 rounded-xl border bg-white text-left font-medium shadow-xs transition focus:outline-none focus:ring-2 focus:ring-[#0d7676]/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:opacity-60 ${
+          isSmall ? 'h-9 px-2.5 text-xs' : 'h-10 px-3 text-sm'
+        } ${
+          error
+            ? 'border-rose-400 text-rose-900 focus:border-rose-500'
+            : 'border-slate-200 text-slate-800 hover:border-slate-300 focus:border-[#0d7676]'
+        }`}
+      >
+        <span className={`truncate ${selected ? 'font-semibold text-slate-800' : 'text-slate-400'}`}>
+          {selected ? selected.label : placeholder}
+        </span>
+        <ChevronDown className={`shrink-0 transition-transform ${isSmall ? 'h-3.5 w-3.5' : 'h-4 w-4'} text-slate-400 ${open ? 'rotate-180' : ''}`} />
       </button>
-      {open && createPortal(
-        <div ref={menuRef} style={menuStyle} className="fixed z-[180] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl shadow-slate-900/20">
-          <div className="border-b border-slate-100 p-2"><div className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input autoFocus value={query} onChange={(e) => { setQuery(e.target.value); setHighlighted(0); }} onKeyDown={handleKeys} placeholder={searchPlaceholder} className="h-9 w-full rounded-lg bg-slate-50 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-teal-600/20" /></div></div>
-          <div className="max-h-56 overflow-y-auto p-1.5" role="listbox">
-            {filtered.length ? filtered.map((option, index) => (
-              <button key={option.value} type="button" role="option" aria-selected={option.value === value} onMouseEnter={() => setHighlighted(index)} onClick={() => choose(option)} className={`flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm ${index === highlighted ? 'bg-teal-50 text-teal-800' : 'text-slate-700 hover:bg-slate-50'}`}>
-                {option.label}{option.value === value && <Check className="h-4 w-4 text-teal-700" />}
-              </button>
-            )) : <p className="px-3 py-6 text-center text-sm text-slate-400">No matching options</p>}
-          </div>
-        </div>,
-        document.body
-      )}
-      {error && <p className="mt-1.5 text-xs font-medium text-rose-600">{error}</p>}
+
+      {open &&
+        createPortal(
+          <div
+            ref={menuRef}
+            style={menuStyle}
+            className="fixed z-[999] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl shadow-slate-900/10"
+          >
+            {searchable && normalized.length > 5 && (
+              <div className="border-b border-slate-100 p-1.5">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
+                  <input
+                    autoFocus
+                    value={query}
+                    onChange={(e) => {
+                      setQuery(e.target.value);
+                      setHighlighted(0);
+                    }}
+                    onKeyDown={handleKeys}
+                    placeholder={searchPlaceholder}
+                    className="h-8 w-full rounded-lg bg-slate-50 pl-8 pr-2.5 text-xs outline-none focus:bg-white focus:ring-1 focus:ring-[#0d7676]"
+                  />
+                </div>
+              </div>
+            )}
+            <div className="max-h-60 overflow-y-auto p-1" role="listbox">
+              {filtered.length ? (
+                filtered.map((option, index) => {
+                  const isSelected = String(option.value) === String(value);
+                  return (
+                    <button
+                      key={`${option.value}-${index}`}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      onMouseEnter={() => setHighlighted(index)}
+                      onClick={() => choose(option)}
+                      className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition ${
+                        index === highlighted
+                          ? 'bg-teal-50 text-[#0d7676] font-semibold'
+                          : isSelected
+                          ? 'bg-slate-50 text-[#0d7676] font-bold'
+                          : 'text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="truncate">{option.label}</span>
+                      {isSelected && <Check className="ml-2 h-3.5 w-3.5 shrink-0 text-[#0d7676]" />}
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="px-3 py-4 text-center text-xs text-slate-400">No matching options</p>
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
+      {error && <p className="mt-1 text-xs font-medium text-rose-600">{error}</p>}
     </div>
   );
 }
+

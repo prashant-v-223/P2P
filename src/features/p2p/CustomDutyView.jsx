@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import { ServerPagination } from '../../components/ui/server-pagination';
-import { ShieldCheck, CheckCircle2, Plus, FileCheck2, Loader2, X } from 'lucide-react';
+import { SearchableSelect } from '../../components/ui/searchable-select';
+import { CustomInput } from '../../components/ui/custom-input';
+import { ShieldCheck, CheckCircle2, Plus, FileCheck2, Loader2, X, Search } from 'lucide-react';
 import DocumentUploader from '../../components/shared/DocumentUploader';
 
 export default function CustomDutyView() {
@@ -10,6 +12,8 @@ export default function CustomDutyView() {
 
   const [duties, setDuties] = useState([]);
   const [loadingDuties, setLoadingDuties] = useState(true);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
 
   const fetchDuties = async () => {
     try {
@@ -95,8 +99,21 @@ export default function CustomDutyView() {
     });
   };
 
-  const totalPages = Math.ceil(duties.length / pageSize) || 1;
-  const paginatedDuties = duties.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const filteredDuties = duties.filter(d => {
+    const q = search.toLowerCase();
+    const matchesSearch = !search || 
+      (d.dutyId || '').toLowerCase().includes(q) ||
+      (d.blNumber || '').toLowerCase().includes(q) ||
+      (d.boeNumber || '').toLowerCase().includes(q) ||
+      (d.customAgentName || '').toLowerCase().includes(q) ||
+      (d.icegateRef || '').toLowerCase().includes(q);
+
+    const matchesStatus = statusFilter === 'All' || (d.status || '').toLowerCase() === statusFilter.toLowerCase();
+    return matchesSearch && matchesStatus;
+  });
+
+  const totalPages = Math.ceil(filteredDuties.length / pageSize) || 1;
+  const paginatedDuties = filteredDuties.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   return (
     <div className="w-full space-y-4 font-sans text-slate-800 text-left pb-16 antialiased">
@@ -121,10 +138,46 @@ export default function CustomDutyView() {
         </button>
       </div>
 
+      {/* Filter Bar */}
+      <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+          <div className="flex-1 sm:w-80">
+            <CustomInput
+              type="text"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
+              onClear={() => { setSearch(''); setCurrentPage(1); }}
+              placeholder="Search Duty ID, BL/BOE#, ICEGATE ref..."
+              leftIcon={Search}
+              clearable={true}
+              size="sm"
+            />
+          </div>
+
+          <div className="w-36">
+            <SearchableSelect
+              options={[
+                { label: 'All Status', value: 'All' },
+                { label: 'Pending', value: 'pending' },
+                { label: 'Paid', value: 'paid' }
+              ]}
+              value={statusFilter}
+              onChange={(val) => { setStatusFilter(val); setCurrentPage(1); }}
+              size="sm"
+              searchable={false}
+            />
+          </div>
+        </div>
+
+        <span className="text-xs font-bold text-slate-400">
+          Showing {filteredDuties.length} of {duties.length} records
+        </span>
+      </div>
+
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden w-full flex flex-col">
         <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
           <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider">Customs Duty Payout Records</h3>
-          <span className="text-xs font-semibold text-slate-500">{duties.length} Items</span>
+          <span className="text-xs font-semibold text-slate-500">{filteredDuties.length} Items</span>
         </div>
 
         <div className="overflow-x-auto w-full">
@@ -179,6 +232,15 @@ export default function CustomDutyView() {
             </tbody>
           </table>
         </div>
+        <ServerPagination
+          page={currentPage}
+          totalPages={totalPages}
+          total={filteredDuties.length}
+          pageSize={pageSize}
+          itemLabel="duty payments"
+          onPageChange={(p) => setCurrentPage(p)}
+          onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1); }}
+        />
       </div>
 
       {/* Document Upload Section */}
@@ -191,18 +253,15 @@ export default function CustomDutyView() {
 
           <div className="space-y-3">
             <label className="block text-xs font-semibold text-slate-700">Select Duty Payment</label>
-            <select
+            <SearchableSelect
+              options={duties.map(duty => ({
+                label: `${duty.dutyId} · ${duty.boeNumber} · ₹${duty.dutyAmount.toLocaleString('en-IN')}`,
+                value: duty.dutyId
+              }))}
               value={selectedDutyId}
-              onChange={(e) => setSelectedDutyId(e.target.value)}
-              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-[#0d7676] focus:border-[#0d7676]"
-            >
-              <option value="">-- Select a duty payment to upload documents --</option>
-              {duties.map(duty => (
-                <option key={duty.dutyId} value={duty.dutyId}>
-                  {duty.dutyId} · {duty.boeNumber} · ₹{duty.dutyAmount.toLocaleString('en-IN')}
-                </option>
-              ))}
-            </select>
+              onChange={(val) => setSelectedDutyId(val)}
+              placeholder="-- Select a duty payment to upload documents --"
+            />
           </div>
 
           {selectedDutyId && (
@@ -235,20 +294,18 @@ export default function CustomDutyView() {
             <form onSubmit={handleCreateDuty} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="block text-xs font-semibold text-slate-700">Select Cleared BL / BOE Entry *</label>
-                <select
+                <SearchableSelect
+                  options={[
+                    ...clearedBls.map(b => ({ label: `${b.blNumber} (${b.customAgentName || 'Magnesh'})`, value: b.blNumber })),
+                    { label: 'MSK-908124501 (Magnesh - Fast Forward)', value: 'MSK-908124501' },
+                    { label: 'MAEU-8812904 (Magnesh - Fast Forward)', value: 'MAEU-8812904' }
+                  ]}
                   value={selectedBlId}
-                  onChange={(e) => handleSelectBl(e.target.value)}
-                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-[#0d7676]"
-                >
-                  <option value="">-- Choose BL / BOE Entry --</option>
-                  {clearedBls.map(b => (
-                    <option key={b.blId} value={b.blNumber}>
-                      {b.blNumber} ({b.customAgentName || 'Magnesh'})
-                    </option>
-                  ))}
-                  <option value="MSK-908124501">MSK-908124501 (Magnesh - Fast Forward)</option>
-                  <option value="MAEU-8812904">MAEU-8812904 (Magnesh - Fast Forward)</option>
-                </select>
+                  onChange={(val) => handleSelectBl(val)}
+                  placeholder="-- Choose BL / BOE Entry --"
+                  size="md"
+                  searchable={true}
+                />
               </div>
 
               {selectedBlId && (

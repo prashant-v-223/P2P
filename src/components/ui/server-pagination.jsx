@@ -1,6 +1,7 @@
 import React from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { SearchableSelect } from './searchable-select';
 
 const getPageItems = (currentPage, totalPages) => {
   if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
@@ -13,6 +14,7 @@ const getPageItems = (currentPage, totalPages) => {
   }, []);
 };
 
+
 export function ServerPagination({
   page = 1,
   totalPages = 1,
@@ -20,18 +22,38 @@ export function ServerPagination({
   pageSize = 10,
   itemLabel = 'records',
   onPageChange,
+  onPageSizeChange,
+  pageSizeOptions = [10, 20, 50, 100],
   className
 }) {
   const first = total ? (page - 1) * pageSize + 1 : 0;
   const last = Math.min(page * pageSize, total);
-  const pageItems = getPageItems(page, totalPages);
+  const pageItems = getPageItems(page, Math.max(1, totalPages));
 
   return (
-    <footer className={cn('surface-card flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-2 px-3 py-2', className)}>
-      <p className="text-xs text-slate-500">
-        Showing <span className="font-semibold tabular-nums text-slate-700">{first}–{last}</span> of{' '}
-        <span className="font-semibold tabular-nums text-slate-700">{total}</span> {itemLabel}
-      </p>
+    <footer className={cn('surface-card flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-white px-3 py-2 text-xs', className)}>
+      <div className="flex items-center gap-3">
+        <p className="text-slate-500">
+          Showing <span className="font-semibold tabular-nums text-slate-700">{first}–{last}</span> of{' '}
+          <span className="font-semibold tabular-nums text-slate-700">{total}</span> {itemLabel}
+        </p>
+
+        {onPageSizeChange && (
+          <div className="flex items-center gap-1.5 text-slate-500 text-xs">
+            <span>Per page:</span>
+            <div className="w-20">
+              <SearchableSelect
+                options={pageSizeOptions.map((opt) => ({ label: `${opt}`, value: opt }))}
+                value={pageSize}
+                onChange={(val) => onPageSizeChange(Number(val))}
+                size="sm"
+                searchable={false}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="flex flex-wrap items-center justify-end gap-1 rounded-lg bg-slate-100/80 p-1">
         <PageButton disabled={page <= 1} onClick={() => onPageChange(page - 1)} ariaLabel="Previous page">
           <ChevronLeft className="h-3.5 w-3.5" /><span className="hidden lg:inline">Previous</span>
@@ -56,7 +78,7 @@ export function ServerPagination({
             </button>
           ))}
         </div>
-        <span className="px-1 text-[11px] font-semibold text-slate-600 sm:hidden">{page}/{totalPages}</span>
+        <span className="px-1 text-[11px] font-semibold text-slate-600 sm:hidden">{page}/{Math.max(1, totalPages)}</span>
         <PageButton disabled={page >= totalPages} onClick={() => onPageChange(page + 1)} ariaLabel="Next page">
           <span className="hidden lg:inline">Next</span><ChevronRight className="h-3.5 w-3.5" />
         </PageButton>
@@ -64,6 +86,7 @@ export function ServerPagination({
     </footer>
   );
 }
+
 
 function PageButton({ disabled, onClick, ariaLabel, children }) {
   return (

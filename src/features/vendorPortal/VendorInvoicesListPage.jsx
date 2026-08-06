@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useVendor } from './vendorContext';
 import { FileText, Plus, Search, Filter, Eye, Download, CheckCircle, Clock, XCircle } from 'lucide-react';
+import { SearchableSelect } from '../../components/ui/searchable-select';
+import { ServerPagination } from '../../components/ui/server-pagination';
 
 export default function VendorInvoicesListPage() {
   const { invoices, vendorProfile } = useVendor();
@@ -9,6 +11,9 @@ export default function VendorInvoicesListPage() {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
   const formatAmount = (amount, currency = 'INR') => {
     if (typeof amount === 'string' && /[^\d.,-]/.test(amount)) return amount;
     return new Intl.NumberFormat('en-IN', {
@@ -24,6 +29,8 @@ export default function VendorInvoicesListPage() {
     return matchesSearch && matchesStatus;
   });
 
+  const paginatedInvoices = filteredInvoices.slice((page - 1) * pageSize, page * pageSize);
+
   return (
     <div className="space-y-6 font-sans pb-12 antialiased">
       {/* Header */}
@@ -37,7 +44,7 @@ export default function VendorInvoicesListPage() {
 
         <Link
           to="/vendor/invoices/upload"
-          className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition uppercase tracking-wider self-start sm:self-auto"
+          className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition uppercase tracking-wider self-start sm:self-auto cursor-pointer"
         >
           <Plus className="w-4 h-4" />
           <span>Upload Invoice</span>
@@ -51,24 +58,26 @@ export default function VendorInvoicesListPage() {
           <input
             type="text"
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => { setSearchTerm(e.target.value); setPage(1); }}
             placeholder="Search invoice or PO number..."
             className="w-full pl-9 pr-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] shadow-xs"
           />
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <select
+        <div className="w-full sm:w-44">
+          <SearchableSelect
+            options={[
+              { label: 'All Statuses', value: 'All' },
+              { label: 'Pending', value: 'Pending' },
+              { label: 'Approved', value: 'Approved' },
+              { label: 'Paid', value: 'Paid' },
+              { label: 'Rejected', value: 'Rejected' }
+            ]}
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#0d7676] shadow-xs cursor-pointer"
-          >
-            <option value="All">All Statuses</option>
-            <option value="Pending">Pending</option>
-            <option value="Approved">Approved</option>
-            <option value="Paid">Paid</option>
-            <option value="Rejected">Rejected</option>
-          </select>
+            onChange={(val) => { setStatusFilter(val); setPage(1); }}
+            size="sm"
+            searchable={false}
+          />
         </div>
       </div>
 
@@ -91,46 +100,57 @@ export default function VendorInvoicesListPage() {
             </Link>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                <tr>
-                  <th className="p-4">Invoice #</th>
-                  <th className="p-4">PO Number</th>
-                  <th className="p-4">Date</th>
-                  <th className="p-4">Due Date</th>
-                  <th className="p-4">Amount</th>
-                  <th className="p-4">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                {filteredInvoices.map((inv) => (
-                  <tr key={inv.id} className="hover:bg-slate-50/70 transition">
-                    <td className="p-4 font-bold text-slate-900 font-mono">{inv.invoiceNumber || inv.id}</td>
-                    <td className="p-4 text-slate-800 font-mono font-bold">{inv.poNumber}</td>
-                    <td className="p-4 text-slate-500">{inv.invoiceDate || inv.createdAt || 'Today'}</td>
-                    <td className="p-4 text-slate-500">{inv.paymentDueDate || '30 Days'}</td>
-                    <td className="p-4 font-bold text-slate-900 font-mono">
-                      {formatAmount(inv.invoiceAmount, inv.currency)}
-                    </td>
-                    <td className="p-4">
-                      <span
-                        className={`px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1 ${
-                          inv.status === 'Approved'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : inv.status === 'Paid'
-                            ? 'bg-blue-100 text-blue-800'
-                            : 'bg-teal-100 text-teal-800'
-                        }`}
-                      >
-                        {inv.status}
-                      </span>
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="p-4">Invoice #</th>
+                    <th className="p-4">PO Number</th>
+                    <th className="p-4">Date</th>
+                    <th className="p-4">Due Date</th>
+                    <th className="p-4">Amount</th>
+                    <th className="p-4">Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                  {paginatedInvoices.map((inv) => (
+                    <tr key={inv.id} className="hover:bg-slate-50/70 transition">
+                      <td className="p-4 font-bold text-slate-900 font-mono">{inv.invoiceNumber || inv.id}</td>
+                      <td className="p-4 text-slate-800 font-mono font-bold">{inv.poNumber}</td>
+                      <td className="p-4 text-slate-500">{inv.invoiceDate || inv.createdAt || 'Today'}</td>
+                      <td className="p-4 text-slate-500">{inv.paymentDueDate || '30 Days'}</td>
+                      <td className="p-4 font-bold text-slate-900 font-mono">
+                        {formatAmount(inv.invoiceAmount, inv.currency)}
+                      </td>
+                      <td className="p-4">
+                        <span
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1 ${
+                            inv.status === 'Approved'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : inv.status === 'Paid'
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-teal-100 text-teal-800'
+                          }`}
+                        >
+                          {inv.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <ServerPagination
+              page={page}
+              totalPages={Math.ceil(filteredInvoices.length / pageSize) || 1}
+              total={filteredInvoices.length}
+              pageSize={pageSize}
+              itemLabel="invoices"
+              onPageChange={(p) => setPage(p)}
+              onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+            />
+          </>
         )}
       </div>
     </div>

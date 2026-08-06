@@ -6,6 +6,7 @@ import { useToast } from '../../components/ui/toast';
 import { CustomSelect } from '../../components/ui/custom-select';
 import { CustomDatePicker } from '../../components/ui/custom-date-picker';
 import { CustomFileUpload } from '../../components/ui/custom-file-upload';
+import { ServerPagination } from '../../components/ui/server-pagination';
 
 const inputClass = 'w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-medium outline-none focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-100';
 const statusLabel = (value) => ({ submitted: 'Submitted', exim_review: 'EXIM Review', assigned_to_agent: 'With Customs Agent', custom_cleared: 'Customs Cleared', invoice_pending: 'Invoice Pending' }[value] || String(value || '').replaceAll('_', ' '));
@@ -18,6 +19,8 @@ export function FreightBlEntriesPage() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     apiFetch(`/api/p2p/vendor-rfqs/${id}/bl-entries`)
@@ -38,6 +41,10 @@ export function FreightBlEntriesPage() {
       return matchesSearch && matchesStatus;
     });
   }, [data, search, statusFilter]);
+
+  const paginatedEntries = useMemo(() => {
+    return filteredEntries.slice((page - 1) * pageSize, page * pageSize);
+  }, [filteredEntries, page, pageSize]);
 
   if (error) return <ErrorBox>{error}</ErrorBox>;
   if (!data) return <div className="p-10 text-center text-xs text-slate-500"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-[#0d7676]" />Loading BL entries...</div>;
@@ -79,7 +86,7 @@ export function FreightBlEntriesPage() {
           <div className="relative flex-1 w-full max-w-md">
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               placeholder="Search reference, vendor..."
               className="w-full rounded-xl border border-slate-200 bg-white py-2 px-3 text-xs font-medium outline-none focus:border-[#0d7676] focus:ring-2 focus:ring-teal-100 transition"
             />
@@ -87,7 +94,7 @@ export function FreightBlEntriesPage() {
           <div className="w-full sm:w-44">
             <CustomSelect
               value={statusFilter}
-              onChange={(val) => setStatusFilter(val)}
+              onChange={(val) => { setStatusFilter(val); setPage(1); }}
               options={[
                 { label: 'All Status', value: 'All' },
                 { label: 'Submitted', value: 'submitted' },
@@ -115,9 +122,9 @@ export function FreightBlEntriesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
-              {filteredEntries.map((entry, idx) => (
+              {paginatedEntries.map((entry, idx) => (
                 <tr key={entry.blId} className="transition hover:bg-slate-50/60">
-                  <td className="p-3.5 pl-4 text-slate-400 font-mono text-xs">{idx + 1}</td>
+                  <td className="p-3.5 pl-4 text-slate-400 font-mono text-xs">{(page - 1) * pageSize + idx + 1}</td>
                   <td className="p-3.5 font-mono font-bold text-slate-900 uppercase">{entry.blNumber}</td>
                   <td className="p-3.5 text-center font-bold text-slate-700">{entry.containerCount}</td>
                   <td className="p-3.5">
@@ -146,6 +153,16 @@ export function FreightBlEntriesPage() {
               No BL entries submitted yet.
             </div>
           )}
+
+          <ServerPagination
+            page={page}
+            totalPages={Math.ceil(filteredEntries.length / pageSize) || 1}
+            total={filteredEntries.length}
+            pageSize={pageSize}
+            itemLabel="BL entries"
+            onPageChange={(p) => setPage(p)}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+          />
         </div>
       </section>
     </div>

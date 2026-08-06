@@ -18,6 +18,8 @@ import {
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import FileUploadZone from '../../components/shared/FileUploadZone';
+import { SearchableSelect } from '../../components/ui/searchable-select';
+import { CustomInput } from '../../components/ui/custom-input';
 
 const generateUniqueInvoiceNumber = () => {
   const year = new Date().getFullYear();
@@ -587,7 +589,7 @@ export default function InvoicePaymentFormView() {
                   ⚡ Auto-Generate
                 </button>
               </div>
-              <input
+              <CustomInput
                 type="text"
                 value={invoiceNumber}
                 onChange={(e) => {
@@ -595,7 +597,8 @@ export default function InvoicePaymentFormView() {
                   setErrorMsg('');
                 }}
                 placeholder="e.g. INV-2026-891204"
-                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
+                size="md"
+                inputClassName="font-mono font-bold"
               />
             </div>
 
@@ -631,14 +634,14 @@ export default function InvoicePaymentFormView() {
               <label className="block text-xs font-semibold text-slate-700">
                 Invoice Date <span className="text-rose-500">*</span>
               </label>
-              <input
+              <CustomInput
                 type="date"
                 value={invoiceDate}
                 onChange={(e) => {
                   setInvoiceDate(e.target.value);
                   setErrorMsg('');
                 }}
-                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
+                size="md"
               />
             </div>
 
@@ -647,15 +650,17 @@ export default function InvoicePaymentFormView() {
               <label className="block text-xs font-semibold text-slate-700">
                 Currency <span className="text-rose-500">*</span>
               </label>
-              <select
+              <SearchableSelect
+                options={[
+                  { label: 'INR', value: 'INR' },
+                  { label: 'USD', value: 'USD' },
+                  { label: 'EUR', value: 'EUR' }
+                ]}
                 value={currency}
-                onChange={(e) => setCurrency(e.target.value)}
-                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
-              >
-                <option value="INR">INR</option>
-                <option value="USD">USD</option>
-                <option value="EUR">EUR</option>
-              </select>
+                onChange={(val) => setCurrency(val)}
+                size="md"
+                searchable={false}
+              />
             </div>
 
             {/* Payment Due Date */}
@@ -679,11 +684,11 @@ export default function InvoicePaymentFormView() {
               <label className="block text-xs font-semibold text-slate-700">
                 Net Days <span className="text-rose-500">*</span>
               </label>
-              <input
+              <CustomInput
                 type="number"
                 value={dueDays}
                 onChange={(e) => setDueDays(e.target.value)}
-                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
+                size="md"
               />
             </div>
 
@@ -692,7 +697,7 @@ export default function InvoicePaymentFormView() {
               <label className="block text-xs font-semibold text-slate-700">
                 Invoice Amount ({currency}) <span className="text-rose-500">*</span>
               </label>
-              <input
+              <CustomInput
                 type="number"
                 step="0.01"
                 min="0.01"
@@ -703,7 +708,8 @@ export default function InvoicePaymentFormView() {
                   setErrorMsg('');
                 }}
                 placeholder="0.00"
-                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white font-mono font-bold"
+                size="md"
+                inputClassName="font-mono font-bold"
               />
               {selectedPoObj && !isEditMode && (
                 <p className="text-[10px] text-slate-500">Remaining: {currency} {Number(selectedPoObj.remainingInvoiceAmount || 0).toLocaleString('en-IN')}</p>
@@ -715,7 +721,7 @@ export default function InvoicePaymentFormView() {
               <label className="block text-xs font-semibold text-slate-700">
                 GRN / Delivery Note No <span className="text-rose-500">*</span>
               </label>
-              <input
+              <CustomInput
                 type="text"
                 value={grnNo}
                 onChange={(e) => {
@@ -723,19 +729,19 @@ export default function InvoicePaymentFormView() {
                   setErrorMsg('');
                 }}
                 placeholder="e.g. GRN-001"
-                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
+                size="md"
               />
             </div>
 
             {/* Remarks */}
             <div className="space-y-1 md:col-span-2">
               <label className="block text-xs font-semibold text-slate-700">Remarks</label>
-              <input
+              <CustomInput
                 type="text"
                 value={remarks}
                 onChange={(e) => setRemarks(e.target.value)}
                 placeholder="Any additional information..."
-                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
+                size="md"
               />
             </div>
           </div>
@@ -752,27 +758,30 @@ export default function InvoicePaymentFormView() {
               <label className="block text-xs font-semibold text-slate-700">
                 Invoice Type <span className="text-rose-500">*</span>
               </label>
-              <select
+              <SearchableSelect
+                options={[
+                  { label: 'With GST', value: 'With GST' },
+                  { label: 'Without GST', value: 'Without GST' },
+                  { label: 'SEZ Export', value: 'SEZ Export' }
+                ]}
                 value={invoiceType}
-                onChange={(e) => setInvoiceType(e.target.value)}
-                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
-              >
-                <option value="With GST">With GST</option>
-                <option value="Without GST">Without GST</option>
-                <option value="SEZ Export">SEZ Export</option>
-              </select>
+                onChange={(val) => setInvoiceType(val)}
+                size="md"
+                searchable={false}
+              />
             </div>
 
             <div className="space-y-1">
               <label className="block text-xs font-semibold text-slate-700">
                 CGST Amount <span className="text-rose-500">*</span>
               </label>
-              <input
+              <CustomInput
                 type="number"
                 step="0.01"
                 value={cgstAmount}
                 onChange={(e) => setCgstAmount(e.target.value)}
-                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white font-mono"
+                size="md"
+                inputClassName="font-mono"
               />
             </div>
 
@@ -780,12 +789,13 @@ export default function InvoicePaymentFormView() {
               <label className="block text-xs font-semibold text-slate-700">
                 SGST Amount <span className="text-rose-500">*</span>
               </label>
-              <input
+              <CustomInput
                 type="number"
                 step="0.01"
                 value={sgstAmount}
                 onChange={(e) => setSgstAmount(e.target.value)}
-                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white font-mono"
+                size="md"
+                inputClassName="font-mono"
               />
             </div>
 
@@ -793,12 +803,13 @@ export default function InvoicePaymentFormView() {
               <label className="block text-xs font-semibold text-slate-700">
                 IGST Amount <span className="text-rose-500">*</span>
               </label>
-              <input
+              <CustomInput
                 type="number"
                 step="0.01"
                 value={igstAmount}
                 onChange={(e) => setIgstAmount(e.target.value)}
-                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white font-mono"
+                size="md"
+                inputClassName="font-mono"
               />
             </div>
 
@@ -806,16 +817,18 @@ export default function InvoicePaymentFormView() {
               <label className="block text-xs font-semibold text-slate-700">
                 TDS % (base) <span className="text-rose-500">*</span>
               </label>
-              <select
+              <SearchableSelect
+                options={[
+                  { label: '0%', value: '0%' },
+                  { label: '1%', value: '1%' },
+                  { label: '2%', value: '2%' },
+                  { label: '10%', value: '10%' }
+                ]}
                 value={tdsPercentage}
-                onChange={(e) => setTdsPercentage(e.target.value)}
-                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
-              >
-                <option value="0%">0%</option>
-                <option value="1%">1%</option>
-                <option value="2%">2%</option>
-                <option value="10%">10%</option>
-              </select>
+                onChange={(val) => setTdsPercentage(val)}
+                size="md"
+                searchable={false}
+              />
             </div>
 
             <div className="space-y-1">

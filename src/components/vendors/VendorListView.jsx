@@ -4,6 +4,8 @@ import { apiFetch } from '../../services/api';
 import { useConfirm } from '../ui/confirm-dialog';
 import GeneratePasswordModal from './GeneratePasswordModal';
 import { ServerPagination } from '../ui/server-pagination';
+import { SearchableSelect } from '../ui/searchable-select';
+import { CustomInput } from '../ui/custom-input';
 import { Button } from '../ui/button';
 import { 
   Plus, 
@@ -98,40 +100,43 @@ export default function VendorListView() {
         if (res.ok) {
           showToast(`Vendor "${companyName}" deleted successfully.`);
           fetchVendors();
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          showToast(errData.error || 'Failed to delete vendor.');
         }
       } catch (err) {
         console.error('Error deleting vendor:', err);
+        showToast('Network error — could not delete vendor.');
       }
     }
   };
 
-  // Filter and Sort Vendors
+  // Client-side filtering & sorting
   const filteredVendors = vendors
     .filter(v => {
-      if (!v) return false;
-      const companyNameStr = (v.companyName || '').toLowerCase();
-      const emailStr = (v.email || '').toLowerCase();
-      const sapCodeStr = (v.sapVendorCode || '').toLowerCase();
-      const searchLower = (search || '').toLowerCase();
-
-      const matchesType = typeFilter === 'All' || (v.vendorType || '').toUpperCase() === typeFilter;
+      const query = search.toLowerCase();
       const matchesSearch = 
-        companyNameStr.includes(searchLower) ||
-        emailStr.includes(searchLower) ||
-        sapCodeStr.includes(searchLower);
+        !search ||
+        (v.companyName || '').toLowerCase().includes(query) ||
+        (v.email || '').toLowerCase().includes(query) ||
+        (v.sapVendorCode || '').toLowerCase().includes(query);
 
-      return matchesType && matchesSearch;
+      const matchesType = 
+        typeFilter === 'All' || 
+        (v.vendorType || '').toUpperCase() === typeFilter.toUpperCase();
+
+      return matchesSearch && matchesType;
     })
     .sort((a, b) => {
-      if (sort === 'name') {
-        return (a.companyName || '').localeCompare(b.companyName || '');
-      } else if (sort === 'oldest') {
-        return (a.id || '').localeCompare(b.id || '');
-      }
-      return 0; // Default newest order
+      if (sort === 'newest') return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+      if (sort === 'oldest') return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+      if (sort === 'name') return (a.companyName || '').localeCompare(b.companyName || '');
+      return 0;
     });
 
-  const totalPages = Math.ceil(filteredVendors.length / pageSize) || 1;
+  // Client-side pagination slicing
+  const totalVendors = filteredVendors.length;
+  const totalPages = Math.ceil(totalVendors / pageSize) || 1;
   const paginatedVendors = filteredVendors.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   return (
@@ -150,54 +155,63 @@ export default function VendorListView() {
         <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto flex-1">
           
           {/* Search Box */}
-          <div className="relative min-w-[240px] flex-1">
-            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-            <input
+          <div className="min-w-[240px] flex-1">
+            <CustomInput
               type="text"
               placeholder="Search vendor by name, email or SAP code..."
               value={search}
               onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
-              className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-teal-500 focus:outline-none"
+              onClear={() => { setSearch(''); setCurrentPage(1); }}
+              leftIcon={Search}
+              clearable={true}
+              size="sm"
             />
-            {search && (
-              <button onClick={() => { setSearch(''); setCurrentPage(1); }} className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
-            )}
           </div>
 
           {/* Type Filter Select */}
-          <select 
-            value={typeFilter} 
-            onChange={(e) => { setTypeFilter(e.target.value); setCurrentPage(1); }} 
-            className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#0d7676]"
-          >
-            <option value="All">All types</option>
-            <option value="DOMESTIC">DOMESTIC</option>
-            <option value="IMPORT">IMPORT</option>
-          </select>
+          <div className="w-36">
+            <SearchableSelect
+              options={[
+                { label: 'All types', value: 'All' },
+                { label: 'DOMESTIC', value: 'DOMESTIC' },
+                { label: 'IMPORT', value: 'IMPORT' }
+              ]}
+              value={typeFilter}
+              onChange={(val) => { setTypeFilter(val); setCurrentPage(1); }}
+              size="sm"
+              searchable={false}
+            />
+          </div>
 
           {/* Sort Select */}
-          <select 
-            value={sort} 
-            onChange={(e) => setSort(e.target.value)} 
-            className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#0d7676]"
-          >
-            <option value="newest">Newest first</option>
-            <option value="oldest">Oldest first</option>
-            <option value="name">Name A–Z</option>
-          </select>
+          <div className="w-36">
+            <SearchableSelect
+              options={[
+                { label: 'Newest first', value: 'newest' },
+                { label: 'Oldest first', value: 'oldest' },
+                { label: 'Name A–Z', value: 'name' }
+              ]}
+              value={sort}
+              onChange={(val) => setSort(val)}
+              size="sm"
+              searchable={false}
+            />
+          </div>
 
           {/* Page Size Select */}
-          <select 
-            value={pageSize} 
-            onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }} 
-            className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#0d7676]"
-          >
-            <option value={10}>10 per page</option>
-            <option value={20}>20 per page</option>
-            <option value={50}>50 per page</option>
-          </select>
+          <div className="w-32">
+            <SearchableSelect
+              options={[
+                { label: '10 per page', value: 10 },
+                { label: '20 per page', value: 20 },
+                { label: '50 per page', value: 50 }
+              ]}
+              value={pageSize}
+              onChange={(val) => { setPageSize(Number(val)); setCurrentPage(1); }}
+              size="sm"
+              searchable={false}
+            />
+          </div>
         </div>
 
         {/* Add New Vendor Button */}

@@ -108,23 +108,16 @@ function DelegationModal({ user, allUsers, onClose, onSaved }) {
             </p>
           </div>
 
-          {/* Parent User Select */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
               Delegate / Parent User <span className="text-rose-500">*</span>
             </label>
-            <select
+            <SearchableSelect
+              options={eligibleParents.map((u) => ({ label: `${u.name} (${u.role})`, value: u.id }))}
               value={parentUserId}
-              onChange={(e) => setParentUserId(e.target.value)}
-              className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm focus:border-teal-600 focus:outline-none focus:ring-4 focus:ring-teal-600/10"
-            >
-              <option value="">— Select a delegate user —</option>
-              {eligibleParents.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name} ({u.role})
-                </option>
-              ))}
-            </select>
+              onChange={(val) => setParentUserId(val)}
+              placeholder="— Select a delegate user —"
+            />
           </div>
 
           <div className="modal-footer">
@@ -239,10 +232,13 @@ function EditUserModal({ user, roleOptions, onClose, onSaved }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Account Status</label>
-              <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm focus:border-teal-600 focus:outline-none">
-                <option value="Active">Active</option>
-                <option value="Inactive">Inactive</option>
-              </select>
+              <SearchableSelect
+                options={['Active', 'Inactive']}
+                value={status}
+                onChange={(val) => setStatus(val)}
+                size="md"
+                searchable={false}
+              />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Reset Password <span className="font-normal text-slate-400">(optional)</span></label>
@@ -463,19 +459,46 @@ export default function UserManagementView() {
               className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#0d7676] focus:outline-none"
             />
           </div>
-          <select value={statusFilter} onChange={(event) => updateFilters({ status: event.target.value })} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700">
-            <option value="All">All statuses</option>
-            <option value="Active">Active</option>
-            <option value="Inactive">Inactive</option>
-          </select>
-          <select value={sort} onChange={(event) => updateFilters({ sort: event.target.value })} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700">
-            <option value="newest">Newest first</option>
-            <option value="oldest">Oldest first</option>
-            <option value="name">Name A–Z</option>
-          </select>
-          <select value={pageSize} onChange={(event) => updateFilters({ size: event.target.value })} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700">
-            {[10, 20, 50, 100].map((s) => <option key={s} value={s}>{s} per page</option>)}
-          </select>
+          <div className="w-36">
+            <SearchableSelect
+              options={[
+                { label: 'All statuses', value: 'All' },
+                { label: 'Active', value: 'Active' },
+                { label: 'Inactive', value: 'Inactive' }
+              ]}
+              value={statusFilter}
+              onChange={(val) => updateFilters({ status: val })}
+              size="sm"
+              searchable={false}
+            />
+          </div>
+          <div className="w-36">
+            <SearchableSelect
+              options={[
+                { label: 'Newest first', value: 'newest' },
+                { label: 'Oldest first', value: 'oldest' },
+                { label: 'Name A–Z', value: 'name' }
+              ]}
+              value={sort}
+              onChange={(val) => updateFilters({ sort: val })}
+              size="sm"
+              searchable={false}
+            />
+          </div>
+          <div className="w-32">
+            <SearchableSelect
+              options={[
+                { label: '10 per page', value: 10 },
+                { label: '20 per page', value: 20 },
+                { label: '50 per page', value: 50 },
+                { label: '100 per page', value: 100 }
+              ]}
+              value={pageSize}
+              onChange={(val) => updateFilters({ size: val })}
+              size="sm"
+              searchable={false}
+            />
+          </div>
         </div>
 
         {canCreateUser ? (

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { ServerPagination } from '../../components/ui/server-pagination';
+import { SearchableSelect } from '../../components/ui/searchable-select';
+import { CustomInput } from '../../components/ui/custom-input';
 import { 
   Search, 
   Eye, 
@@ -197,40 +199,50 @@ export default function AdvancePaymentsView() {
       {/* SINGLE UNIFIED CONTROL BAR */}
       <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]">
-          <div className="relative min-w-[240px] flex-1">
-            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-            <input
+          <div className="min-w-[240px] flex-1">
+            <CustomInput
               type="text"
               placeholder="Search reference, vendor, PO number..."
               value={searchTerm}
               onChange={handleSearchChange}
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#0d7676] outline-none font-medium"
+              onClear={() => handleSearchChange({ target: { value: '' } })}
+              leftIcon={Search}
+              clearable={true}
+              size="sm"
             />
           </div>
 
-          <select
-            value={statusFilter}
-            onChange={handleStatusFilterChange}
-            className="h-9 px-3 text-xs border border-slate-200 rounded-lg bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-[#0d7676]"
-          >
-            <option value="All Status">All Status</option>
-            <option value="draft">Draft</option>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-            <option value="returned">Returned</option>
-            <option value="paid">Paid</option>
-          </select>
+          <div className="w-36">
+            <SearchableSelect
+              options={[
+                { label: 'All Status', value: 'All Status' },
+                { label: 'Draft', value: 'draft' },
+                { label: 'Pending', value: 'pending' },
+                { label: 'Approved', value: 'approved' },
+                { label: 'Rejected', value: 'rejected' },
+                { label: 'Returned', value: 'returned' },
+                { label: 'Paid', value: 'paid' }
+              ]}
+              value={statusFilter}
+              onChange={(val) => updateUrlParams({ status: val, page: 1 })}
+              size="sm"
+              searchable={false}
+            />
+          </div>
 
-          <select
-            value={pageSize}
-            onChange={handlePageSizeChange}
-            className="h-9 px-3 text-xs border border-slate-200 rounded-lg bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-[#0d7676]"
-          >
-            <option value={10}>10 per page</option>
-            <option value={20}>20 per page</option>
-            <option value={50}>50 per page</option>
-          </select>
+          <div className="w-32">
+            <SearchableSelect
+              options={[
+                { label: '10 per page', value: 10 },
+                { label: '20 per page', value: 20 },
+                { label: '50 per page', value: 50 }
+              ]}
+              value={pageSize}
+              onChange={(val) => { setPageSize(Number(val)); updateUrlParams({ pageSize: val, page: 1 }); }}
+              size="sm"
+              searchable={false}
+            />
+          </div>
         </div>
 
         <Link

@@ -6,12 +6,15 @@ import { Badge } from '../../components/ui/badge';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
 import { DollarSign, Save, Plus, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import { ServerPagination } from '../../components/ui/server-pagination';
 
 export default function ExchangeRatesDashboard() {
   const dispatch = useDispatch();
   const { rates, loading, saving, toastMessage } = useSelector((state) => state.exchangeRates);
   const { user } = useSelector((state) => state.auth);
 
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newCurrency, setNewCurrency] = useState('');
   const [newName, setNewName] = useState('');
@@ -108,43 +111,54 @@ export default function ExchangeRatesDashboard() {
         {loading ? (
           <div className="py-12 text-center text-slate-400 text-sm">Loading exchange rates...</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th className="py-3.5 px-6">CURRENCY CODE</th>
-                  <th className="py-3.5 px-6">CURRENCY NAME</th>
-                  <th className="py-3.5 px-6">EXCHANGE RATE (1 UNIT IN ₹ INR)</th>
-                  <th className="py-3.5 px-6">LAST UPDATED BY</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {rates.map((r) => (
-                  <tr key={r.currency} className="hover:bg-slate-50/50 transition">
-                    <td className="py-4 px-6">
-                      <Badge variant="teal">{r.currency}</Badge>
-                    </td>
-                    <td className="py-4 px-6 font-bold text-slate-800">{r.name}</td>
-                    <td className="py-4 px-6">
-                      <div className="flex items-center gap-2 max-w-xs">
-                        <span className="text-slate-500 font-bold">₹</span>
-                        <Input
-                          type="number"
-                          step="0.0001"
-                          value={r.rate}
-                          onChange={(e) => handleRateChange(r.currency, e.target.value)}
-                          className="font-mono font-bold"
-                        />
-                      </div>
-                    </td>
-                    <td className="py-4 px-6 text-slate-500 font-medium">
-                      {r.lastUpdatedBy || 'Nikunj Bhagat'}
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th className="py-3.5 px-6">CURRENCY CODE</th>
+                    <th className="py-3.5 px-6">CURRENCY NAME</th>
+                    <th className="py-3.5 px-6">EXCHANGE RATE (1 UNIT IN ₹ INR)</th>
+                    <th className="py-3.5 px-6">LAST UPDATED BY</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {rates.slice((page - 1) * pageSize, page * pageSize).map((r) => (
+                    <tr key={r.currency} className="hover:bg-slate-50/50 transition">
+                      <td className="py-4 px-6">
+                        <Badge variant="teal">{r.currency}</Badge>
+                      </td>
+                      <td className="py-4 px-6 font-bold text-slate-800">{r.name}</td>
+                      <td className="py-4 px-6">
+                        <div className="flex items-center gap-2 max-w-xs">
+                          <span className="text-slate-500 font-bold">₹</span>
+                          <Input
+                            type="number"
+                            step="0.0001"
+                            value={r.rate}
+                            onChange={(e) => handleRateChange(r.currency, e.target.value)}
+                            className="font-mono font-bold"
+                          />
+                        </div>
+                      </td>
+                      <td className="py-4 px-6 text-slate-500 font-medium">
+                        {r.lastUpdatedBy || 'Nikunj Bhagat'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <ServerPagination
+              page={page}
+              totalPages={Math.ceil(rates.length / pageSize) || 1}
+              total={rates.length}
+              pageSize={pageSize}
+              itemLabel="currencies"
+              onPageChange={(p) => setPage(p)}
+              onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+            />
+          </>
         )}
       </Card>
 

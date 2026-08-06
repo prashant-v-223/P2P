@@ -42,8 +42,8 @@ export default function SapIntegrationView() {
     setOverview(data);
   };
 
-  const loadHistory = async (page = historyMeta.page) => {
-    const response = await apiFetch(`/api/sap/history?page=${page}&size=${historyMeta.size}`);
+  const loadHistory = async (page = historyMeta.page, size = historyMeta.size) => {
+    const response = await apiFetch(`/api/sap/history?page=${page}&size=${size}`);
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Unable to load sync history.');
     setHistory(data.runs || []);
@@ -184,7 +184,7 @@ export default function SapIntegrationView() {
             </tbody>
           </table>
         </div>
-        <ServerPagination {...historyMeta} itemLabel="sync runs" onPageChange={loadHistory} className="rounded-none border-x-0 border-b-0 shadow-none" />
+        <ServerPagination {...historyMeta} itemLabel="sync runs" onPageChange={(p) => loadHistory(p)} onPageSizeChange={(s) => loadHistory(1, s)} className="rounded-none border-x-0 border-b-0 shadow-none" />
       </section>
     </div>
   );

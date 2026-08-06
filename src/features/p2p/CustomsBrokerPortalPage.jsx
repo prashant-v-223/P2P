@@ -3,6 +3,8 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Clock, FileText, Loader2, LogOut, Search, ShieldCheck, Ship, Upload } from 'lucide-react';
 import { useCustomAgent } from '../customAgentPortal/customAgentContext';
 import { useToast } from '../../components/ui/toast';
+import { SearchableSelect } from '../../components/ui/searchable-select';
+import { ServerPagination } from '../../components/ui/server-pagination';
 
 const inputClass = 'w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs outline-none focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-100';
 const statusText = (value) => ({ assigned_to_agent: 'With Customs Agent', material_received: 'Material Received', custom_cleared: 'Customs Cleared' }[value] || String(value || '').replaceAll('_', ' '));
@@ -24,10 +26,97 @@ function Dashboard() {
 }
 
 function AssignmentList() {
-  const { agentUser, assignedBls, fetchAssignedBls } = useCustomAgent(); const [query, setQuery] = useState(''); const [status, setStatus] = useState(''); const [loading, setLoading] = useState(true); const [error, setError] = useState('');
-  useEffect(() => { fetchAssignedBls(agentUser.agentId).catch((e) => setError(e.message)).finally(() => setLoading(false)); }, [agentUser.agentId, fetchAssignedBls]);
+  const { agentUser, assignedBls, fetchAssignedBls } = useCustomAgent();
+  const [query, setQuery] = useState('');
+  const [status, setStatus] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  useEffect(() => {
+    fetchAssignedBls(agentUser.agentId).catch((e) => setError(e.message)).finally(() => setLoading(false));
+  }, [agentUser.agentId, fetchAssignedBls]);
+
   const filtered = useMemo(() => assignedBls.filter((bl) => (!status || bl.status === status) && [bl.blNumber, bl.rfqNumber, bl.rfqId, bl.vendorName].some((value) => String(value || '').toLowerCase().includes(query.toLowerCase()))), [assignedBls, query, status]);
-  return <div className="space-y-4"><div><h1 className="text-xl font-extrabold">BL Clearance Assignments</h1><p className="text-xs text-slate-500">BL entries assigned to your customs-agent account.</p></div>{error && <div className="rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</div>}<section className="overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="flex gap-2 border-b p-4"><label className="flex w-72 items-center gap-2 rounded-lg border bg-slate-50 px-3"><Search className="h-4 w-4 text-slate-400" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search reference, vendor..." className="w-full bg-transparent py-2.5 text-xs outline-none" /></label><select value={status} onChange={(e) => setStatus(e.target.value)} className="w-44 rounded-lg border bg-slate-50 px-3 text-xs"><option value="">All Status</option><option value="assigned_to_agent">With Customs Agent</option><option value="custom_cleared">Customs Cleared</option></select></div>{loading ? <div className="p-12"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></div> : <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th className="px-4 py-3">#</th><th>BL Number</th><th>RFQ</th><th>Vendor</th><th>Containers</th><th>BOE</th><th>Status</th><th>Assigned</th><th className="px-4">Actions</th></tr></thead><tbody>{filtered.map((bl, index) => <tr key={bl.blId} className="border-t"><td className="px-4 py-4 text-slate-400">{index + 1}</td><td className="font-bold">{bl.blNumber}</td><td>{bl.rfqNumber || bl.rfqId}</td><td>{bl.vendorName || '—'}</td><td>{bl.containerCount}</td><td>{bl.boeNumber || '—'}</td><td><span className="rounded-full bg-teal-50 px-2 py-1 font-bold text-[#0d7676]">{statusText(bl.status)}</span></td><td>{dateText(bl.assignedAt)}</td><td className="px-4"><Link to={`/customs-agent/bl-entries/${bl.blId}`} className="rounded-lg border px-3 py-2 font-bold">View</Link></td></tr>)}</tbody></table>{!filtered.length && <div className="p-12 text-center text-xs text-slate-400">No assignments found.</div>}</div>}</section></div>;
+  const paginated = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-xl font-extrabold">BL Clearance Assignments</h1>
+        <p className="text-xs text-slate-500">BL entries assigned to your customs-agent account.</p>
+      </div>
+      {error && <div className="rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</div>}
+      <section className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+        <div className="flex gap-2 border-b p-4">
+          <label className="flex w-72 items-center gap-2 rounded-lg border bg-slate-50 px-3">
+            <Search className="h-4 w-4 text-slate-400" />
+            <input value={query} onChange={(e) => { setQuery(e.target.value); setPage(1); }} placeholder="Search reference, vendor..." className="w-full bg-transparent py-2.5 text-xs outline-none" />
+          </label>
+          <div className="w-44">
+            <SearchableSelect
+              options={[
+                { label: 'All Status', value: '' },
+                { label: 'With Customs Agent', value: 'assigned_to_agent' },
+                { label: 'Customs Cleared', value: 'custom_cleared' }
+              ]}
+              value={status}
+              onChange={(val) => { setStatus(val); setPage(1); }}
+              size="sm"
+              searchable={false}
+            />
+          </div>
+        </div>
+        {loading ? (
+          <div className="p-12"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-[10px] uppercase text-slate-500">
+                <tr>
+                  <th className="px-4 py-3">#</th>
+                  <th>BL Number</th>
+                  <th>RFQ</th>
+                  <th>Vendor</th>
+                  <th>Containers</th>
+                  <th>BOE</th>
+                  <th>Status</th>
+                  <th>Assigned</th>
+                  <th className="px-4">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paginated.map((bl, index) => (
+                  <tr key={bl.blId} className="border-t">
+                    <td className="px-4 py-4 text-slate-400">{(page - 1) * pageSize + index + 1}</td>
+                    <td className="font-bold">{bl.blNumber}</td>
+                    <td>{bl.rfqNumber || bl.rfqId}</td>
+                    <td>{bl.vendorName || '—'}</td>
+                    <td>{bl.containerCount}</td>
+                    <td>{bl.boeNumber || '—'}</td>
+                    <td><span className="rounded-full bg-teal-50 px-2 py-1 font-bold text-[#0d7676]">{statusText(bl.status)}</span></td>
+                    <td>{dateText(bl.assignedAt)}</td>
+                    <td className="px-4"><Link to={`/customs-agent/bl-entries/${bl.blId}`} className="rounded-lg border px-3 py-2 font-bold">View</Link></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!filtered.length && <div className="p-12 text-center text-xs text-slate-400">No assignments found.</div>}
+            <ServerPagination
+              page={page}
+              totalPages={Math.ceil(filtered.length / pageSize) || 1}
+              total={filtered.length}
+              pageSize={pageSize}
+              itemLabel="assignments"
+              onPageChange={(p) => setPage(p)}
+              onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+            />
+          </div>
+        )}
+      </section>
+    </div>
+  );
 }
 
 function AssignmentDetail({ blId }) {
@@ -39,7 +128,7 @@ function AssignmentDetail({ blId }) {
   const saveDocument = async () => { if (!docType || !docFile) return setError('Select a customs document type and file.'); setSaving(true); setError(''); try { await uploadCustomsDocument(bl.blId, { docType, fileName: docFile.name }); setDocType(''); setDocFile(null); showToast({ type: 'success', title: 'Document Uploaded' }); await load(); } catch (e) { setError(e.message); } finally { setSaving(false); } };
   const clear = async () => { const hasBoe = bl.documents?.some((doc) => doc.docType === 'Customs Bill of Entry'); if (!hasBoe) return setError('Upload the BOE document before customs clearance.'); if (!window.confirm(`Confirm customs clearance for BL ${bl.blNumber}? This locks customs documents.`)) return; setSaving(true); setError(''); try { await markAsCleared(bl.blId, notes); await fetchAssignedBls(agentUser.agentId); showToast({ type: 'success', title: 'Customs Cleared', description: 'The vendor can now submit logistics invoices.' }); await load(); } catch (e) { setError(e.message); } finally { setSaving(false); } };
   if (!bl) return <div className="p-12 text-center">{error || <Loader2 className="mx-auto h-5 w-5 animate-spin" />}</div>; const cleared = bl.status === 'custom_cleared'; const hasBoeDocument = bl.documents?.some((doc) => doc.docType === 'Customs Bill of Entry'); if (!bl.boeNumber && hasBoeDocument) bl.boeNumber = 'Document on file';
-  return <div className="space-y-4"><Link to="/customs-agent/bl-entries" className="inline-flex items-center gap-1 text-xs font-bold text-[#0d7676]"><ArrowLeft className="h-4 w-4" />BL Assignments</Link><div><h1 className="text-xl font-extrabold">BL: {bl.blNumber}</h1><p className="text-xs text-slate-500">{bl.rfqNumber || bl.rfqId} · {bl.vendorName} · {bl.containerCount} containers</p></div>{error && <div className="rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</div>}<section className="grid gap-4 rounded-2xl border bg-white p-5 text-xs shadow-sm sm:grid-cols-3"><div><p className="text-slate-400">Assigned At</p><strong>{dateText(bl.assignedAt)}</strong></div><div><p className="text-slate-400">BOE Number</p><strong>{bl.boeNumber || 'Not uploaded'}</strong></div><div><p className="text-slate-400">Customs Cleared</p><strong className={cleared ? 'text-emerald-700' : 'text-amber-700'}>{cleared ? dateText(bl.customsClearedAt) : 'Pending'}</strong></div></section>{!cleared && <form onSubmit={saveBoe} className="rounded-2xl border border-teal-200 bg-white p-5 shadow-sm"><h2 className="text-sm font-extrabold">Upload Bill of Entry (BOE)</h2><p className="mt-1 text-xs text-slate-500">A saved BOE number and document are mandatory before clearance.</p><div className="mt-4 grid gap-3 sm:grid-cols-3"><input value={boe.boeNumber} onChange={(e) => setBoe({ ...boe, boeNumber: e.target.value })} placeholder="BOE number" className={inputClass} /><input type="number" min="0" value={boe.dutyAmount} onChange={(e) => setBoe({ ...boe, dutyAmount: e.target.value })} placeholder="Duty amount (INR)" className={inputClass} /><input type="file" onChange={(e) => setBoeFile(e.target.files?.[0] || null)} className={inputClass} /></div><button disabled={saving} className="mt-3 rounded-lg bg-[#0d7676] px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50">Save BOE</button></form>}<section className="overflow-hidden rounded-2xl border bg-white shadow-sm"><h2 className="border-b px-5 py-4 text-sm font-extrabold">Documents ({bl.documents?.length || 0})</h2>{bl.documents?.map((doc, index) => <div key={`${doc.fileUrl}-${index}`} className="flex items-center justify-between border-b px-5 py-3 text-xs last:border-0"><span className="flex items-center gap-2"><FileText className="h-4 w-4 text-[#0d7676]" />{doc.docType}</span><span className="text-slate-500">{doc.fileUrl}</span><span className="text-slate-400">{dateText(doc.uploadedAt)}</span></div>)}</section>{!cleared && <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-sm font-extrabold">Upload Customs Documents</h2><div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr_auto]"><select value={docType} onChange={(e) => setDocType(e.target.value)} className={inputClass}><option value="">Select type</option><option>Duty Calculation</option><option>Assessment Order</option><option>Examination Report</option><option>Out of Charge</option><option>Other Customs Document</option></select><input type="file" onChange={(e) => setDocFile(e.target.files?.[0] || null)} className={inputClass} /><button onClick={saveDocument} type="button" disabled={saving || !docType || !docFile} className="rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">Upload</button></div></section>}<section className={`rounded-2xl border p-5 ${cleared ? 'border-emerald-200 bg-emerald-50' : 'border-teal-200 bg-teal-50'}`}><h2 className="text-sm font-extrabold">{cleared ? 'Customs Clearance Completed' : 'Mark as Customs Cleared'}</h2>{cleared ? <p className="mt-2 text-xs text-emerald-700">Clearance completed. Vendor logistics invoicing is enabled.</p> : <><p className="mt-1 text-xs text-slate-600">Review all documents before confirming. This action locks customs uploads.</p><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Clearance notes (optional)" className={`${inputClass} mt-3`} /><button onClick={clear}  className="mt-3 rounded-lg bg-[#0d7676] px-4 py-2.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><CheckCircle2 className="mr-1 inline h-4 w-4" />Confirm Customs Cleared</button>{!bl.boeNumber && <p className="mt-2 text-xs font-semibold text-amber-700">Upload the BOE before marking this BL as cleared.</p>}</>}</section></div>;
+  return <div className="space-y-4"><Link to="/customs-agent/bl-entries" className="inline-flex items-center gap-1 text-xs font-bold text-[#0d7676]"><ArrowLeft className="h-4 w-4" />BL Assignments</Link><div><h1 className="text-xl font-extrabold">BL: {bl.blNumber}</h1><p className="text-xs text-slate-500">{bl.rfqNumber || bl.rfqId} · {bl.vendorName} · {bl.containerCount} containers</p></div>{error && <div className="rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</div>}<section className="grid gap-4 rounded-2xl border bg-white p-5 text-xs shadow-sm sm:grid-cols-3"><div><p className="text-slate-400">Assigned At</p><strong>{dateText(bl.assignedAt)}</strong></div><div><p className="text-slate-400">BOE Number</p><strong>{bl.boeNumber || 'Not uploaded'}</strong></div><div><p className="text-slate-400">Customs Cleared</p><strong className={cleared ? 'text-emerald-700' : 'text-amber-700'}>{cleared ? dateText(bl.customsClearedAt) : 'Pending'}</strong></div></section>{!cleared && <form onSubmit={saveBoe} className="rounded-2xl border border-teal-200 bg-white p-5 shadow-sm"><h2 className="text-sm font-extrabold">Upload Bill of Entry (BOE)</h2><p className="mt-1 text-xs text-slate-500">A saved BOE number and document are mandatory before clearance.</p><div className="mt-4 grid gap-3 sm:grid-cols-3"><input value={boe.boeNumber} onChange={(e) => setBoe({ ...boe, boeNumber: e.target.value })} placeholder="BOE number" className={inputClass} /><input type="number" min="0" value={boe.dutyAmount} onChange={(e) => setBoe({ ...boe, dutyAmount: e.target.value })} placeholder="Duty amount (INR)" className={inputClass} /><input type="file" onChange={(e) => setBoeFile(e.target.files?.[0] || null)} className={inputClass} /></div><button disabled={saving} className="mt-3 rounded-lg bg-[#0d7676] px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50">Save BOE</button></form>}<section className="overflow-hidden rounded-2xl border bg-white shadow-sm"><h2 className="border-b px-5 py-4 text-sm font-extrabold">Documents ({bl.documents?.length || 0})</h2>{bl.documents?.map((doc, index) => <div key={`${doc.fileUrl}-${index}`} className="flex items-center justify-between border-b px-5 py-3 text-xs last:border-0"><span className="flex items-center gap-2"><FileText className="h-4 w-4 text-[#0d7676]" />{doc.docType}</span><span className="text-slate-500">{doc.fileUrl}</span><span className="text-slate-400">{dateText(doc.uploadedAt)}</span></div>)}</section>{!cleared && <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-sm font-extrabold">Upload Customs Documents</h2><div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr_auto]"><SearchableSelect options={['Duty Calculation', 'Assessment Order', 'Examination Report', 'Out of Charge', 'Other Customs Document']} value={docType} onChange={(val) => setDocType(val)} placeholder="Select type" size="md" searchable={false} /><input type="file" onChange={(e) => setDocFile(e.target.files?.[0] || null)} className={inputClass} /><button onClick={saveDocument} type="button" disabled={saving || !docType || !docFile} className="rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">Upload</button></div></section>}<section className={`rounded-2xl border p-5 ${cleared ? 'border-emerald-200 bg-emerald-50' : 'border-teal-200 bg-teal-50'}`}><h2 className="text-sm font-extrabold">{cleared ? 'Customs Clearance Completed' : 'Mark as Customs Cleared'}</h2>{cleared ? <p className="mt-2 text-xs text-emerald-700">Clearance completed. Vendor logistics invoicing is enabled.</p> : <><p className="mt-1 text-xs text-slate-600">Review all documents before confirming. This action locks customs uploads.</p><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Clearance notes (optional)" className={`${inputClass} mt-3`} /><button onClick={clear}  className="mt-3 rounded-lg bg-[#0d7676] px-4 py-2.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><CheckCircle2 className="mr-1 inline h-4 w-4" />Confirm Customs Cleared</button>{!bl.boeNumber && <p className="mt-2 text-xs font-semibold text-amber-700">Upload the BOE before marking this BL as cleared.</p>}</>}</section></div>;
 }
 
 function Profile() { const { agentUser } = useCustomAgent(); return <div className="space-y-4"><h1 className="text-xl font-extrabold">My Profile</h1><section className="grid gap-5 rounded-2xl border bg-white p-6 text-xs shadow-sm sm:grid-cols-2">{[['Agency', agentUser.agencyName], ['Contact Person', agentUser.contactPerson], ['Email', agentUser.email], ['Phone', agentUser.phone], ['Port Location', agentUser.portLocation], ['Licence Number', agentUser.licenceNumber], ['Status', agentUser.status]].map(([label, value]) => <div key={label}><p className="text-slate-400">{label}</p><strong>{value || '—'}</strong></div>)}</section></div>; }

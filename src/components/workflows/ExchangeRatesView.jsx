@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useConfirm } from '../ui/confirm-dialog';
-import { ArrowLeft, DollarSign, Plus, Trash2, Save, Info, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, DollarSign, Plus, Trash2, Save, Info, CheckCircle2, Search } from 'lucide-react';
+import { ServerPagination } from '../ui/server-pagination';
+import { CustomInput } from '../ui/custom-input';
 
 export default function ExchangeRatesView({ onBackToWorkflows }) {
   const confirm = useConfirm();
@@ -8,6 +10,9 @@ export default function ExchangeRatesView({ onBackToWorkflows }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newCurrency, setNewCurrency] = useState('');
   const [newName, setNewName] = useState('');
@@ -35,6 +40,14 @@ export default function ExchangeRatesView({ onBackToWorkflows }) {
   const handleRateChange = (currencyCode, newRateVal) => {
     setRates(prev => prev.map(r => r.currency === currencyCode ? { ...r, rate: newRateVal } : r));
   };
+
+  const filteredRates = rates.filter(r => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (r.currency || '').toLowerCase().includes(q) || (r.name || '').toLowerCase().includes(q);
+  });
+
+  const paginatedRates = filteredRates.slice((page - 1) * pageSize, page * pageSize);
 
   const handleSaveAll = async () => {
     try {
@@ -97,7 +110,7 @@ export default function ExchangeRatesView({ onBackToWorkflows }) {
     <div className="w-full space-y-5 pb-12 font-sans">
       
       {/* Back Link & Action Bar */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <button
           onClick={onBackToWorkflows}
           className="inline-flex items-center gap-2 text-xs font-bold text-[#0d7676] hover:text-[#0a5c5c] transition"
@@ -106,13 +119,28 @@ export default function ExchangeRatesView({ onBackToWorkflows }) {
           Back to Workflows Slabs
         </button>
 
-        <button
-          onClick={() => setIsAddModalOpen(true)}
-          className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-[#0d7676] rounded-lg hover:bg-[#0a5c5c] transition shadow-xs"
-        >
-          <Plus className="w-4 h-4" />
-          Add Currency
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="w-64">
+            <CustomInput
+              type="text"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+              onClear={() => { setSearch(''); setPage(1); }}
+              placeholder="Search currency code or name..."
+              leftIcon={Search}
+              clearable={true}
+              size="sm"
+            />
+          </div>
+
+          <button
+            onClick={() => setIsAddModalOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-[#0d7676] rounded-lg hover:bg-[#0a5c5c] transition shadow-xs"
+          >
+            <Plus className="w-4 h-4" />
+            Add Currency
+          </button>
+        </div>
       </div>
 
       {/* Main Card */}
@@ -142,7 +170,7 @@ export default function ExchangeRatesView({ onBackToWorkflows }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {rates.map((item) => (
+                {paginatedRates.map((item) => (
                   <tr key={item.currency} className="hover:bg-teal-50/20 transition">
                     <td className="py-3.5 px-6 font-bold">
                       <span className="px-2.5 py-1 bg-teal-50 text-[#0d7676] font-mono rounded border border-teal-200">
@@ -186,6 +214,16 @@ export default function ExchangeRatesView({ onBackToWorkflows }) {
             </table>
           </div>
         )}
+
+        <ServerPagination
+          page={page}
+          totalPages={Math.ceil(filteredRates.length / pageSize) || 1}
+          total={filteredRates.length}
+          pageSize={pageSize}
+          itemLabel="currencies"
+          onPageChange={(p) => setPage(p)}
+          onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+        />
 
         {/* Footer Actions */}
         <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">

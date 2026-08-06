@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
+import { SearchableSelect } from '../../components/ui/searchable-select';
 import { 
   ChevronLeft, 
   Save, 
@@ -142,15 +143,17 @@ export default function EditAdvancePaymentView() {
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Currency <span className="text-rose-500">*</span></label>
-                <select
+                <SearchableSelect
+                  options={[
+                    { label: 'INR — Indian Rupee', value: 'INR — Indian Rupee' },
+                    { label: 'USD — US Dollar', value: 'USD — US Dollar' },
+                    { label: 'EUR — Euro', value: 'EUR — Euro' }
+                  ]}
                   value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl outline-none font-semibold text-slate-700 bg-white"
-                >
-                  <option value="INR — Indian Rupee">INR — Indian Rupee</option>
-                  <option value="USD — US Dollar">USD — US Dollar</option>
-                  <option value="EUR — Euro">EUR — Euro</option>
-                </select>
+                  onChange={(val) => setCurrency(val)}
+                  size="sm"
+                  searchable={false}
+                />
               </div>
             </div>
 

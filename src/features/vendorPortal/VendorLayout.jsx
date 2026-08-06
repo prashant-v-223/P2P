@@ -4,6 +4,7 @@ import { useVendor } from './vendorContext';
 import { LayoutDashboard, FileText, Wallet, User, LogOut, Sun, ClipboardList, Bell } from 'lucide-react';
 import { useToast } from '../../components/ui/toast';
 import { apiFetch } from '../../services/api';
+import VendorNotificationPanel from './VendorNotificationPanel';
 
 export function RayzonLogo() {
   return (
@@ -171,7 +172,11 @@ export default function VendorLayout() {
 
           {/* User Profile Right */}
           <div className="flex items-center gap-3">
-            {isFreightForwarder && <button type="button" onClick={() => navigate('/vendor/rfqs')} className="relative rounded-xl border border-slate-200 bg-white p-2 text-slate-600 hover:bg-teal-50 hover:text-[#0d7676]" title={`${rfqNotificationCount} RFQ${rfqNotificationCount === 1 ? '' : 's'} awaiting your quote`}><Bell className="h-4 w-4" />{rfqNotificationCount > 0 && <span className="absolute -right-1 -top-1 rounded-full bg-rose-500 px-1.5 text-[9px] font-bold text-white">{rfqNotificationCount}</span>}</button>}
+            <VendorNotificationPanel
+              vendorProfile={vendorProfile}
+              vendorUser={vendorUser}
+              isFreightForwarder={isFreightForwarder}
+            />
             <div className="flex items-center gap-2.5 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-xs">
               <div className="w-7 h-7 rounded-lg bg-teal-50 text-[#0d7676] font-bold flex items-center justify-center text-xs border border-teal-200">
                 {(vendorProfile.companyName || 'Vendor').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useVendor } from './vendorContext';
 import { useToast } from '../../components/ui/toast';
 import { CreditCard, FileText, Plus, Filter, CheckCircle2, X } from 'lucide-react';
+import { SearchableSelect } from '../../components/ui/searchable-select';
+import { ServerPagination } from '../../components/ui/server-pagination';
 
 export default function VendorAdvancesPage() {
   const { advances, purchaseOrders, addAdvanceRequest } = useVendor();
@@ -9,6 +11,8 @@ export default function VendorAdvancesPage() {
 
   const [statusFilter, setStatusFilter] = useState('All Statuses');
   const [showRequestModal, setShowRequestModal] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const [selectedPO, setSelectedPO] = useState('');
   const [amount, setAmount] = useState('');
@@ -25,6 +29,8 @@ export default function VendorAdvancesPage() {
     if (statusFilter === 'All Statuses') return true;
     return adv.status === statusFilter;
   });
+
+  const paginatedAdvances = filteredAdvances.slice((page - 1) * pageSize, page * pageSize);
 
   const totalCount = advances.length;
   const inProgressCount = advances.filter((a) => a.status === 'In Progress').length;
@@ -90,7 +96,7 @@ export default function VendorAdvancesPage() {
         <button
           onClick={() => setShowRequestModal(true)}
           disabled={eligiblePurchaseOrders.length === 0}
-          className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition uppercase tracking-wider self-start sm:self-auto"
+          className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition uppercase tracking-wider self-start sm:self-auto cursor-pointer"
         >
           <Plus className="w-4 h-4" />
           <span>Request Advance</span>
@@ -122,18 +128,19 @@ export default function VendorAdvancesPage() {
 
       {/* Filter Row */}
       <div className="flex items-center gap-3">
-        <div className="relative w-48">
-          <select
+        <div className="w-48">
+          <SearchableSelect
+            options={[
+              { label: 'All Statuses', value: 'All Statuses' },
+              { label: 'In Progress', value: 'In Progress' },
+              { label: 'Approved', value: 'Approved' },
+              { label: 'Paid', value: 'Paid' }
+            ]}
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#0d7676] shadow-xs appearance-none pr-8 cursor-pointer"
-          >
-            <option value="All Statuses">All Statuses</option>
-            <option value="In Progress">In Progress</option>
-            <option value="Approved">Approved</option>
-            <option value="Paid">Paid</option>
-          </select>
-          <Filter className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            onChange={(val) => { setStatusFilter(val); setPage(1); }}
+            size="sm"
+            searchable={false}
+          />
         </div>
       </div>
 
@@ -150,42 +157,53 @@ export default function VendorAdvancesPage() {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                <tr>
-                  <th className="p-4">Request ID</th>
-                  <th className="p-4">PO Number</th>
-                  <th className="p-4">Requested Date</th>
-                  <th className="p-4">Amount</th>
-                  <th className="p-4">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                {filteredAdvances.map((adv) => (
-                  <tr key={adv.id} className="hover:bg-slate-50/70">
-                    <td className="p-4 font-bold text-slate-900">{adv.id}</td>
-                    <td className="p-4 text-slate-800">{adv.poNumber}</td>
-                    <td className="p-4 text-slate-500">{adv.requestedDate}</td>
-                    <td className="p-4 font-bold text-slate-900">
-                      {new Intl.NumberFormat('en-IN', { style: 'currency', currency: adv.currency === 'USD' ? 'USD' : 'INR' }).format(Number(adv.amount) || 0)}
-                    </td>
-                    <td className="p-4">
-                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800">
-                        {adv.status}
-                      </span>
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="p-4">Request ID</th>
+                    <th className="p-4">PO Number</th>
+                    <th className="p-4">Requested Date</th>
+                    <th className="p-4">Amount</th>
+                    <th className="p-4">Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                  {paginatedAdvances.map((adv) => (
+                    <tr key={adv.id} className="hover:bg-slate-50/70">
+                      <td className="p-4 font-bold text-slate-900">{adv.id}</td>
+                      <td className="p-4 text-slate-800">{adv.poNumber}</td>
+                      <td className="p-4 text-slate-500">{adv.requestedDate}</td>
+                      <td className="p-4 font-bold text-slate-900">
+                        {new Intl.NumberFormat('en-IN', { style: 'currency', currency: adv.currency === 'USD' ? 'USD' : 'INR' }).format(Number(adv.amount) || 0)}
+                      </td>
+                      <td className="p-4">
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800">
+                          {adv.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <ServerPagination
+              page={page}
+              totalPages={Math.ceil(filteredAdvances.length / pageSize) || 1}
+              total={filteredAdvances.length}
+              pageSize={pageSize}
+              itemLabel="advance requests"
+              onPageChange={(p) => setPage(p)}
+              onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+            />
+          </>
         )}
       </div>
 
       {/* Request Advance Modal */}
       {showRequestModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl p-6 max-w-md w-full space-y-4 shadow-xl border border-slate-100">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-sm font-bold text-slate-900">Request Advance Payment</h3>
@@ -197,19 +215,16 @@ export default function VendorAdvancesPage() {
             <form onSubmit={handleCreateAdvance} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="block text-xs font-semibold text-slate-700">Select Purchase Order *</label>
-                <select
-                  required
+                <SearchableSelect
+                  options={eligiblePurchaseOrders.map((po) => ({
+                    label: `${po.id} — ${po.amount}`,
+                    value: po.id
+                  }))}
                   value={selectedPO}
-                  onChange={(e) => setSelectedPO(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676]"
-                >
-                  <option value="">Select PO...</option>
-                  {eligiblePurchaseOrders.map((po) => (
-                    <option key={po.id} value={po.id}>
-                      {po.id} — {po.amount}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => setSelectedPO(val)}
+                  placeholder="Select PO..."
+                  size="md"
+                />
               </div>
 
               <div className="space-y-1.5">

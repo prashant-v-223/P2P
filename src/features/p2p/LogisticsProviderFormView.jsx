@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Building2, ArrowLeft, Loader2, Info, Landmark } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
+import { SearchableSelect } from '../../components/ui/searchable-select';
 
 export default function LogisticsProviderFormView() {
   const navigate = useNavigate();
@@ -181,14 +182,16 @@ export default function LogisticsProviderFormView() {
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
                 Status <span className="text-red-500">*</span>
               </label>
-              <select
+              <SearchableSelect
+                options={[
+                  { label: 'Active', value: 'Active' },
+                  { label: 'Inactive', value: 'Inactive' }
+                ]}
                 value={form.status}
-                onChange={(e) => setForm({ ...form, status: e.target.value })}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-1 focus:ring-[#0d7676]"
-              >
-                <option value="Active">Active</option>
-                <option value="Inactive">Inactive</option>
-              </select>
+                onChange={(val) => setForm({ ...form, status: val })}
+                size="md"
+                searchable={false}
+              />
             </div>
 
             <div>

@@ -28,6 +28,8 @@ import {
   Globe
 } from 'lucide-react';
 
+import { ServerPagination } from '../ui/server-pagination';
+
 export default function VendorDetailsView() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -37,6 +39,8 @@ export default function VendorDetailsView() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
+  const [poPage, setPoPage] = useState(1);
+  const [poPageSize, setPoPageSize] = useState(5);
 
   // Password Modal State
   const [passModalOpen, setPassModalOpen] = useState(false);
@@ -319,36 +323,47 @@ export default function VendorDetailsView() {
             </CardHeader>
             <CardContent className="p-0 overflow-x-auto">
               {vendor.recentPOs?.length > 0 ? (
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-extrabold uppercase tracking-wider text-[10px]">
-                    <tr>
-                      <th className="py-3 px-6">PO NUMBER</th>
-                      <th className="py-3 px-6">DATE</th>
-                      <th className="py-3 px-6">TYPE</th>
-                      <th className="py-3 px-6">AMOUNT</th>
-                      <th className="py-3 px-6">STATUS</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 font-medium">
-                    {vendor.recentPOs.map((po, idx) => (
-                      <tr key={idx} className="hover:bg-teal-50/30 transition">
-                        <td className="py-3.5 px-6 font-bold text-[#0d7676] font-mono">{po.poNumber}</td>
-                        <td className="py-3.5 px-6 text-slate-600">{po.date}</td>
-                        <td className="py-3.5 px-6">
-                          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-semibold">
-                            {po.type}
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-6 font-mono font-bold text-slate-900">{po.amount}</td>
-                        <td className="py-3.5 px-6">
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-bold border border-emerald-200">
-                            {po.status}
-                          </span>
-                        </td>
+                <>
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-extrabold uppercase tracking-wider text-[10px]">
+                      <tr>
+                        <th className="py-3 px-6">PO NUMBER</th>
+                        <th className="py-3 px-6">DATE</th>
+                        <th className="py-3 px-6">TYPE</th>
+                        <th className="py-3 px-6">AMOUNT</th>
+                        <th className="py-3 px-6">STATUS</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-medium">
+                      {vendor.recentPOs.slice((poPage - 1) * poPageSize, poPage * poPageSize).map((po, idx) => (
+                        <tr key={idx} className="hover:bg-teal-50/30 transition">
+                          <td className="py-3.5 px-6 font-bold text-[#0d7676] font-mono">{po.poNumber}</td>
+                          <td className="py-3.5 px-6 text-slate-600">{po.date}</td>
+                          <td className="py-3.5 px-6">
+                            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-semibold">
+                              {po.type}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-6 font-mono font-bold text-slate-900">{po.amount}</td>
+                          <td className="py-3.5 px-6">
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-bold border border-emerald-200">
+                              {po.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <ServerPagination
+                    page={poPage}
+                    totalPages={Math.ceil((vendor.recentPOs?.length || 0) / poPageSize) || 1}
+                    total={vendor.recentPOs?.length || 0}
+                    pageSize={poPageSize}
+                    onPageChange={(p) => setPoPage(p)}
+                    onPageSizeChange={(s) => { setPoPageSize(s); setPoPage(1); }}
+                    pageSizeOptions={[5, 10, 20]}
+                  />
+                </>
               ) : (
                 <div className="py-10 text-center text-slate-400 text-xs font-semibold">
                   No purchase order records available yet.

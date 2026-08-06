@@ -208,4 +208,21 @@ export default function VendorFormView({ mode = 'create' }) {
 
 function FormSection({ title, description, children }) { return <section className="surface-card"><header className="border-b border-slate-100 px-4 py-3"><h3 className="text-sm font-bold text-slate-900">{title}</h3>{description && <p className="mt-0.5 text-[11px] text-slate-500">{description}</p>}</header><div className="grid gap-3 p-4 md:grid-cols-2">{children}</div></section>; }
 function Field({ label, required, wide, ...props }) { return <label className={wide ? 'md:col-span-2' : ''}><span className="mb-1.5 block text-xs font-semibold text-slate-700">{label}{required && <span className="text-rose-500"> *</span>}</span><input {...props} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs disabled:bg-slate-50 disabled:text-slate-500" /></label>; }
-function Select({ label, options, ...props }) { return <label><span className="mb-1.5 block text-xs font-semibold text-slate-700">{label}</span><select {...props} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs disabled:bg-slate-50">{options.map((option) => <option key={option}>{option}</option>)}</select></label>; }
+import { SearchableSelect } from '../ui/searchable-select';
+
+function Select({ label, options, value, onChange, disabled }) {
+  const normalizedOptions = options.map((opt) => typeof opt === 'string' ? { label: opt, value: opt } : opt);
+  return (
+    <label>
+      <span className="mb-1.5 block text-xs font-semibold text-slate-700">{label}</span>
+      <SearchableSelect
+        options={normalizedOptions}
+        value={value}
+        onChange={(val) => onChange && onChange({ target: { value: val } })}
+        disabled={disabled}
+        size="md"
+        searchable={false}
+      />
+    </label>
+  );
+}

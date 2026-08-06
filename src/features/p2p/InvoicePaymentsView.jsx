@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { ServerPagination } from '../../components/ui/server-pagination';
+import { SearchableSelect } from '../../components/ui/searchable-select';
+import { CustomInput } from '../../components/ui/custom-input';
 import { useToast } from '../../components/ui/toast';
 import { 
   FileCheck2, 
@@ -225,54 +227,64 @@ const getInitials = (name) => {
       {/* SINGLE UNIFIED CONTROL BAR (Search + 3-Way Match + Status + Page Size + Primary Action Button) EXACTLY LIKE USER DIRECTORY */}
       <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]">
-          <div className="relative min-w-[240px] flex-1">
-            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-            <input
+          <div className="min-w-[240px] flex-1">
+            <CustomInput
               type="text"
               placeholder="Search reference, ASN, invoice..."
               value={searchTerm}
               onChange={handleSearchChange}
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-[#0d7676] outline-none font-medium"
+              onClear={() => handleSearchChange({ target: { value: '' } })}
+              leftIcon={Search}
+              clearable={true}
+              size="sm"
             />
           </div>
 
-          <select
-            value={matchFilter}
-            onChange={handleMatchFilterChange}
-            className="h-9 px-3 text-xs border border-slate-200 rounded-lg bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-[#0d7676]"
-          >
-            <option value="All Match">All 3-Way Match</option>
-            <option value="matched">Matched</option>
-            <option value="mismatch">Mismatch</option>
-          </select>
+          <div className="w-36">
+            <SearchableSelect
+              options={[
+                { label: 'All 3-Way Match', value: 'All Match' },
+                { label: 'Matched', value: 'matched' },
+                { label: 'Mismatch', value: 'mismatch' }
+              ]}
+              value={matchFilter}
+              onChange={(val) => updateUrlParams({ threeWayMatch: val, page: '1' })}
+              size="sm"
+              searchable={false}
+            />
+          </div>
 
-          <select
-            value={statusFilter}
-            onChange={handleStatusFilterChange}
-            className="h-9 px-3 text-xs border border-slate-200 rounded-lg bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-[#0d7676]"
-          >
-            <option value="All Status">All Status</option>
-            <option value="draft">Draft</option>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-            <option value="returned">Returned</option>
-            <option value="paid">Paid</option>
-          </select>
+          <div className="w-36">
+            <SearchableSelect
+              options={[
+                { label: 'All Status', value: 'All Status' },
+                { label: 'Draft', value: 'draft' },
+                { label: 'Pending', value: 'pending' },
+                { label: 'Approved', value: 'approved' },
+                { label: 'Rejected', value: 'rejected' },
+                { label: 'Returned', value: 'returned' },
+                { label: 'Paid', value: 'paid' }
+              ]}
+              value={statusFilter}
+              onChange={(val) => updateUrlParams({ status: val, page: '1' })}
+              size="sm"
+              searchable={false}
+            />
+          </div>
 
-          <select
-            value={pageSize}
-            onChange={(e) => {
-              const newSize = parseInt(e.target.value, 10);
-              setPageSize(newSize);
-              updateUrlParams({ pageSize: String(newSize), page: '1' });
-            }}
-            className="h-9 px-3 text-xs border border-slate-200 rounded-lg bg-white font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-[#0d7676]"
-          >
-            <option value={10}>10 per page</option>
-            <option value={20}>20 per page</option>
-            <option value={50}>50 per page</option>
-          </select>
+          <div className="w-32">
+            <SearchableSelect
+              options={[
+                { label: '10 per page', value: 10 },
+                { label: '20 per page', value: 20 },
+                { label: '50 per page', value: 50 }
+              ]}
+              value={pageSize}
+              onChange={(val) => { setPageSize(Number(val)); updateUrlParams({ pageSize: String(val), page: '1' }); }}
+              size="sm"
+              searchable={false}
+            />
+          </div>
         </div>
 
         <button
@@ -319,7 +331,7 @@ const getInitials = (name) => {
                     <div className="flex flex-col items-center justify-center gap-1.5">
                       <FileCheck2 className="w-8 h-8 text-slate-300" />
                       <p className="font-semibold text-slate-700">No invoice records found</p>
-                      <p className="text-xs text-slate-400">Click "Submit New Invoice Payment" to create one.</p>
+                      <p className="text-xs text-slate-400">Click &quot;Submit New Invoice Payment&quot; to create one.</p>
                     </div>
                   </td>
                 </tr>
@@ -483,25 +495,19 @@ const getInitials = (name) => {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Target PO</label>
-                  <select
+                  <SearchableSelect
+                    options={availablePOs.length > 0 ? (
+                      availablePOs.map(p => ({ label: `${p.poNumber} — ${p.supplierName}`, value: p.poNumber }))
+                    ) : [
+                      { label: 'PO-4300001510 — Jinko Solar', value: 'PO-4300001510' },
+                      { label: 'PO-4300001511 — Trina Solar', value: 'PO-4300001511' },
+                      { label: 'PO-4100004110 — Acute Systems', value: 'PO-4100004110' }
+                    ]}
                     value={formPo}
-                    onChange={(e) => setFormPo(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 outline-none font-semibold bg-white"
-                  >
-                    {availablePOs.length > 0 ? (
-                      availablePOs.map(p => (
-                        <option key={p.poNumber} value={p.poNumber}>
-                          {p.poNumber} — {p.supplierName}
-                        </option>
-                      ))
-                    ) : (
-                      <>
-                        <option value="PO-4300001510">PO-4300001510 — Jinko Solar</option>
-                        <option value="PO-4300001511">PO-4300001511 — Trina Solar</option>
-                        <option value="PO-4100004110">PO-4100004110 — Acute Systems</option>
-                      </>
-                    )}
-                  </select>
+                    onChange={(val) => setFormPo(val)}
+                    size="md"
+                    searchable={true}
+                  />
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Vendor Invoice Number</label>
@@ -629,7 +635,7 @@ const getInitials = (name) => {
               <CreditCard className="w-5 h-5 text-emerald-600" /> Invoice Treasury Bank Payout
             </h3>
             <p className="text-xs text-slate-500">
-              Record bank UTR details for Invoice <span className="font-bold text-slate-900">{selectedInvoice.invoiceNumber}</span>. Net Payable: <span className="font-bold text-teal-700">₹{selectedInvoice.netPayable.toLocaleString('en-IN')}</span>.
+              Record bank UTR details for Invoice <span className="font-bold text-slate-900">{selectedInvoice.invoiceNumber}</span>. Net Payable: <span className="font-bold text-teal-700">₹{(selectedInvoice.netPayable || 0).toLocaleString('en-IN')}</span>.
             </p>
 
             <form onSubmit={handlePayoutSubmit} className="space-y-3 text-xs">

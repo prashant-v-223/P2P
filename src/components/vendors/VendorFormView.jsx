@@ -4,6 +4,7 @@ import { apiFetch } from '../../services/api';
 import { Button } from '../ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '../ui/card';
 import { Input } from '../ui/input';
+import { SearchableSelect } from '../ui/searchable-select';
 import { 
   Building2, 
   Search, 
@@ -764,30 +765,33 @@ export default function VendorFormView() {
       </FormField>
 
       <FormField label="Vendor Type">
-        <select
+        <SearchableSelect
+          options={[
+            { label: 'DOMESTIC', value: 'DOMESTIC' },
+            { label: 'IMPORT', value: 'IMPORT' },
+            { label: 'Freight Forwarder', value: 'Freight Forwarder' },
+            { label: 'Service', value: 'Service' },
+            { label: 'Other', value: 'Other' }
+          ]}
           value={formData.vendorType}
-          onChange={(e) => handleFormChange('vendorType', e.target.value)}
-          className="w-full h-9 px-3 rounded-lg border border-slate-300 bg-slate-50 text-xs font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0d7676]"
-        >
-          <option value="DOMESTIC">DOMESTIC</option>
-          <option value="IMPORT">IMPORT</option>
-          <option value="Freight Forwarder">Freight Forwarder</option>
-          <option value="Service">Service</option>
-          <option value="Other">Other</option>
-        </select>
-        
+          onChange={(val) => handleFormChange('vendorType', val)}
+          size="md"
+          searchable={false}
+        />
       </FormField>
 
       <FormField label="Payment Terms">
-        <select
+        <SearchableSelect
+          options={[
+            { label: '30 Days', value: '30 Days' },
+            { label: '60 Days', value: '60 Days' },
+            { label: 'Advance', value: 'Advance' }
+          ]}
           value={formData.paymentTerms}
-          onChange={(e) => handleFormChange('paymentTerms', e.target.value)}
-          className="w-full h-9 px-3 rounded-lg border border-slate-300 bg-slate-50 text-xs font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0d7676]"
-        >
-          <option value="30 Days">30 Days</option>
-          <option value="60 Days">60 Days</option>
-          <option value="Advance">Advance</option>
-        </select>
+          onChange={(val) => handleFormChange('paymentTerms', val)}
+          size="md"
+          searchable={false}
+        />
       </FormField>
 
       <FormField label="Contact Person">
@@ -809,14 +813,16 @@ export default function VendorFormView() {
       </FormField>
 
       <FormField label="Account Status" wide>
-        <select
+        <SearchableSelect
+          options={[
+            { label: 'ACTIVE — Can Sign In', value: 'Active' },
+            { label: 'INACTIVE', value: 'Inactive' }
+          ]}
           value={formData.accountStatus}
-          onChange={(e) => handleFormChange('accountStatus', e.target.value)}
-          className="w-full h-9 px-3 rounded-lg border border-slate-300 bg-slate-50 text-xs font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0d7676]"
-        >
-          <option value="Active">ACTIVE — Can Sign In</option>
-          <option value="Inactive">INACTIVE</option>
-        </select>
+          onChange={(val) => handleFormChange('accountStatus', val)}
+          size="md"
+          searchable={false}
+        />
       </FormField>
     </div>
   ), [formData, handleFormChange]);

@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../ui/toast';
+import { SearchableSelect } from '../ui/searchable-select';
 import { setPendingCount } from '../../features/approvals/approvalsSlice';
 import { ServerPagination } from '../ui/server-pagination';
 
@@ -362,14 +363,28 @@ export default function PendingApprovalsView() {
           )}
         </div>
 
-        <select value={type} onChange={(event) => updateFilters({ type: event.target.value })} aria-label="Filter by payment type" className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100">
-          {types.map((item) => <option key={item} value={item}>{item === 'All' ? 'All payment types' : item}</option>)}
-        </select>
+        <div className="w-44">
+          <SearchableSelect
+            options={types.map((item) => ({ label: item === 'All' ? 'All payment types' : item, value: item }))}
+            value={type}
+            onChange={(val) => updateFilters({ type: val })}
+            size="sm"
+            searchable={false}
+          />
+        </div>
 
-        <select value={sort} onChange={(event) => updateFilters({ sort: event.target.value })} aria-label="Sort order" className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100">
-          <option value="newest">Newest first</option>
-          <option value="oldest">Oldest first</option>
-        </select>
+        <div className="w-36">
+          <SearchableSelect
+            options={[
+              { label: 'Newest first', value: 'newest' },
+              { label: 'Oldest first', value: 'oldest' }
+            ]}
+            value={sort}
+            onChange={(val) => updateFilters({ sort: val })}
+            size="sm"
+            searchable={false}
+          />
+        </div>
 
         <button
           type="button"
@@ -382,9 +397,20 @@ export default function PendingApprovalsView() {
           Needs your action
         </button>
 
-        <select value={pageSize} onChange={(event) => updateFilters({ size: event.target.value })} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100" aria-label="Items per page">
-          {[5, 10, 20, 50].map((size) => <option key={size} value={size}>{size} per page</option>)}
-        </select>
+        <div className="w-32">
+          <SearchableSelect
+            options={[
+              { label: '5 per page', value: '5' },
+              { label: '10 per page', value: '10' },
+              { label: '20 per page', value: '20' },
+              { label: '50 per page', value: '50' }
+            ]}
+            value={String(pageSize)}
+            onChange={(val) => updateFilters({ size: val })}
+            size="sm"
+            searchable={false}
+          />
+        </div>
 
         {hasActiveFilters && (
           <button

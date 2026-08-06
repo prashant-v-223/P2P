@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 
 import { ServerPagination } from '../../components/ui/server-pagination';
+import { SearchableSelect } from '../../components/ui/searchable-select';
 
 export default function RfqSourcingView() {
   const navigate = useNavigate();
@@ -129,18 +130,20 @@ export default function RfqSourcingView() {
           />
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <select
+        <div className="w-44">
+          <SearchableSelect
+            options={[
+              { label: 'All Status', value: 'All' },
+              { label: 'Published', value: 'Published' },
+              { label: 'Pending Approval', value: 'Pending Approval' },
+              { label: 'Awarded', value: 'Awarded' },
+              { label: 'Expired', value: 'Expired' }
+            ]}
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#0d7676] cursor-pointer"
-          >
-            <option value="All">All Status</option>
-            <option value="Published">Published</option>
-            <option value="Pending Approval">Pending Approval</option>
-            <option value="Awarded">Awarded</option>
-            <option value="Expired">Expired</option>
-          </select>
+            onChange={(val) => setStatusFilter(val)}
+            size="sm"
+            searchable={false}
+          />
         </div>
       </div>
 
