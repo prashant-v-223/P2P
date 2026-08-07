@@ -17,8 +17,9 @@ const FALLBACK_USERS = [
   { id: 'usr-010', name: 'Suresh Kumar', email: 'suresh.kumar@rayzon.com', role: 'finance', department: 'Finance & Treasury', avatar: 'SK', status: 'Active' },
   { id: 'usr-012', name: 'Vikram Singh', email: 'vikram.singh@rayzon.com', role: 'logistics', department: 'Logistics & Supply Chain', avatar: 'VS', status: 'Active' },
   { id: 'usr-013', name: 'Arjun Shah', email: 'arjun.shah@rayzon.com', role: 'md', department: 'Executive Board', avatar: 'AS', status: 'Active' },
-  { id: 'usr-014', name: 'Neha Gupta', email: 'neha.gupta@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'NG', status: 'Active' },
-  { id: 'usr-022', name: 'Harish Solanki', email: 'harish.solanki@rayzon.com', role: 'procurement_head', department: 'Procurement', avatar: 'HS', status: 'Active' }
+{ id: 'usr-014', name: 'Neha Gupta', email: 'neha.gupta@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'NG', status: 'Active' },
+  { id: 'usr-022', name: 'Harish Solanki', email: 'harish.solanki@rayzon.com', role: 'procurement_head', department: 'Procurement', avatar: 'HS', status: 'Active' },
+{ id: 'usr-025', name: 'Rohan Desai', email: 'rohan.desai@rayzon.com', role: 'manager', department: 'Procurement Executive', avatar: 'RD', status: 'Active', managerId: 'usr-022', managerName: 'Harish Solanki', team: 'Procurement', isManager: true, hierarchyLevel: 2 }
 ];
 
 const publicUser = (user) => (typeof user.toJSON === 'function' ? user.toJSON() : user);

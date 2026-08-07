@@ -36,7 +36,7 @@ const JOURNEY_LABELS = {
     { title: 'EXIM Manager Approval', role: 'EXIM Manager' },
     { title: 'Finance Lead Approval', role: 'Finance Lead' }
   ],
-  'Advance Payment': [
+'Advance Payment': [
     { title: 'Purchase HOD Approval', role: 'Procurement_head' },
     { title: 'Exim HOD Approval', role: 'Exim-Manager' },
     { title: 'MD Approval', role: 'Md' }

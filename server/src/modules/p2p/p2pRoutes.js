@@ -564,14 +564,12 @@ function getDefaultWorkflow(moduleType, amount) {
 
   if (isRfq) {
     return buildWorkflowResult({ id: 'WF-BOOTSTRAP-RFQ', name: 'RFQ Award Standard Approval', version: 1 }, [
-      { step: 1, title: 'Procurement Head Approval', roleName: 'Procurement Head', roleKey: 'procurement_head' },
       { step: 2, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance_lead' }
     ]);
   }
 
   if (isBl) {
     return buildWorkflowResult({ id: 'WF-BOOTSTRAP-BL', name: 'BL Freight Invoice Standard Approval', version: 1 }, [
-      { step: 1, title: 'EXIM Manager Approval', roleName: 'EXIM Manager', roleKey: 'exim-manager' },
       { step: 2, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance' }
     ]);
   }
@@ -584,7 +582,6 @@ function getDefaultWorkflow(moduleType, amount) {
 
   if (moduleName.toLowerCase().includes('custom')) {
     return buildWorkflowResult({ id: 'WF-BOOTSTRAP-CUSTOM', name: 'Custom Duty Standard Approval', version: 1 }, [
-      { step: 1, title: 'EXIM Manager Approval', roleName: 'EXIM Manager', roleKey: 'exim' },
       { step: 2, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance' }
     ]);
   }

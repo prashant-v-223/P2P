@@ -159,9 +159,40 @@ async function getStepAssignment(approval, stepNumber) {
     step = JSON.parse(approval.workflowSteps || '[]').find((item) => item.step === stepNumber);
   } catch (_) {}
   const role = String(step?.roleKey || step?.roleName || '').replace(/[\s-]+/g, '_').toLowerCase();
-  if (!role || role.includes('finance') || role === 'md' || role.includes('director')) {
+  if (!role || role.includes('finance') || role === 'md' || role.includes('director') || role.includes('cfo')) {
     return { assignedApprover: null, assignedApproverName: null, assignedApproverRole: role || null };
   }
+
+  // Manager step: assign the requester's actual reporting manager so the right person acts.
+  if (role === 'manager' || role.includes('team manager')) {
+    if (approval.requestedById) {
+      const requester = await User.findOne({ id: approval.requestedById }, { id: 1, name: 1, role: 1, managerId: 1, managerName: 1, team: 1 }).lean();
+      if (requester?.managerId) {
+        const manager = await User.findOne({ id: requester.managerId, status: 'Active' }, { id: 1, name: 1, role: 1 }).lean();
+        if (manager) {
+          return {
+            assignedApprover: manager.id,
+            assignedApproverName: manager.name,
+            assignedApproverRole: manager.role || role
+          };
+        }
+      }
+      // Fallback: any active manager on the requester's team.
+      if (requester?.team) {
+        const teamManager = await User.findOne({ status: 'Active', team: requester.team, isManager: true }, { id: 1, name: 1, role: 1 }).lean();
+        if (teamManager) {
+          return {
+            assignedApprover: teamManager.id,
+            assignedApproverName: teamManager.name,
+            assignedApproverRole: teamManager.role || role
+          };
+        }
+      }
+    }
+    return { assignedApprover: null, assignedApproverName: null, assignedApproverRole: role || null };
+  }
+
+  // Procurement Head / EXIM Manager step: pick the department head on the requester's team.
   const manager = await User.findOne({ status: 'Active', team: approval.requestedByTeam, role: { $in: ['procurement_head', 'exim-manager'] } }, { id: 1, name: 1, role: 1 }).lean();
   return {
     assignedApprover: manager?.id || null,

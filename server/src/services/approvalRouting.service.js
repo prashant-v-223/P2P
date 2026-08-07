@@ -58,8 +58,17 @@ async function findUserByRole(roleKey, { team = null, department = null } = {}) 
 }
 
 async function findManagerOf(requester) {
-  if (!requester?.managerId) return null;
-  return User.findOne({ id: requester.managerId, status: 'Active' }).lean();
+  if (!requester) return null;
+  if (requester?.managerId) {
+    const direct = await User.findOne({ id: requester.managerId, status: 'Active' }).lean();
+    if (direct) return direct;
+  }
+  // Fallback: any explicit manager on the requester's team.
+  if (requester?.team) {
+    const teamManager = await User.findOne({ status: 'Active', team: requester.team, isManager: true }).lean();
+    if (teamManager) return teamManager;
+  }
+  return null;
 }
 
 async function findProcurementHead() {
