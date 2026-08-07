@@ -109,7 +109,19 @@ export default function OverviewDashboard() {
   const rfqFunnel = data?.rfqFunnel || { draft: 0, sent: 0, quoted: 0, awarded: 0, closed: 0, total: 0 };
   const blPipeline = data?.blPipeline || { assigned: 0, cleared: 0, invPending: 0, pmtReq: 0, approved: 0, paid: 0, total: 0 };
   
-  const pendingApprovals = data?.recentPendingApprovals || [];
+  const { pendingQueue = [], pendingCount = 0 } = useSelector((state) => state.approvals || {});
+
+  // Actionable pending count & queue for the user's role (matching sidebar count)
+  const displayPendingCount = pendingCount > 0 ? pendingCount : (data?.recentPendingApprovals ? data.recentPendingApprovals.length : 0);
+
+  const displayPendingList = (pendingQueue && pendingQueue.length > 0)
+    ? pendingQueue.map(a => ({
+        id: a.id || a.referenceId || a._id,
+        stepText: a.status || `Step ${a.currentStep || 1}`,
+        dateText: a.submittedAt ? new Date(a.submittedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'Recent'
+      }))
+    : (data?.recentPendingApprovals || []);
+
   const recentActivity = data?.recentActivity || [];
 
   return (
@@ -177,9 +189,9 @@ export default function OverviewDashboard() {
           <div className="flex items-start justify-between">
             <div>
               <p className="text-[11px] font-bold text-amber-700 uppercase tracking-wider">PENDING APPROVALS</p>
-              <p className="text-3xl font-black text-slate-900 mt-2">{stats.pendingApprovals}</p>
+              <p className="text-3xl font-black text-slate-900 mt-2">{displayPendingCount}</p>
               <span className="inline-block mt-2 px-2.5 py-0.5 rounded-full bg-amber-100/80 text-amber-700 text-[11px] font-bold">
-                {stats.pendingApprovalsSub}
+                {displayPendingCount} awaiting your action
               </span>
             </div>
             <div className="w-10 h-10 rounded-2xl bg-amber-100 flex items-center justify-center text-amber-600 shrink-0">
@@ -641,7 +653,7 @@ export default function OverviewDashboard() {
               <Lock className="w-4 h-4 text-amber-500" />
               <h3 className="text-sm font-bold text-slate-800">Pending Approvals</h3>
               <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">
-                {pendingApprovals.length}
+                {displayPendingList.length}
               </span>
             </div>
             <button
@@ -653,8 +665,8 @@ export default function OverviewDashboard() {
           </div>
 
           <div className="space-y-3 max-h-[280px] overflow-y-auto pr-1">
-            {pendingApprovals.length > 0 ? (
-              pendingApprovals.map((item, idx) => (
+            {displayPendingList.length > 0 ? (
+              displayPendingList.map((item, idx) => (
                 <div 
                   key={idx} 
                   className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50/70 border border-slate-100 hover:bg-slate-100/70 transition"

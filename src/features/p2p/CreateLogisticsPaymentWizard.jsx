@@ -1,10 +1,13 @@
-// CreateLogisticsPaymentWizard.jsx - Exact Visual Replica of p2p.rayzon.one/admin/logistics-payments/create
+// CreateLogisticsPaymentWizard.jsx - Styled with Custom UI Components
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
-import { Building2, FileText, Paperclip, Send, ChevronLeft } from 'lucide-react';
+import { CustomInput } from '../../components/ui/custom-input';
+import { Button } from '../../components/ui/button';
+import { SearchableSelect } from '../../components/ui/searchable-select';
+import { Building2, FileText, Paperclip, Send, ChevronLeft, MapPin, Calendar, DollarSign, ShieldCheck } from 'lucide-react';
 
 export default function CreateLogisticsPaymentWizard() {
   const navigate = useNavigate();
@@ -53,12 +56,13 @@ export default function CreateLogisticsPaymentWizard() {
     loadData();
   }, []);
 
-  const handleProviderChange = (e) => {
-    const val = e.target.value;
+  const handleProviderChange = (val) => {
     setProviderId(val);
     const target = providers.find(p => p.id === val || p.vendorId === val);
     if (target) {
       setProviderName(target.companyName || target.name);
+    } else if (val === 'dhl') {
+      setProviderName('Fast Forward Logistics India Privat');
     }
   };
 
@@ -77,19 +81,19 @@ export default function CreateLogisticsPaymentWizard() {
 
     setSubmitting(true);
     try {
-      const res = await apiFetch('/api/p2p/bl-invoices', {
+      const res = await apiFetch('/api/p2p/logistics-payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           blNumber: blId || 'BL-LOGISTICS',
           category: 'freight',
-          typeDisplay: 'Freight Invoice',
-          source: 'Vendor',
+          typeDisplay: 'Logistics Freight Payment',
+          source: 'Logistics',
           invoiceNumber,
           vendorName: providerName || 'Logistics Provider',
           amount: Number(amount),
           currency,
-          remarks: `${remarks} ${sourceLocation ? `[${sourceLocation} -> ${destinationLocation}]` : ''}`,
+          remarks: `${remarks} ${sourceLocation ? `[${sourceLocation} -> ${destinationLocation}]` : ''}`.trim(),
           documents: files.map(f => ({ name: f.name, size: f.size }))
         })
       });
@@ -108,20 +112,36 @@ export default function CreateLogisticsPaymentWizard() {
     }
   };
 
+  const providerOptions = providers.length > 0
+    ? providers.map(p => ({ label: p.companyName || p.name, value: p.id || p.vendorId }))
+    : [{ label: 'Fast Forward Logistics India Privat', value: 'dhl' }];
+
+  const blOptions = [
+    { label: 'Optional link with BL entry', value: '' },
+    ...blEntries.map(b => ({ label: `${b.blNumber} — ${b.vendorName || 'Logistics Vendor'}`, value: b.blNumber || b.id }))
+  ];
+
   return (
     <div className="min-h-screen bg-[#f8fafc] py-6 px-4 font-sans text-slate-800 antialiased text-left pb-24">
       
       {/* Top Header Navigation */}
       <div className="max-w-3xl mx-auto mb-4 flex items-center justify-between">
         <button
+          type="button"
           onClick={() => navigate('/p2p/logistics-payments')}
-          className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-slate-900 transition"
+          className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 cursor-pointer"
         >
-          <ChevronLeft className="w-4 h-4" /> Rayzon P2P
+          <ChevronLeft className="w-4 h-4" />
+          <span>Rayzon P2P</span>
         </button>
+
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-teal-50 text-[#0d7676] border border-teal-200">
+          <ShieldCheck className="w-3 h-3" />
+          Logistics Payout Form
+        </span>
       </div>
 
-      <div className="max-w-3xl mx-auto space-y-6">
+      <form onSubmit={handleSubmit} className="max-w-3xl mx-auto space-y-6">
         
         {/* CARD 1: PROVIDER & ROUTE */}
         <div className="bg-white rounded-2xl border border-slate-200/90 p-6 shadow-2xs space-y-4">
@@ -135,65 +155,42 @@ export default function CreateLogisticsPaymentWizard() {
               <label className="text-xs font-bold text-slate-700">
                 Logistics Provider <span className="text-rose-500">*</span>
               </label>
-              <select
+              <SearchableSelect
+                options={providerOptions}
                 value={providerId}
                 onChange={handleProviderChange}
-                className="w-full px-3.5 py-2.5 bg-[#f8fafc] border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:border-[#0d7676] outline-none"
-              >
-                <option value="">Select logistics provider...</option>
-                {providers.map((p, idx) => (
-                  <option key={idx} value={p.id || p.vendorId}>
-                    {p.companyName || p.name}
-                  </option>
-                ))}
-                {providers.length === 0 && (
-                  <option value="dhl">Fast Forward Logistics India Privat</option>
-                )}
-              </select>
+                placeholder="Select logistics provider..."
+              />
             </div>
 
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-700">BL Entry</label>
-              <select
+              <SearchableSelect
+                options={blOptions}
                 value={blId}
-                onChange={(e) => setBlId(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-[#f8fafc] border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:border-[#0d7676] outline-none"
-              >
-                <option value="">Optional link with BL entry</option>
-                {blEntries.map((b, idx) => (
-                  <option key={idx} value={b.blNumber || b.id}>
-                    {b.blNumber} — {b.vendorName || 'Logistics Vendor'}
-                  </option>
-                ))}
-              </select>
+                onChange={(val) => setBlId(val)}
+                placeholder="Optional link with BL entry..."
+              />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700">
-                  Source Location <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={sourceLocation}
-                  onChange={(e) => setSourceLocation(e.target.value)}
-                  placeholder="Plant / warehouse / port"
-                  className="w-full px-3.5 py-2.5 bg-[#f8fafc] border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:border-[#0d7676] outline-none"
-                />
-              </div>
+              <CustomInput
+                label="Source Location"
+                required={true}
+                value={sourceLocation}
+                onChange={(e) => setSourceLocation(e.target.value)}
+                placeholder="Plant / warehouse / port"
+                leftIcon={MapPin}
+              />
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700">
-                  Destination Location <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={destinationLocation}
-                  onChange={(e) => setDestinationLocation(e.target.value)}
-                  placeholder="Plant / branch / delivery point"
-                  className="w-full px-3.5 py-2.5 bg-[#f8fafc] border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:border-[#0d7676] outline-none"
-                />
-              </div>
+              <CustomInput
+                label="Destination Location"
+                required={true}
+                value={destinationLocation}
+                onChange={(e) => setDestinationLocation(e.target.value)}
+                placeholder="Plant / branch / delivery point"
+                leftIcon={MapPin}
+              />
             </div>
           </div>
         </div>
@@ -206,72 +203,58 @@ export default function CreateLogisticsPaymentWizard() {
           </div>
 
           <div className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700">
-                Invoice Number <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={invoiceNumber}
-                onChange={(e) => setInvoiceNumber(e.target.value)}
-                placeholder="Enter transporter invoice number"
-                className="w-full px-3.5 py-2.5 bg-[#f8fafc] border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:border-[#0d7676] outline-none"
+            <CustomInput
+              label="Invoice Number"
+              required={true}
+              value={invoiceNumber}
+              onChange={(e) => setInvoiceNumber(e.target.value)}
+              placeholder="Enter transporter invoice number"
+              leftIcon={FileText}
+            />
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <CustomInput
+                type="date"
+                label="Invoice Date"
+                required={true}
+                value={invoiceDate}
+                onChange={(e) => setInvoiceDate(e.target.value)}
+              />
+
+              <CustomInput
+                type="date"
+                label="Payment Due Date"
+                required={true}
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
               />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700">
-                  Invoice Date <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="date"
-                  value={invoiceDate}
-                  onChange={(e) => setInvoiceDate(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-[#f8fafc] border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:border-[#0d7676] outline-none"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700">
-                  Payment Due Date <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="date"
-                  value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-[#f8fafc] border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:border-[#0d7676] outline-none"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700">
-                  Amount <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  placeholder="Enter invoice amount"
-                  className="w-full px-3.5 py-2.5 bg-[#f8fafc] border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:border-[#0d7676] outline-none"
-                />
-              </div>
+              <CustomInput
+                type="number"
+                label="Amount"
+                required={true}
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="Enter invoice amount"
+                leftIcon={DollarSign}
+              />
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-700">
                   Currency <span className="text-rose-500">*</span>
                 </label>
-                <select
+                <SearchableSelect
+                  options={[
+                    { label: '🇮🇳 INR (Indian Rupee)', value: 'INR' },
+                    { label: '🇺🇸 USD (US Dollar)', value: 'USD' },
+                    { label: '🇪🇺 EUR (Euro)', value: 'EUR' }
+                  ]}
                   value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-[#f8fafc] border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:border-[#0d7676] outline-none"
-                >
-                  <option value="INR">🇮🇳 INR (Indian Rupee)</option>
-                  <option value="USD">🇺🇸 USD (US Dollar)</option>
-                  <option value="EUR">🇪🇺 EUR (Euro)</option>
-                </select>
+                  onChange={(val) => setCurrency(val)}
+                  searchable={false}
+                />
               </div>
             </div>
 
@@ -279,36 +262,33 @@ export default function CreateLogisticsPaymentWizard() {
               <label className="text-xs font-bold text-slate-700">
                 Payment Mode <span className="text-rose-500">*</span>
               </label>
-              <select
+              <SearchableSelect
+                options={[
+                  { label: 'NEFT / RTGS', value: 'NEFT' },
+                  { label: 'Wire Transfer', value: 'Wire' },
+                  { label: 'Cheque', value: 'Cheque' }
+                ]}
                 value={paymentMode}
-                onChange={(e) => setPaymentMode(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-[#f8fafc] border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:border-[#0d7676] outline-none"
-              >
-                <option value="NEFT">NEFT / RTGS</option>
-                <option value="Wire">Wire Transfer</option>
-                <option value="Cheque">Cheque</option>
-              </select>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700">HSN / SAC Code</label>
-              <input
-                type="text"
-                value={hsnCode}
-                onChange={(e) => setHsnCode(e.target.value)}
-                placeholder="Select house base..."
-                className="w-full px-3.5 py-2.5 bg-[#f8fafc] border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:border-[#0d7676] outline-none"
+                onChange={(val) => setPaymentMode(val)}
+                searchable={false}
               />
             </div>
 
+            <CustomInput
+              label="HSN / SAC Code"
+              value={hsnCode}
+              onChange={(e) => setHsnCode(e.target.value)}
+              placeholder="Select house base or HSN code..."
+            />
+
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700">Remarks</label>
+              <label className="block text-xs font-bold text-slate-700">Remarks</label>
               <textarea
                 rows={3}
                 value={remarks}
                 onChange={(e) => setRemarks(e.target.value)}
-                placeholder="Add transport remarks, loading details, or billing notes"
-                className="w-full px-3.5 py-2.5 bg-[#f8fafc] border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:border-[#0d7676] outline-none resize-none"
+                placeholder="Add transport remarks, loading details, or billing notes..."
+                className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:border-[#0d7676] focus:ring-2 focus:ring-teal-500/20 outline-none resize-none transition shadow-2xs"
               />
             </div>
           </div>
@@ -331,7 +311,7 @@ export default function CreateLogisticsPaymentWizard() {
             <div className="flex flex-col items-center justify-center gap-2">
               <Paperclip className="w-5 h-5 text-slate-400" />
               <p className="text-xs font-semibold text-slate-600">Upload invoice and supporting logistics documents.</p>
-              <p className="text-[11px] text-slate-400">PDF, JPG, PNG — max 10MB each</p>
+              <p className="text-[11px] text-slate-400">PDF, JPG, PNG — max 10MB each (Stored via AWS S3)</p>
             </div>
           </div>
 
@@ -346,25 +326,23 @@ export default function CreateLogisticsPaymentWizard() {
 
         {/* BOTTOM ACTION BUTTONS */}
         <div className="flex items-center justify-end gap-3 pt-2">
-          <button
+          <Button
             type="button"
+            variant="secondary"
             onClick={() => navigate('/p2p/logistics-payments')}
-            className="px-5 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition border border-transparent"
           >
             Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={submitting}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] text-white text-xs font-bold shadow-xs transition disabled:opacity-50"
+          </Button>
+          <Button
+            type="submit"
+            loading={submitting}
           >
             <Send className="w-3.5 h-3.5" />
-            {submitting ? 'Submitting...' : 'Submit for Approval'}
-          </button>
+            <span>Submit for Approval</span>
+          </Button>
         </div>
 
-      </div>
+      </form>
     </div>
   );
 }

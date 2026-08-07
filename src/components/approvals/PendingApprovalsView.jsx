@@ -225,19 +225,30 @@ export default function PendingApprovalsView() {
   const types = useMemo(() => ['All', ...Object.keys(JOURNEY_LABELS)], []);
   const hasActiveFilters = Boolean(query || type !== 'All' || onlyMine);
 
+  const [actionableCount, setActionableCount] = useState(0);
+  const [allCount, setAllCount] = useState(0);
+
   const fetchApprovals = useCallback(async () => {
     try {
       setLoading(true);
       const params = new URLSearchParams(searchParams);
-      // Always send logged-in user's role so backend filters correctly
       params.set('role', currentUserRole);
+
+      // Default to actionable scope if not specified or when 'mine' is true
+      if (!params.get('scope')) {
+        params.set('scope', onlyMine ? 'actionable' : 'actionable');
+      }
 
       const res = await apiFetch(`/api/approvals/pending?${params.toString()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Unable to load approvals.');
 
       setApprovals(data.approvals || []);
-      dispatch(setPendingCount(data.total || 0));
+      const aCount = data.actionableCount ?? data.total ?? (data.approvals || []).length;
+      setActionableCount(aCount);
+      setAllCount(data.allCount ?? data.total ?? (data.approvals || []).length);
+
+      dispatch(setPendingCount(aCount));
 
       setPagination({
         total: data.total || 0,
@@ -251,7 +262,7 @@ export default function PendingApprovalsView() {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, currentUserRole]);
+  }, [searchParams, currentUserRole, onlyMine]);
 
   useEffect(() => {
     fetchApprovals();
@@ -388,13 +399,21 @@ export default function PendingApprovalsView() {
 
         <button
           type="button"
-          onClick={() => updateFilters({ mine: onlyMine ? null : 'true' })}
-          aria-pressed={onlyMine}
-          className={`h-9 rounded-lg border px-3 text-xs font-bold transition-colors ${
-            onlyMine ? 'border-teal-500 bg-teal-50 text-teal-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+          onClick={() => {
+            const currentScope = searchParams.get('scope') || 'actionable';
+            const nextScope = currentScope === 'all' ? 'actionable' : 'all';
+            updateFilters({ scope: nextScope, mine: nextScope === 'actionable' ? 'true' : null });
+          }}
+          className={`h-9 rounded-lg border px-3 text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer ${
+            (searchParams.get('scope') || 'actionable') === 'actionable'
+              ? 'border-teal-500 bg-teal-50 text-teal-700 font-bold'
+              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
           }`}
         >
-          Needs your action
+          <span>{(searchParams.get('scope') || 'actionable') === 'actionable' ? 'Needs Your Action' : 'All System Pending'}</span>
+          <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-teal-100 text-teal-800 font-extrabold">
+            {(searchParams.get('scope') || 'actionable') === 'actionable' ? (actionableCount || 0) : (allCount || 0)}
+          </span>
         </button>
 
         <div className="w-32">

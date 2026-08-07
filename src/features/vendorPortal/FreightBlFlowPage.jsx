@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, CheckCircle2, FileText, Loader2, Plus, Ship, Search, Filter, FileCheck } from 'lucide-react';
+import { AlertCircle, ArrowLeft, CheckCircle2, FileText, Loader2, Plus, Ship, Search, Filter, FileCheck, Download } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import { CustomSelect } from '../../components/ui/custom-select';
 import { CustomDatePicker } from '../../components/ui/custom-date-picker';
 import { CustomFileUpload } from '../../components/ui/custom-file-upload';
 import { ServerPagination } from '../../components/ui/server-pagination';
+import { downloadDocumentFile } from '../../utils/downloadHelper';
 
 const inputClass = 'w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-medium outline-none focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-100';
 const statusLabel = (value) => ({ submitted: 'Submitted', exim_review: 'EXIM Review', assigned_to_agent: 'With Customs Agent', custom_cleared: 'Customs Cleared', invoice_pending: 'Invoice Pending' }[value] || String(value || '').replaceAll('_', ' '));
@@ -792,6 +793,7 @@ export function FreightBlDetailPage() {
                     <th className="px-3.5 py-2">UPLOADED BY</th>
                     <th className="px-3.5 py-2">FILENAME</th>
                     <th className="px-3.5 py-2">DATE</th>
+                    <th className="px-3.5 py-2 text-right">ACTION</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-800 font-medium">
@@ -803,6 +805,21 @@ export function FreightBlDetailPage() {
                       <td className="px-3.5 py-2 font-bold text-amber-600">{doc.uploadedBy || 'You'}</td>
                       <td className="px-3.5 py-2 font-mono text-slate-500 max-w-[130px] truncate">{doc.fileUrl || doc.fileName}</td>
                       <td className="px-3.5 py-2 text-slate-400 font-semibold text-[10px]">{doc.date || '03 Aug 2026, 11:58 am'}</td>
+                      <td className="px-3.5 py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const fileName = doc.fileUrl || doc.fileName || 'Document.pdf';
+                            showToast({ title: 'Downloading Document', description: `Initiating download for ${fileName}...`, type: 'info' });
+                            downloadDocumentFile(fileName);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-[#0d7676] font-extrabold text-[11px] border border-teal-200 transition cursor-pointer"
+                          title="Download document"
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>Download</span>
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

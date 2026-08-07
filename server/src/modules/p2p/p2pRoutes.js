@@ -8,6 +8,7 @@ import { Approval } from '../../models/Approval.js';
 import { Workflow } from '../../models/Workflow.js';
 import { RfqHeader, RfqQuote, RfqBlEntry, CustomDutyPayment } from '../../models/RfqLogistics.js';
 import { LogisticsPayment } from '../../models/LogisticsPayment.js';
+import { BlInvoice } from '../../models/BlInvoice.js';
 import { Vendor } from '../../models/Vendor.js';
 import { LogisticsProvider } from '../../models/LogisticsProvider.js';
 import { CustomAgent } from '../../models/CustomAgent.js';
@@ -152,14 +153,14 @@ router.get('/dashboard/analytics', optionalAuth, async (req, res) => {
       RfqHeader.countDocuments({ status: 'awarded' }).catch(() => 0),
       RfqHeader.countDocuments({ status: 'draft' }).catch(() => 0),
       RfqHeader.countDocuments({ status: { $in: ['published', 'active', 'open'] } }).catch(() => 0),
-      RfqBlEntry.countDocuments().catch(() => 0),
-      RfqBlEntry.countDocuments({ status: { $in: ['cleared', 'Customs Cleared', 'Approved'] } }).catch(() => 0),
+      BlInvoice.countDocuments().catch(() => 0),
+      BlInvoice.countDocuments({ status: { $in: ['cleared', 'Customs Cleared', 'Approved', 'Approved & Dispatched'] } }).catch(() => 0),
       Vendor.countDocuments().catch(() => 0),
       User.countDocuments({ status: 'Active' }).catch(() => 0),
       AdvancePayment.find().lean().catch(() => []),
       InvoicePayment.find().lean().catch(() => []),
       CustomDutyPayment.find().lean().catch(() => []),
-      RfqBlEntry.find().lean().catch(() => []),
+      BlInvoice.find().lean().catch(() => []),
       Approval.find({ status: { $nin: ['Approved & Dispatched', 'Approved', 'Rejected'] } }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
       Approval.find().lean().catch(() => []),
       PurchaseOrder.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
@@ -370,8 +371,8 @@ router.get('/dashboard/analytics', optionalAuth, async (req, res) => {
       },
       blPipeline: {
         assigned: blInvoicesList.filter(b => /assign/i.test(b.status || '')).length,
-        cleared: blInvoicesList.filter(b => /clear/i.test(b.status || '')).length,
-        invPending: blInvoicesList.filter(b => /pending|draft/i.test(b.status || '')).length,
+        cleared: blInvoicesList.filter(b => /clear|customs/i.test(b.status || '')).length,
+        invPending: blInvoicesList.filter(b => /pending|draft|exim/i.test(b.status || '')).length,
         pmtReq: blInvoicesList.filter(b => /pmt|req|payment/i.test(b.status || '')).length,
         approved: blInvoicesList.filter(b => /approved/i.test(b.status || '')).length,
         paid: blInvoicesList.filter(b => /paid|dispatched/i.test(b.status || '')).length,
@@ -572,6 +573,13 @@ function getDefaultWorkflow(moduleType, amount) {
   if (isInvoice) {
     return buildWorkflowResult({ id: 'WF-BOOTSTRAP-INVOICE', name: 'Invoice Payment Standard Approval', version: 1 }, [
       { step: 1, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance_lead' }
+    ]);
+  }
+
+  if (moduleName.toLowerCase().includes('custom')) {
+    return buildWorkflowResult({ id: 'WF-BOOTSTRAP-CUSTOM', name: 'Custom Duty Standard Approval', version: 1 }, [
+      { step: 1, title: 'EXIM Manager Approval', roleName: 'EXIM Manager', roleKey: 'exim' },
+      { step: 2, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance' }
     ]);
   }
 
@@ -2261,7 +2269,9 @@ router.get('/vendor-rfqs/:id/bl-entries/:blId', authenticateToken, async (req, r
     const entry = await RfqBlEntry.findOne({ rfqId: context.rfq.rfqId, $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] }).lean();
     const keys = freightVendorKeys(context.vendor);
     if (!entry || ![entry.vendorId, entry.vendorName].map(normaliseInviteValue).some((key) => keys.includes(key))) return res.status(404).json({ success: false, error: 'BL entry not found.' });
-    const rawInvoices = await LogisticsPayment.find({ blId: entry.blId }).sort({ createdAt: -1 }).lean();
+    const blCollInvoices = await BlInvoice.find({ blId: entry.blId }).sort({ createdAt: -1 }).lean();
+    const legacyInvoices = await LogisticsPayment.find({ blId: entry.blId }).sort({ createdAt: -1 }).lean();
+    const rawInvoices = [...blCollInvoices, ...legacyInvoices];
     const seenDocuments = new Set();
     const documents = (entry.documents || []).filter((doc) => {
       const key = `${doc.docType || ''}|${doc.fileUrl || ''}`.toLowerCase();
@@ -2294,7 +2304,6 @@ router.post('/vendor-rfqs/:id/bl-entries/:blId/invoices', authenticateToken, asy
     const numAmount = Number(amount);
     const curr = String(req.body.currency || 'INR').toUpperCase();
     const blWorkflow = await resolveWorkflowFromDB('BL Freight Invoice', numAmount, { currency: curr });
-console.log("blWorkflow",blWorkflow);
 
     const approval = await createApprovalRecord({
       referenceId: ref,
@@ -2732,11 +2741,19 @@ router.post('/rfqs/:id/award', authenticateToken, async (req, res) => {
 });
 
 // ─── CUSTOMS BROKER & BL ASSIGNMENT ROUTES ──────────────────────────────────
-router.get('/exim/bl-entries', authenticateToken, async (req, res) => {
+router.get('/custom-agents/bl-entries', optionalAuth, async (req, res) => {
   try {
     const entries = await RfqBlEntry.find().sort({ createdAt: -1 }).lean();
     const agents = await CustomAgent.find({ status: 'Active' }).select('agentId agencyName contactPerson email').sort({ agencyName: 1 }).lean();
-    return res.json({ success: true, data: entries, agents });
+    return res.json({ success: true, blEntries: entries, data: entries, agents });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.get('/exim/bl-entries', optionalAuth, async (req, res) => {
+  try {
+    const entries = await RfqBlEntry.find().sort({ createdAt: -1 }).lean();
+    const agents = await CustomAgent.find({ status: 'Active' }).select('agentId agencyName contactPerson email').sort({ agencyName: 1 }).lean();
+    return res.json({ success: true, data: entries, blEntries: entries, agents });
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -2972,7 +2989,7 @@ router.post('/customs-agent/invoices', authenticateToken, async (req, res) => {
       wf: blWorkflow
     });
 
-    const payment = await LogisticsPayment.create({
+    const payment = await BlInvoice.create({
       logisticsPaymentId: ref,
       referenceNumber: ref,
       blId: bl.blId,
@@ -3002,9 +3019,222 @@ router.post('/customs-agent/invoices', authenticateToken, async (req, res) => {
   }
 });
 
-router.get('/bl-invoices', optionalAuth, async (req, res) => {
+// Dedicated Logistics Payments Endpoints - Returns ONLY Logistics Payments (LOG-), excluding BL Invoices
+router.get('/logistics-payments', optionalAuth, async (req, res) => {
   try {
     let items = await LogisticsPayment.find().sort({ createdAt: -1 }).lean();
+
+    const q = String(req.query.q || '').toLowerCase().trim();
+    const statusFilter = String(req.query.status || 'All').trim();
+    const includeBli = String(req.query.includeBli || 'false').toLowerCase() === 'true';
+
+    let filtered = await Promise.all(items.map(async (item) => {
+      const ref = item.referenceNumber || item.logisticsPaymentId || '';
+      const isLOG = ref.startsWith('LOG-') || item.source === 'Logistics' || item.source === 'Logistics Payment';
+      const isBLI = ref.startsWith('BLI-');
+
+      const typeDisplay = item.typeDisplay || (isLOG ? 'Logistics Freight Payment' : 'Freight Invoice');
+      const source = item.source || (isLOG ? 'Logistics' : 'Vendor');
+      const amount = item.totalAmount || item.amount || 0;
+      const currency = item.currency || 'INR';
+
+      const app = await Approval.findOne({ $or: [{ id: ref }, { referenceNumber: ref }] }).lean();
+
+      // Logistics Payments (LOG) are directly approved without EXIM approval workflow
+      let rawStatus = app?.status || item.status || 'Approved';
+      let status = isLOG ? (rawStatus.toLowerCase().includes('pending') ? 'Approved' : rawStatus) : rawStatus;
+      let currentStep = isLOG ? 1 : (app?.currentStep || item.currentStep || 1);
+      let totalSteps = isLOG ? 1 : (app?.totalSteps || item.totalSteps || 1);
+      let workflowSteps = null;
+      if (app?.workflowSteps) {
+        try { workflowSteps = JSON.parse(app.workflowSteps); } catch (_) {}
+      }
+
+      return {
+        ...item,
+        id: item.logisticsPaymentId || item._id,
+        referenceNumber: ref,
+        recordType: isLOG ? 'LOG' : (isBLI ? 'BLI' : 'LOG'),
+        typeDisplay,
+        source,
+        amount,
+        currency,
+        status,
+        currentStep,
+        totalSteps,
+        currentSlab: isLOG ? 'Direct Approval (No Workflow)' : (app?.currentSlab || 'BL Freight Invoice Workflow'),
+        workflowSteps: app?.workflowSteps,
+        parsedSteps: workflowSteps,
+        submittedAt: item.submittedAt || item.createdAt
+      };
+    }));
+
+    // Filter out BLI records completely unless explicitly requested
+    if (!includeBli) {
+      filtered = filtered.filter(i => i.recordType === 'LOG');
+    }
+
+    if (q) {
+      filtered = filtered.filter(i =>
+        i.referenceNumber?.toLowerCase().includes(q) ||
+        i.invoiceNumber?.toLowerCase().includes(q) ||
+        i.blNumber?.toLowerCase().includes(q) ||
+        i.vendorName?.toLowerCase().includes(q) ||
+        i.typeDisplay?.toLowerCase().includes(q)
+      );
+    }
+
+    if (statusFilter && statusFilter !== 'All') {
+      filtered = filtered.filter(i => (i.status || '').toLowerCase() === statusFilter.toLowerCase());
+    }
+
+    const stats = {
+      total: filtered.length,
+      approved: filtered.filter(i => (i.status || '').toLowerCase() === 'approved').length,
+      pending: filtered.filter(i => (i.status || '').toLowerCase().includes('pending')).length,
+      rejected: filtered.filter(i => (i.status || '').toLowerCase() === 'rejected').length
+    };
+
+    return res.json({ success: true, payments: filtered, invoices: filtered, stats });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/logistics-payments', authenticateToken, async (req, res) => {
+  try {
+    const { blNumber, typeDisplay, category, source, invoiceNumber, vendorName, amount, currency, remarks } = req.body;
+    if (!invoiceNumber || !amount || Number(amount) <= 0) {
+      return res.status(400).json({ success: false, error: 'Invoice Number and a valid positive amount are required.' });
+    }
+
+    const numAmount = Number(amount);
+    const ref = `LOG-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    // Direct Approval for Logistics Payments (no EXIM workflow required)
+    const approval = await createApprovalRecord({
+      referenceId: ref,
+      type: 'Logistics Payment',
+      vendorName: vendorName || 'Logistics Provider',
+      amountFormatted: `${currency || 'INR'} ${numAmount}`,
+      poRef: blNumber || 'N/A',
+      requestedBy: req.user?.name || req.user?.email || 'System User',
+      requestedById: req.user?.id || req.user?.email,
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: { blNumber: blNumber || '', invoiceNumber, category: category || 'freight', typeDisplay: typeDisplay || 'Logistics Freight Payment', source: source || 'Logistics', amount: numAmount },
+      wf: { status: 'Approved', currentStep: 1, totalSteps: 1, steps: [] }
+    });
+
+    // Ensure approval record is created directly as Approved
+    if (approval) {
+      approval.status = 'Approved';
+      approval.currentStep = 1;
+      approval.totalSteps = 1;
+      await approval.save().catch(() => {});
+    }
+
+    const payment = await LogisticsPayment.create({
+      logisticsPaymentId: ref,
+      referenceNumber: ref,
+      blNumber: blNumber ? String(blNumber).trim().toUpperCase() : 'N/A',
+      category: category || 'freight',
+      typeDisplay: typeDisplay || 'Logistics Freight Payment',
+      source: source || 'Logistics',
+      invoiceNumber: String(invoiceNumber).trim().toUpperCase(),
+      vendorId: `VEND-${Math.floor(100 + Math.random() * 900)}`,
+      vendorName: vendorName || 'Logistics Provider',
+      amount: numAmount,
+      totalAmount: numAmount,
+      currency: currency || 'INR',
+      status: 'Approved',
+      currentStep: 1,
+      totalSteps: 1,
+      remarks: remarks || '',
+      submittedAt: new Date(),
+      createdBy: req.user?.name || req.user?.email || 'System User',
+      actionHistory: [
+        { action: 'submit', step: 1, role: 'Requester', actionedBy: req.user?.name || req.user?.email || 'User', actionedAt: new Date(), remarks: 'Submitted Logistics Payment (Directly Approved)' }
+      ]
+    });
+
+    broadcastEvent('LOGISTICS_PAYMENT_SUBMITTED', { id: payment.logisticsPaymentId, referenceNumber: ref, blNumber, amount: numAmount, status: 'Approved' });
+
+    return res.status(201).json({ success: true, message: 'Logistics Payment submitted and directly approved.', payment, approval });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Bulk Delete All BLI Data
+router.delete('/logistics-payments/clear-bli', authenticateToken, async (req, res) => {
+  try {
+    const bliQuery = {
+      $or: [
+        { referenceNumber: /^BLI-/ },
+        { logisticsPaymentId: /^BLI-/ },
+        { category: 'bl_invoice' }
+      ]
+    };
+
+    const countBlColl = await BlInvoice.countDocuments({});
+    const countLegacy = await LogisticsPayment.countDocuments(bliQuery);
+    const totalCount = countBlColl + countLegacy;
+
+    const blRecords = await BlInvoice.find({}, { referenceNumber: 1, logisticsPaymentId: 1 }).lean();
+    const legacyRecords = await LogisticsPayment.find(bliQuery, { referenceNumber: 1, logisticsPaymentId: 1 }).lean();
+    const bliRefs = [...blRecords, ...legacyRecords].map(r => r.referenceNumber || r.logisticsPaymentId).filter(Boolean);
+
+    await BlInvoice.deleteMany({});
+    await LogisticsPayment.deleteMany(bliQuery);
+    if (bliRefs.length > 0) {
+      await Approval.deleteMany({ $or: [{ id: { $in: bliRefs } }, { referenceNumber: { $in: bliRefs } }] });
+    }
+
+    return res.json({ success: true, message: `Successfully purged ${totalCount} BLI record(s) from database.`, deletedCount: totalCount });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Single Record Delete
+router.delete('/logistics-payments/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const target = await LogisticsPayment.findOne({
+      $or: [{ logisticsPaymentId: id }, { referenceNumber: id }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }]
+    });
+
+    if (!target) {
+      return res.status(404).json({ success: false, error: 'Payment record not found.' });
+    }
+
+    const ref = target.referenceNumber || target.logisticsPaymentId;
+    await LogisticsPayment.deleteOne({ _id: target._id });
+    if (ref) {
+      await Approval.deleteMany({ $or: [{ id: ref }, { referenceNumber: ref }] });
+    }
+
+    return res.json({ success: true, message: `Payment record ${ref || id} deleted successfully.` });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/bl-invoices', optionalAuth, async (req, res) => {
+  try {
+    let itemsFromBlColl = await BlInvoice.find().sort({ createdAt: -1 }).lean();
+    let legacyBlItems = await LogisticsPayment.find({ $or: [{ referenceNumber: /^BLI-/ }, { logisticsPaymentId: /^BLI-/ }] }).sort({ createdAt: -1 }).lean();
+
+    // Merge and deduplicate by reference number
+    const seenRefs = new Set();
+    let items = [];
+    for (const item of [...itemsFromBlColl, ...legacyBlItems]) {
+      const ref = item.referenceNumber || item.logisticsPaymentId || String(item._id);
+      if (!seenRefs.has(ref)) {
+        seenRefs.add(ref);
+        items.push(item);
+      }
+    }
 
     const q = String(req.query.q || '').toLowerCase().trim();
     const statusFilter = String(req.query.status || 'All').trim();
@@ -3035,7 +3265,7 @@ router.get('/bl-invoices', optionalAuth, async (req, res) => {
 
       return {
         ...item,
-        id: item.logisticsPaymentId || item._id,
+        id: item.logisticsPaymentId || item.referenceNumber || item._id,
         referenceNumber: item.referenceNumber || item.logisticsPaymentId,
         typeDisplay,
         source,
@@ -3062,11 +3292,11 @@ router.get('/bl-invoices', optionalAuth, async (req, res) => {
     }
 
     if (statusFilter && statusFilter !== 'All') {
-      filtered = filtered.filter(i => i.status.toLowerCase() === statusFilter.toLowerCase());
+      filtered = filtered.filter(i => (i.status || '').toLowerCase() === statusFilter.toLowerCase());
     }
 
     if (sourceFilter && sourceFilter !== 'All') {
-      filtered = filtered.filter(i => i.source.toLowerCase() === sourceFilter.toLowerCase());
+      filtered = filtered.filter(i => (i.source || '').toLowerCase() === sourceFilter.toLowerCase());
     }
 
     const stats = {
@@ -3106,7 +3336,7 @@ router.post('/bl-invoices', authenticateToken, async (req, res) => {
       wf: blWorkflow
     });
 
-    const payment = await LogisticsPayment.create({
+    const payment = await BlInvoice.create({
       logisticsPaymentId: ref,
       referenceNumber: ref,
       blNumber: String(blNumber).trim().toUpperCase(),
@@ -3141,9 +3371,15 @@ router.post('/bl-invoices', authenticateToken, async (req, res) => {
 router.post('/bl-invoices/:id/action', authenticateToken, async (req, res) => {
   try {
     const { action, remarks } = req.body;
-    const invoice = await LogisticsPayment.findOne({
+    let invoice = await BlInvoice.findOne({
       $or: [{ logisticsPaymentId: req.params.id }, { referenceNumber: req.params.id }]
     });
+
+    if (!invoice) {
+      invoice = await LogisticsPayment.findOne({
+        $or: [{ logisticsPaymentId: req.params.id }, { referenceNumber: req.params.id }]
+      });
+    }
 
     if (!invoice) return res.status(404).json({ success: false, error: 'BL Invoice not found.' });
 

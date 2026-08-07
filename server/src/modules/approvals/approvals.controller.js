@@ -246,7 +246,7 @@ export const getPendingApprovals = async (req, res) => {
       ? { submittedAt: 1, createdAt: 1 }
       : { submittedAt: -1, createdAt: -1 };
 
-    let approvals = await Approval.find(filter).sort(sort).lean();
+    let allApprovals = await Approval.find(filter).sort(sort).lean();
 
     // ── Role-based filtering across effectiveRoles ─────────────────────────
     const isSuperUser = effectiveRoles.some((r) => {
@@ -254,7 +254,15 @@ export const getPendingApprovals = async (req, res) => {
       return rNorm === 'admin' || rNorm.replace(/\s+/g, '') === 'systemadmin';
     });
 
-    if (!isSuperUser) {
+    // Actionable items specifically assigned to user's role step
+    const actionableApprovals = allApprovals.filter(a => isApprovalForRole(a, effectiveRoles));
+    const actionableCount = actionableApprovals.length;
+    const allCount = allApprovals.length;
+
+    const scope = String(req.query.scope || (isSuperUser ? 'all' : 'actionable')).toLowerCase().trim();
+    let approvals = (scope === 'actionable' || req.query.actionableOnly === 'true') ? actionableApprovals : allApprovals;
+
+    if (!isSuperUser && scope !== 'all') {
       approvals = approvals.filter(a => isApprovalForRole(a, effectiveRoles));
     }
 
@@ -262,7 +270,7 @@ export const getPendingApprovals = async (req, res) => {
     const currentUserName  = (req.query.me  || '').toLowerCase().trim();
     const currentUserEmail = (req.query.meEmail || '').toLowerCase().trim();
 
-    if (!isSuperUser && req.query.excludeSelf === 'true' && (currentUserName || currentUserEmail)) {
+    if (req.query.excludeSelf === 'true' && (currentUserName || currentUserEmail)) {
       approvals = approvals.filter(a => {
         const submitter = (a.requestedBy || '').toLowerCase().trim();
         if (!submitter) return true;
@@ -272,8 +280,8 @@ export const getPendingApprovals = async (req, res) => {
       });
     }
 
-    const total      = approvals.length;
-    const totalPages = Math.max(1, Math.ceil(total / size));
+    const total      = (scope === 'actionable' || req.query.actionableOnly === 'true') ? actionableCount : approvals.length;
+    const totalPages = Math.max(1, Math.ceil(approvals.length / size));
     const safePage   = Math.min(page, totalPages);
     const paginated  = approvals.slice((safePage - 1) * size, safePage * size);
 
@@ -291,6 +299,14 @@ export const getPendingApprovals = async (req, res) => {
 
       return {
         ...a,
+        amountFormatted:  a.amountFormatted || `INR ${(a.amountINR || 0).toLocaleString('en-IN')}`,
+        workflowId:       a.workflowId || 'WF-STD-001',
+        workflowCode:     a.workflowCode || 'WF-STD',
+        workflowVersion:  a.workflowVersion || 1,
+        delegationActive: !!matchedDelegator,
+        delegatorName:    matchedDelegator?.name || null,
+        delegatorEmail:   matchedDelegator?.email || null,
+        delegatorRole:    matchedDelegator?.role || null,
         parsedSteps,
         currentStepRole: stepRole,
         delegatedFrom: matchedDelegator ? {

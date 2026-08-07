@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
-import { Truck, DollarSign, CheckCircle2, FileText, Building2, Search, Plus, Trash2 } from 'lucide-react';
+import { Truck, DollarSign, CheckCircle2, FileText, Building2, Search, Plus, Trash2, AlertTriangle } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import DocumentUploader from '../../components/shared/DocumentUploader';
 import { SearchableSelect } from '../../components/ui/searchable-select';
@@ -21,32 +21,83 @@ export default function LogisticsPaymentsView() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
+  // Modal states
+  const [showClearBliModal, setShowClearBliModal] = useState(false);
+  const [deletingBli, setDeletingBli] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+
   const canCreate = user?.role === 'admin' || user?.role === 'System Admin' || user?.role === 'finance' || user?.role === 'exim' || user?.role === 'logistics';
 
-  useEffect(() => {
-    async function fetchPayments() {
-      try {
-        setLoading(true);
-        const res = await apiFetch('/api/p2p/bl-invoices');
-        if (res.ok) {
-          const data = await res.json();
-          setPayments(data.invoices || data.payments || []);
-        }
-      } catch (e) {
-        console.error('Error fetching logistics payments:', e);
-      } finally {
-        setLoading(false);
+  const fetchPayments = async () => {
+    try {
+      setLoading(true);
+      const res = await apiFetch('/api/p2p/logistics-payments');
+      if (res.ok) {
+        const data = await res.json();
+        setPayments(data.payments || data.invoices || []);
       }
+    } catch (e) {
+      console.error('Error fetching logistics payments:', e);
+      showToast({ title: 'Error', description: 'Failed to load logistics payments.', type: 'error' });
+    } finally {
+      setLoading(false);
     }
+  };
+
+  useEffect(() => {
     fetchPayments();
   }, []);
 
+  const handleClearAllBli = async () => {
+    try {
+      setDeletingBli(true);
+      const res = await apiFetch('/api/p2p/logistics-payments/clear-bli', { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast({
+          title: 'BLI Data Cleared',
+          description: data.message || `Deleted ${data.deletedCount || 0} BLI record(s).`,
+          type: 'success'
+        });
+        setShowClearBliModal(false);
+        fetchPayments();
+      } else {
+        throw new Error(data.error || 'Failed to clear BLI data');
+      }
+    } catch (err) {
+      showToast({ title: 'Delete Failed', description: err.message, type: 'error' });
+    } finally {
+      setDeletingBli(false);
+    }
+  };
+
+  const handleDeleteSingle = async (id, refNumber) => {
+    if (!window.confirm(`Are you sure you want to delete payment ${refNumber || id}?`)) return;
+    try {
+      setDeletingId(id);
+      const res = await apiFetch(`/api/p2p/logistics-payments/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast({ title: 'Deleted', description: `Payment ${refNumber || id} removed successfully.`, type: 'success' });
+        fetchPayments();
+      } else {
+        throw new Error(data.error || 'Failed to delete record');
+      }
+    } catch (err) {
+      showToast({ title: 'Delete Error', description: err.message, type: 'error' });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  // Filter Payments (Strictly LOG payments only)
   const filtered = payments.filter(p => {
     const q = search.toLowerCase();
+    const ref = p.referenceNumber || p.id || '';
     const matchesSearch = !search ||
-      (p.referenceNumber || p.id || '').toLowerCase().includes(q) ||
+      ref.toLowerCase().includes(q) ||
       (p.vendorName || p.providerName || '').toLowerCase().includes(q) ||
-      (p.blNumber || '').toLowerCase().includes(q) ||
+      (p.invoiceNumber || p.blNumber || '').toLowerCase().includes(q) ||
       (p.category || p.typeDisplay || '').toLowerCase().includes(q);
 
     const matchesStatus = statusFilter === 'All' || (p.status || '').toLowerCase() === statusFilter.toLowerCase();
@@ -69,15 +120,17 @@ export default function LogisticsPaymentsView() {
           </div>
         </div>
 
-        {canCreate && (
-          <button
-            onClick={() => navigate('/p2p/logistics-payments/create')}
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>New Logistics Payment</span>
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {canCreate && (
+            <button
+              onClick={() => navigate('/p2p/logistics-payments/create')}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>New Logistics Payment</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filter Toolbar */}
@@ -89,7 +142,7 @@ export default function LogisticsPaymentsView() {
               type="text"
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-              placeholder="Search payment ID, provider, BL#, category..."
+              placeholder="Search payment ID (LOG), provider, invoice..."
               className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-1 focus:ring-[#0d7676]"
             />
           </div>
@@ -110,81 +163,105 @@ export default function LogisticsPaymentsView() {
         </div>
 
         <span className="text-xs font-bold text-slate-400">
-          Showing {filtered.length} of {payments.length} payments
+          Showing {filtered.length} of {payments.length} logistics payments
         </span>
       </div>
 
+      {/* Logistics Payment Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden w-full">
         <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
           <h3 className="font-extrabold text-slate-800 text-sm">Logistics Vendor Invoices & Disbursements</h3>
           <span className="text-xs font-semibold text-slate-500">{filtered.length} Payments</span>
         </div>
 
-        <div className="overflow-x-auto w-full">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-100/70 text-slate-600 font-bold uppercase tracking-wider border-b border-slate-200">
-              <tr>
-                <th className="py-3.5 px-4">Payment ID</th>
-                <th className="py-3.5 px-4">Logistics Provider</th>
-                <th className="py-3.5 px-4">BL Reference</th>
-                <th className="py-3.5 px-4">Category</th>
-                <th className="py-3.5 px-4 text-right">Amount</th>
-                <th className="py-3.5 px-4 text-center">Status</th>
-                <th className="py-3.5 px-4 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-              {paginated.map((p, idx) => {
-                const refId = p.referenceNumber || p.logisticsPaymentId || p.id || `LOG-${idx}`;
-                const provider = p.vendorName || p.providerName || 'Logistics Vendor';
-                const bl = p.blNumber || 'N/A';
-                const cat = p.typeDisplay || p.category || 'Freight Invoice';
-                const amt = p.amount || p.totalAmount || 0;
-                const curr = p.currency || 'INR';
-                const status = p.status || 'Pending EXIM Approval';
+        {loading ? (
+          <div className="p-12 text-center text-slate-400 text-xs font-medium">
+            Loading logistics payment ledger...
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="p-12 text-center text-slate-400 text-xs font-medium space-y-2">
+            <Truck className="w-8 h-8 mx-auto text-slate-300 stroke-1" />
+            <p className="font-bold text-slate-600">No logistics payments found.</p>
+            <p className="text-[11px] text-slate-400">Click "New Logistics Payment" above to record a new payout.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto w-full">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-100/70 text-slate-600 font-bold uppercase tracking-wider border-b border-slate-200">
+                <tr>
+                  <th className="py-3.5 px-4">Payment ID</th>
+                  <th className="py-3.5 px-4">Logistics Provider</th>
+                  <th className="py-3.5 px-4">Invoice / Ref No</th>
+                  <th className="py-3.5 px-4">Category</th>
+                  <th className="py-3.5 px-4 text-right">Amount</th>
+                  <th className="py-3.5 px-4 text-center">Status</th>
+                  <th className="py-3.5 px-4 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                {paginated.map((p, idx) => {
+                  const refId = p.referenceNumber || p.logisticsPaymentId || p.id || `LOG-${idx}`;
+                  const provider = p.vendorName || p.providerName || 'Logistics Provider';
+                  const invRef = p.invoiceNumber || p.blNumber || 'N/A';
+                  const cat = p.typeDisplay || p.category || 'Logistics Freight Payment';
+                  const amt = p.amount || p.totalAmount || 0;
+                  const curr = p.currency || 'INR';
+                  const status = p.status || 'Approved';
 
-                return (
-                  <tr key={refId} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-4 px-4 font-bold text-[#0d7676] font-mono">{refId}</td>
-                    <td className="py-4 px-4 font-bold text-slate-900">{provider}</td>
-                    <td className="py-4 px-4 font-semibold text-slate-800">{bl}</td>
-                    <td className="py-4 px-4 font-medium text-slate-600">{cat}</td>
-                    <td className="py-4 px-4 text-right font-black text-slate-900 text-sm">
-                      {curr === 'USD' ? '$' : '₹'}{Number(amt).toLocaleString('en-IN')}
-                    </td>
-                    <td className="py-4 px-4 text-center">
-                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase border ${
-                        status.toLowerCase().includes('approved') ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                        status.toLowerCase().includes('paid') ? 'bg-purple-50 text-purple-700 border-purple-200' :
-                        status.toLowerCase().includes('reject') ? 'bg-rose-50 text-rose-700 border-rose-200' :
-                        'bg-amber-50 text-amber-700 border-amber-200'
-                      }`}>
-                        {status}
-                      </span>
-                    </td>
-                    <td className="py-4 px-4 text-right">
-                      {status.toLowerCase().includes('approved') ? (
-                        <button 
-                          onClick={() => {
-                            setPayments(prev => prev.map(item => (item.referenceNumber === refId || item.id === refId) ? { ...item, status: 'Paid', utrNumber: 'UTR-LOG-8091' } : item));
-                            showToast({ title: 'Treasury Payout Recorded', description: `Recorded payment payout for ${refId}`, type: 'success' });
-                          }}
-                          className="px-3 py-1.5 rounded-lg bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-[11px] cursor-pointer shadow-2xs"
-                        >
-                          Record Payout
-                        </button>
-                      ) : (
-                        <span className="text-[11px] font-semibold text-slate-500">
-                          {p.utrNumber ? `UTR: ${p.utrNumber}` : `Step ${p.currentStep || 1}/${p.totalSteps || 1}`}
+                  return (
+                    <tr key={refId} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="py-4 px-4 font-bold text-[#0d7676] font-mono">{refId}</td>
+                      <td className="py-4 px-4 font-bold text-slate-900">{provider}</td>
+                      <td className="py-4 px-4 font-semibold text-slate-800">{invRef}</td>
+                      <td className="py-4 px-4 font-medium text-slate-600">{cat}</td>
+                      <td className="py-4 px-4 text-right font-black text-slate-900 text-sm">
+                        {curr === 'USD' ? '$' : '₹'}{Number(amt).toLocaleString('en-IN')}
+                      </td>
+                      <td className="py-4 px-4 text-center">
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase border ${
+                          status.toLowerCase().includes('approved') ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                          status.toLowerCase().includes('paid') ? 'bg-purple-50 text-purple-700 border-purple-200' :
+                          status.toLowerCase().includes('reject') ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                          'bg-amber-50 text-amber-700 border-amber-200'
+                        }`}>
+                          {status}
                         </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                      </td>
+                      <td className="py-4 px-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          {status.toLowerCase().includes('approved') ? (
+                            <button
+                              onClick={() => {
+                                setPayments(prev => prev.map(item => (item.referenceNumber === refId || item.id === refId) ? { ...item, status: 'Paid', utrNumber: 'UTR-LOG-8091' } : item));
+                                showToast({ title: 'Treasury Payout Recorded', description: `Recorded payment payout for ${refId}`, type: 'success' });
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-[11px] cursor-pointer shadow-2xs transition"
+                            >
+                              Record Payout
+                            </button>
+                          ) : (
+                            <span className="text-[11px] font-semibold text-slate-500">
+                              {p.utrNumber ? `UTR: ${p.utrNumber}` : `Step ${p.currentStep || 1}/${p.totalSteps || 1}`}
+                            </span>
+                          )}
+
+                          <button
+                            onClick={() => handleDeleteSingle(p.id || refId, refId)}
+                            disabled={deletingId === (p.id || refId)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition cursor-pointer"
+                            title={`Delete ${refId}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         <ServerPagination
           page={page}
@@ -197,37 +274,51 @@ export default function LogisticsPaymentsView() {
         />
       </div>
 
-      {/* Document Upload Section */}
-      {payments.length > 0 && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-2xs p-5 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <h3 className="text-sm font-bold text-slate-900">Freight & Logistics Documents</h3>
-            <p className="text-xs text-slate-500">Attach invoices, bills of lading, freight receipts, and payment proof</p>
-          </div>
 
-          <div className="space-y-3">
-            <label className="block text-xs font-semibold text-slate-700">Select Logistics Payment</label>
-            <SearchableSelect
-              options={payments.map(payment => ({
-                label: `${payment.logisticsPaymentId} · ${payment.providerName} · ₹${payment.amount.toLocaleString('en-IN')}`,
-                value: payment.logisticsPaymentId
-              }))}
-              value={selectedPaymentId}
-              onChange={(val) => setSelectedPaymentId(val)}
-              placeholder="-- Select a logistics payment to upload documents --"
-            />
-          </div>
-
-          {selectedPaymentId && (
-            <div className="pt-3">
-              <DocumentUploader
-                documentableType="LogisticsPayment"
-                documentableId={selectedPaymentId}
-                documentType="bill_of_lading"
-                multiple={true}
-              />
+      {/* Modal: Delete All BLI Data */}
+      {showClearBliModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Purge Legacy BLI Data?</h3>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                  This action will permanently delete all legacy <strong className="text-rose-700">BLI (Bill of Lading Invoices)</strong> records and their associated approval records from the system.
+                </p>
+                <div className="mt-2.5 p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-800 font-semibold">
+                  Note: All <strong>LOG (Logistics Payments)</strong> records will remain completely safe and untouched.
+                </div>
+              </div>
             </div>
-          )}
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowClearBliModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleClearAllBli}
+                disabled={deletingBli}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs transition cursor-pointer disabled:opacity-50"
+              >
+                {deletingBli ? (
+                  <span>Purging...</span>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Confirm Purge BLI Data</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

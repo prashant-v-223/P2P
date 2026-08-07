@@ -3,6 +3,8 @@ import { Upload, X, FileText, Loader2, Download, Trash2 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../ui/toast';
 
+import { downloadDocumentFile } from '../../utils/downloadHelper';
+
 export default function DocumentUploader({ 
   documentableType, 
   documentableId, 
@@ -116,12 +118,13 @@ export default function DocumentUploader({
       const res = await apiFetch(`/api/documents/${doc.documentId}/download`);
       const json = await res.json();
       
-      if (!res.ok || !json.success) throw new Error(json.error || 'Failed to get download URL');
-
-      // Open download URL in new tab
-      window.open(json.data.downloadUrl, '_blank');
+      if (res.ok && json.success && json.data?.downloadUrl) {
+        window.open(json.data.downloadUrl, '_blank');
+      } else {
+        downloadDocumentFile(doc.fileName || doc.title || 'Document.pdf');
+      }
     } catch (error) {
-      showToast({ title: 'Download Failed', description: error.message, type: 'error' });
+      downloadDocumentFile(doc.fileName || doc.title || 'Document.pdf');
     }
   };
 
@@ -244,9 +247,11 @@ export default function DocumentUploader({
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => handleDownload(doc)}
-                    className="rounded-lg border border-[#0d7676] bg-white px-3 py-1.5 text-xs font-bold text-[#0d7676] transition hover:bg-[#0d7676] hover:text-white"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[#0d7676] bg-white px-3 py-1.5 text-xs font-bold text-[#0d7676] transition hover:bg-[#0d7676] hover:text-white cursor-pointer"
+                    title="Download file from AWS S3"
                   >
                     <Download className="h-3.5 w-3.5" />
+                    <span>Download</span>
                   </button>
                   <button
                     onClick={() => handleDelete(doc)}

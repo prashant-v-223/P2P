@@ -7,7 +7,7 @@ export const fetchPendingApprovals = createAsyncThunk(
     try {
       const state = getState();
       const role  = roleArg || state.auth.user?.role || 'Finance Lead';
-      const params = new URLSearchParams({ role });
+      const params = new URLSearchParams({ role, scope: 'actionable' });
 
       const res  = await apiFetch(`/api/approvals/pending?${params.toString()}`);
       const data = await res.json();
@@ -25,8 +25,7 @@ export const processApprovalAction = createAsyncThunk(
     try {
       const res = await apiFetch(`/api/approvals/${id}/action`, {
         method: 'POST',
-        headers: { 'Idempotency-Key': `${id}:${String(action).toLowerCase()}` },
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${id}:${String(action).toLowerCase()}` },
         body: JSON.stringify({ action })
       });
       const data = await res.json();
@@ -60,7 +59,7 @@ const approvalsSlice = createSlice({
       .addCase(fetchPendingApprovals.fulfilled, (state, action) => {
         state.loading = false;
         state.pendingQueue = action.payload.approvals;
-        state.pendingCount = action.payload.total ?? action.payload.count ?? 0;
+        state.pendingCount = action.payload.actionableCount ?? action.payload.total ?? action.payload.count ?? 0;
       });
   }
 });
