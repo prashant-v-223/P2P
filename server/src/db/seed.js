@@ -90,10 +90,10 @@ export const DEFAULT_PERMISSIONS = [
   { id: 'perm-048', key: 'users.manage', name: 'Manage Users', module: 'Users', action: 'manage', description: 'Master control to create, edit, deactivate and delete user accounts.', type: 'System', status: 'Active' },
 
   // ── Roles & Permissions ──────────────────────────────────────────────────────
-  { id: 'perm-046', key: 'roles.view', name: 'View Roles', module: 'Roles & Permissions', action: 'view', description: 'View system roles and permission matrix.', type: 'System', status: 'Active' },
-  { id: 'perm-047', key: 'roles.manage', name: 'Manage Roles', module: 'Roles & Permissions', action: 'manage', description: 'Create, edit roles and assign permissions.', type: 'System', status: 'Active' },
-  { id: 'perm-048', key: 'permissions.view', name: 'View Permissions', module: 'Roles & Permissions', action: 'view-perms', description: 'View the permission registry.', type: 'System', status: 'Active' },
-  { id: 'perm-049', key: 'permissions.create', name: 'Create Permissions', module: 'Roles & Permissions', action: 'create-perms', description: 'Create new permission keys.', type: 'System', status: 'Active' },
+  { id: 'perm-049', key: 'roles.view', name: 'View Roles', module: 'Roles & Permissions', action: 'view', description: 'View system roles and permission matrix.', type: 'System', status: 'Active' },
+  { id: 'perm-050', key: 'roles.manage', name: 'Manage Roles', module: 'Roles & Permissions', action: 'manage', description: 'Create, edit roles and assign permissions.', type: 'System', status: 'Active' },
+  { id: 'perm-051', key: 'permissions.view', name: 'View Permissions', module: 'Roles & Permissions', action: 'view-perms', description: 'View the permission registry.', type: 'System', status: 'Active' },
+  { id: 'perm-052', key: 'permissions.create', name: 'Create Permissions', module: 'Roles & Permissions', action: 'create-perms', description: 'Create new permission keys.', type: 'System', status: 'Active' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -389,21 +389,74 @@ const DUMMY_USERS = [
   // ── MD ──────────────────────────────────────────────────────────────────────
   { id: 'usr-013', name: 'Arjun Shah', email: 'arjun.shah@rayzon.com', role: 'md', department: 'Executive Board', avatar: 'AS', status: 'Active' },
 
-  // ── Procurement ─────────────────────────────────────────────────────────────
+  // ── Procurement (East team members) ─────────────────────────────────────────
   { id: 'usr-014', name: 'Neha Gupta', email: 'neha.gupta@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'NG', status: 'Active' },
-  { id: 'usr-015', name: 'Rohit Pandey', email: 'rohit.pandey@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'RP', status: 'Active' },
   { id: 'usr-016', name: 'Pooja Agarwal', email: 'pooja.agarwal@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'PA', status: 'Active' },
-  { id: 'usr-017', name: 'Rahul Mehta', email: 'rahul.mehta@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'RM', status: 'Active' },
   { id: 'usr-018', name: 'Sanjay Bhatt', email: 'sanjay.bhatt@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'SB', status: 'Active' },
-  { id: 'usr-019', name: 'Divya Rao', email: 'divya.rao@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'DR', status: 'Active' },
   { id: 'usr-020', name: 'Karan Patel', email: 'karan.patel@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'KP', status: 'Active' },
+
+  // ── Procurement (West team members) ─────────────────────────────────────────
+  { id: 'usr-015', name: 'Rohit Pandey', email: 'rohit.pandey@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'RP', status: 'Active' },
+  { id: 'usr-017', name: 'Rahul Mehta', email: 'rahul.mehta@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'RM', status: 'Active' },
+  { id: 'usr-019', name: 'Divya Rao', email: 'divya.rao@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'DR', status: 'Active' },
   { id: 'usr-021', name: 'Monika Trivedi', email: 'monika.trivedi@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'MT', status: 'Active' },
 
   // ── Procurement Head ────────────────────────────────────────────────────────
   { id: 'usr-022', name: 'Harish Solanki', email: 'harish.solanki@rayzon.com', role: 'procurement_head', department: 'Procurement', avatar: 'HS', status: 'Active',
-    // Example: Harish is on leave, parent is Arjun Shah (MD)
-    parentUserId: 'usr-013', delegationActive: false, delegationNote: 'Annual leave delegation' }
+    parentUserId: 'usr-013', delegationActive: false, delegationNote: 'Annual leave delegation' },
+
+  // ── Purchase Manager - East ─────────────────────────────────────────────────
+  { id: 'usr-023', name: 'Harish Solanki East', email: 'east.manager@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'EM', status: 'Active', isManager: true },
+
+  // ── Purchase Manager - West ─────────────────────────────────────────────────
+  { id: 'usr-024', name: 'Harish Solanki West', email: 'west.manager@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'WM', status: 'Active', isManager: true }
 ];
+
+const DEMO_HIERARCHY = {
+  // Level 0 — Senior executives, see all
+  'usr-001': { managerId: null, managerName: null, team: null, hierarchyLevel: 0, canSeeAllRequests: true },
+  'usr-013': { managerId: null, managerName: null, team: null, hierarchyLevel: 0, canSeeAllRequests: true },
+
+  // Level 1 — CFO (reports to MD, sees all)
+  'usr-003': { managerId: 'usr-013', managerName: 'Arjun Shah', team: 'Finance', hierarchyLevel: 1, canSeeAllRequests: true },
+
+  // Finance team (reports to CFO)
+  'usr-010': { managerId: 'usr-003', managerName: 'Rajesh Patel', team: 'Finance', hierarchyLevel: 2, canSeeAllRequests: false },
+  'usr-011': { managerId: 'usr-003', managerName: 'Rajesh Patel', team: 'Finance', hierarchyLevel: 2, canSeeAllRequests: false },
+  'usr-002': { managerId: 'usr-003', managerName: 'Rajesh Patel', team: 'Finance', hierarchyLevel: 2, canSeeAllRequests: false },
+
+  // Level 1 — Procurement Head (reports to MD)
+  'usr-022': { managerId: 'usr-013', managerName: 'Arjun Shah', team: 'Procurement', hierarchyLevel: 1, canSeeAllRequests: false },
+
+  // Level 2 — Purchase Manager - East (reports to Procurement Head)
+  'usr-023': { managerId: 'usr-022', managerName: 'Harish Solanki', team: 'East', hierarchyLevel: 2, canSeeAllRequests: false, isManager: true },
+
+  // Level 2 — Purchase Manager - West (reports to Procurement Head)
+  'usr-024': { managerId: 'usr-022', managerName: 'Harish Solanki', team: 'West', hierarchyLevel: 2, canSeeAllRequests: false, isManager: true },
+
+  // Level 3 — East team members (report to East Manager)
+  'usr-014': { managerId: 'usr-023', managerName: 'Harish Solanki East', team: 'East', hierarchyLevel: 3, canSeeAllRequests: false },
+  'usr-016': { managerId: 'usr-023', managerName: 'Harish Solanki East', team: 'East', hierarchyLevel: 3, canSeeAllRequests: false },
+  'usr-018': { managerId: 'usr-023', managerName: 'Harish Solanki East', team: 'East', hierarchyLevel: 3, canSeeAllRequests: false },
+  'usr-020': { managerId: 'usr-023', managerName: 'Harish Solanki East', team: 'East', hierarchyLevel: 3, canSeeAllRequests: false },
+
+  // Level 3 — West team members (report to West Manager)
+  'usr-015': { managerId: 'usr-024', managerName: 'Harish Solanki West', team: 'West', hierarchyLevel: 3, canSeeAllRequests: false },
+  'usr-017': { managerId: 'usr-024', managerName: 'Harish Solanki West', team: 'West', hierarchyLevel: 3, canSeeAllRequests: false },
+  'usr-019': { managerId: 'usr-024', managerName: 'Harish Solanki West', team: 'West', hierarchyLevel: 3, canSeeAllRequests: false },
+  'usr-021': { managerId: 'usr-024', managerName: 'Harish Solanki West', team: 'West', hierarchyLevel: 3, canSeeAllRequests: false },
+
+  // Level 1 — EXIM Manager (reports to MD)
+  'usr-009': { managerId: 'usr-013', managerName: 'Arjun Shah', team: 'EXIM & Logistics', hierarchyLevel: 1, canSeeAllRequests: false, isManager: true },
+
+  // Level 2 — EXIM team members (report to EXIM Manager)
+  'usr-004': { managerId: 'usr-009', managerName: 'Manish Thakkar', team: 'EXIM & Logistics', hierarchyLevel: 2, canSeeAllRequests: false },
+  'usr-005': { managerId: 'usr-009', managerName: 'Manish Thakkar', team: 'EXIM & Logistics', hierarchyLevel: 2, canSeeAllRequests: false },
+  'usr-006': { managerId: 'usr-009', managerName: 'Manish Thakkar', team: 'EXIM & Logistics', hierarchyLevel: 2, canSeeAllRequests: false },
+  'usr-007': { managerId: 'usr-009', managerName: 'Manish Thakkar', team: 'EXIM & Logistics', hierarchyLevel: 2, canSeeAllRequests: false },
+  'usr-008': { managerId: 'usr-009', managerName: 'Manish Thakkar', team: 'EXIM & Logistics', hierarchyLevel: 2, canSeeAllRequests: false },
+  'usr-012': { managerId: 'usr-009', managerName: 'Manish Thakkar', team: 'EXIM & Logistics', hierarchyLevel: 2, canSeeAllRequests: false }
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN SEED FUNCTION
@@ -433,15 +486,13 @@ export const seedDatabase = async () => {
     console.log('[DB] Seeding/updating system users...');
     const defaultPassHash = await User.hashPassword('Rayzon@2026');
     for (const u of DUMMY_USERS) {
+      const hierarchy = DEMO_HIERARCHY[u.id] || {};
       const existing = await User.findOne({ email: u.email });
       if (!existing) {
-        await User.create({ ...u, passwordHash: defaultPassHash });
+        await User.create({ ...u, ...hierarchy, passwordHash: defaultPassHash });
       } else {
-        // Update role if admin
-        if (u.email === 'prashantvadhvana@gmail.com') {
-          existing.role = 'admin';
-          await existing.save();
-        }
+        Object.assign(existing, { ...u, ...hierarchy });
+        await existing.save();
       }
     }
 

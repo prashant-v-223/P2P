@@ -2,21 +2,55 @@ import crypto from 'node:crypto';
 import mongoose from 'mongoose';
 import { User } from '../../models/User.js';
 
-const FALLBACK_USERS_LIST = [
-  { id: 'usr-001', name: 'Prashant Vadhvana', email: 'prashantvadhvana@gmail.com', role: 'admin', department: 'Executive Administration', avatar: 'PV', status: 'Active' },
-  { id: 'usr-admin-1', name: 'System Admin', email: 'admin@rayzon.one', role: 'admin', department: 'Executive Administration', avatar: 'SA', status: 'Active' },
-  { id: 'usr-002', name: 'Kavya Mehta', email: 'kavya.mehta@rayzon.com', role: 'accounts', department: 'Accounts & Finance', avatar: 'KM', status: 'Active' },
-  { id: 'usr-003', name: 'Rajesh Patel', email: 'rajesh.patel@rayzon.com', role: 'cfo', department: 'Finance & Treasury', avatar: 'RP', status: 'Active' },
-  { id: 'usr-004', name: 'Sneha Sharma', email: 'sneha.sharma@rayzon.com', role: 'exim', department: 'EXIM & Logistics', avatar: 'SS', status: 'Active' },
-  { id: 'usr-009', name: 'Manish Thakkar', email: 'manish.thakkar@rayzon.com', role: 'exim-manager', department: 'EXIM & Logistics', avatar: 'MT', status: 'Active' },
-  { id: 'usr-010', name: 'Suresh Kumar', email: 'suresh.kumar@rayzon.com', role: 'finance', department: 'Finance & Treasury', avatar: 'SK', status: 'Active' },
-  { id: 'usr-012', name: 'Vikram Singh', email: 'vikram.singh@rayzon.com', role: 'logistics', department: 'Logistics & Supply Chain', avatar: 'VS', status: 'Active' },
-  { id: 'usr-013', name: 'Arjun Shah', email: 'arjun.shah@rayzon.com', role: 'md', department: 'Executive Board', avatar: 'AS', status: 'Active' },
-  { id: 'usr-014', name: 'Neha Gupta', email: 'neha.gupta@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'NG', status: 'Active' },
-  { id: 'usr-022', name: 'Harish Solanki', email: 'harish.solanki@rayzon.com', role: 'procurement_head', department: 'Procurement', avatar: 'HS', status: 'Active' }
-];
-
 const escapeRegex = (value = '') => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const hierarchyFor = ({ role, manager }) => {
+  const normalizedRole = String(role || '').toLowerCase().replace(/[-\s]+/g, '_');
+  if (['admin', 'superadmin', 'md'].includes(normalizedRole)) {
+    return { managerId: null, managerName: null, hierarchyLevel: 0, canSeeAllRequests: true, team: null };
+  }
+  if (normalizedRole === 'finance') {
+    return { managerId: null, managerName: null, hierarchyLevel: 1, canSeeAllRequests: true, team: null };
+  }
+  if (!manager) {
+    return { managerId: null, managerName: null, hierarchyLevel: 3, canSeeAllRequests: false, team: null };
+  }
+  const isDirectMdReport = manager.hierarchyLevel === 0;
+  const managerTeam = normalizedRole === 'procurement_head' ? 'East' : normalizedRole === 'exim_manager' ? 'West' : manager.team || null;
+  return {
+    managerId: manager.id,
+    managerName: manager.name,
+    hierarchyLevel: isDirectMdReport ? 2 : Math.min((manager.hierarchyLevel || 2) + 1, 10),
+    canSeeAllRequests: false,
+    team: isDirectMdReport ? managerTeam : manager.team || null
+  };
+};
+
+const hasManagerCycle = async (userId, managerId) => {
+  const visited = new Set([userId]);
+  let currentManagerId = managerId;
+
+  while (currentManagerId) {
+    if (visited.has(currentManagerId)) return true;
+    visited.add(currentManagerId);
+    const manager = await User.findOne({ id: currentManagerId }, { managerId: 1 }).lean();
+    if (!manager) return false;
+    currentManagerId = manager.managerId;
+  }
+
+  return false;
+};
+
+const refreshReportingHierarchy = async (managerId) => {
+  const reports = await User.find({ managerId }, { id: 1, role: 1 }).lean();
+  for (const report of reports) {
+    const manager = await User.findOne({ id: managerId }, { id: 1, name: 1, hierarchyLevel: 1, team: 1 }).lean();
+    if (!manager) continue;
+    const hierarchy = hierarchyFor({ role: report.role, manager });
+    await User.updateOne({ id: report.id }, hierarchy);
+    await refreshReportingHierarchy(report.id);
+  }
+};
 
 export const getUsers = async (req, res) => {
   const requestedPage = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
@@ -26,24 +60,7 @@ export const getUsers = async (req, res) => {
   const status = String(req.query.status || '').trim();
 
   if (mongoose.connection.readyState !== 1) {
-    let filtered = [...FALLBACK_USERS_LIST];
-    if (role && role !== 'All') filtered = filtered.filter((u) => u.role === role);
-    if (status && status !== 'All') filtered = filtered.filter((u) => u.status === status);
-    if (query) {
-      const q = query.toLowerCase();
-      filtered = filtered.filter((u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || u.role.toLowerCase().includes(q));
-    }
-    return res.json({
-      success: true,
-      users: filtered,
-      total: filtered.length,
-      page: 1,
-      size,
-      totalPages: 1,
-      hasPrevious: false,
-      hasNext: false,
-      stats: { activeUsers: filtered.length, inactiveUsers: 0, totalUsers: filtered.length }
-    });
+    return res.status(503).json({ success: false, error: 'User directory is unavailable because the database is disconnected.' });
   }
   const filter = {};
 
@@ -103,7 +120,7 @@ export const getUsers = async (req, res) => {
 };
 
 export const createUser = async (req, res) => {
-  const { name, email, password, role, department } = req.body;
+  const { name, email, password, role, department, managerId } = req.body;
   if (!name?.trim() || !email?.trim() || !password) {
     return res.status(400).json({ success: false, error: 'Name, email, and password are required.' });
   }
@@ -115,6 +132,8 @@ export const createUser = async (req, res) => {
     return res.status(409).json({ success: false, error: 'A user with this email already exists.' });
   }
   const cleanName = name.trim();
+  const manager = managerId ? await User.findOne({ id: managerId, status: 'Active' }, { id: 1, name: 1, hierarchyLevel: 1, team: 1 }) : null;
+  if (managerId && !manager) return res.status(404).json({ success: false, error: 'Selected manager was not found or is inactive.' });
   const user = await User.create({
     id: `usr-${crypto.randomUUID()}`,
     name: cleanName,
@@ -122,15 +141,21 @@ export const createUser = async (req, res) => {
     passwordHash: await User.hashPassword(password),
     role: role || 'procurement',
     department: department || 'Procurement',
-    avatar: cleanName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()
+    avatar: cleanName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase(),
+    ...hierarchyFor({ role, manager })
   });
   return res.status(201).json({ success: true, message: 'User created.', user });
 };
 
 export const updateUser = async (req, res) => {
-  const allowed = ['name', 'email', 'role', 'department', 'status', 'avatar', 'parentUserId', 'delegationActive', 'delegationStartAt', 'delegationEndAt', 'delegationNote'];
+  const allowed = ['name', 'email', 'role', 'department', 'status', 'avatar', 'password', 'parentUserId', 'delegationActive', 'delegationStartAt', 'delegationEndAt', 'delegationNote', 'managerId'];
   const updates = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
   if (updates.email) updates.email = updates.email.trim().toLowerCase();
+  if (updates.password) {
+    if (updates.password.length < 8) return res.status(400).json({ success: false, error: 'Password must contain at least 8 characters.' });
+    updates.passwordHash = await User.hashPassword(updates.password);
+    delete updates.password;
+  }
 
   // Validate parentUserId
   if (updates.parentUserId) {
@@ -146,6 +171,38 @@ export const updateUser = async (req, res) => {
     updates.parentUserId = null;
     updates.delegationActive = false;
   }
+  const existingUser = await User.findOne({ id: req.params.id }, { id: 1, role: 1, managerId: 1 }).lean();
+  if (!existingUser) return res.status(404).json({ success: false, error: 'User not found.' });
+
+  if (updates.status === 'Inactive' && req.user?.id === req.params.id) {
+    return res.status(400).json({ success: false, error: 'You cannot deactivate your own account.' });
+  }
+  if (updates.status === 'Inactive') {
+    const activeReportCount = await User.countDocuments({ managerId: req.params.id, status: 'Active' });
+    if (activeReportCount) {
+      return res.status(409).json({ success: false, error: 'Reassign or deactivate this user\'s active reports before deactivating the account.' });
+    }
+  }
+
+  if (Object.hasOwn(updates, 'managerId')) {
+    if (updates.managerId === req.params.id) {
+      return res.status(400).json({ success: false, error: 'A user cannot report to themselves.' });
+    }
+    if (updates.managerId) {
+      const manager = await User.findOne({ id: updates.managerId, status: 'Active' }, { id: 1, name: 1, managerId: 1, hierarchyLevel: 1, team: 1 }).lean();
+      if (!manager) return res.status(404).json({ success: false, error: 'Selected manager was not found or is inactive.' });
+      if (await hasManagerCycle(req.params.id, manager.id)) {
+        return res.status(400).json({ success: false, error: 'This change would create a reporting cycle.' });
+      }
+      Object.assign(updates, hierarchyFor({ role: updates.role || existingUser.role, manager }));
+    } else {
+      Object.assign(updates, hierarchyFor({ role: updates.role || existingUser.role, manager: null }));
+    }
+  }
+  if (Object.hasOwn(updates, 'role') && !Object.hasOwn(updates, 'managerId')) {
+    const manager = existingUser?.managerId ? await User.findOne({ id: existingUser.managerId, status: 'Active' }, { id: 1, name: 1, hierarchyLevel: 1, team: 1 }).lean() : null;
+    Object.assign(updates, hierarchyFor({ role: updates.role, manager }));
+  }
   if (updates.delegationStartAt) updates.delegationStartAt = new Date(updates.delegationStartAt);
   if (updates.delegationEndAt) updates.delegationEndAt = new Date(updates.delegationEndAt);
 
@@ -154,14 +211,44 @@ export const updateUser = async (req, res) => {
     runValidators: true
   });
   if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+  if (Object.hasOwn(updates, 'managerId') || Object.hasOwn(updates, 'role')) {
+    await refreshReportingHierarchy(user.id);
+  }
   return res.json({ success: true, message: 'User updated.', user });
 };
 
+export const getUserHierarchy = async (_req, res) => {
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ success: false, error: 'Organisation hierarchy is unavailable because the database is disconnected.' });
+  }
+  const users = await User.find({}, { passwordHash: 0 }).sort({ hierarchyLevel: 1, name: 1 }).lean();
+  const byManager = new Map();
+  for (const user of users) {
+    const key = user.managerId || 'root';
+    byManager.set(key, [...(byManager.get(key) || []), user]);
+  }
+  const buildTree = (managerId, seen = new Set()) => (byManager.get(managerId) || []).map((user) => {
+    if (seen.has(user.id)) return { ...user, reports: [] };
+    const branchSeen = new Set(seen);
+    branchSeen.add(user.id);
+    return { ...user, reports: buildTree(user.id, branchSeen) };
+  });
+  return res.json({ success: true, users, tree: buildTree('root') });
+};
+
 export const deleteUser = async (req, res) => {
+  const directReports = await User.find({ managerId: req.params.id }, { id: 1, role: 1 }).lean();
   const user = await User.findOneAndDelete({ id: req.params.id });
   if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
   // Clear any delegations pointing to this user
   await User.updateMany({ parentUserId: req.params.id }, { parentUserId: null, delegationActive: false });
+  for (const report of directReports) {
+    await User.updateOne(
+      { id: report.id },
+      hierarchyFor({ role: report.role, manager: null })
+    );
+    await refreshReportingHierarchy(report.id);
+  }
   return res.json({ success: true, message: 'User deleted.', id: req.params.id });
 };
 

@@ -10,6 +10,8 @@
     "server": "node server/server.js",
     "server:dev": "nodemon server/server.js",
     "seed": "node server/src/db/run-seed.js",
+    "reset:database": "node server/src/db/reset-database.js",
+    "reset:demo": "node server/src/db/reset-demo-data.js",
     "test:backend": "node server/src/db/smoke-test.js",
     "test:mail": "node server/src/services/verify-mail.js",
     "dev:all": "concurrently \"npm run server:dev\" \"npm run dev\"",

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { apiFetch } from '../../services/api';
@@ -49,35 +49,63 @@ export default function CreateAdvancePaymentWizard() {
   const [saving, setSaving] = useState(false);
   const [dynamicWorkflow, setDynamicWorkflow] = useState(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        setLoadingPos(true);
-        const res = await apiFetch('/api/p2p/purchase-orders?size=100');
-        const json = await res.json();
-        if (json.data?.length) setLivePos(json.data.map(p => ({
-          poNumber: p.sapPoNumber || p.poNumber,
-          supplierName: p.supplierName || 'Vendor',
-          supplierId: p.supplierId || '',
-          totalAmount: p.totalAmount || 0,
-          advancePaid: p.advancePaid || 0,
-          advanceCommitted: p.advanceCommitted || 0,
-          remainingAdvanceAmount: Number(p.remainingAdvanceAmount ?? p.totalAmount) || 0,
-          currency: p.currency || 'INR',
-          status: p.status || 'open',
-        })).filter((p) => !['closed', 'cancelled', 'canceled', 'blocked'].includes(String(p.status).toLowerCase())));
-      } catch (e) { console.error(e); } finally { setLoadingPos(false); }
-    })();
+  // Normalize raw PO API response into the shape used by the wizard
+  const normalizePos = (data = []) => data.map(p => ({
+    poNumber: p.sapPoNumber || p.poNumber,
+    supplierName: p.supplierName || 'Vendor',
+    supplierId: p.supplierId || '',
+    totalAmount: p.totalAmount || 0,
+    advancePaid: p.advancePaid || 0,
+    advanceCommitted: p.advanceCommitted || 0,
+    remainingAdvanceAmount: Number(p.remainingAdvanceAmount ?? p.totalAmount) || 0,
+    currency: p.currency || 'INR',
+    status: p.status || 'open',
+  })).filter((p) => !['closed', 'cancelled', 'canceled', 'blocked'].includes(String(p.status).toLowerCase()));
+
+  const searchRequestId = useRef(0);
+
+  const fetchPos = useMemo(() => async (query = '') => {
+    const requestId = ++searchRequestId.current;
+    setLoadingPos(true);
+    try {
+      const params = new URLSearchParams({ size: '100' });
+      if (String(query).trim()) params.set('q', String(query).trim());
+      const res = await apiFetch(`/api/p2p/purchase-orders?${params.toString()}`);
+      const json = await res.json();
+      // Ignore stale responses from earlier keystrokes
+      if (requestId !== searchRequestId.current) return;
+      const normalized = normalizePos(json.data || []);
+      setLivePos(normalized);
+      // Clear the selected PO if it no longer appears in the search results
+      setSelectedPo(prev => {
+        if (prev && !normalized.some(p => p.poNumber === prev.poNumber)) return null;
+        return prev;
+      });
+    } catch (e) {
+      if (requestId !== searchRequestId.current) return;
+      console.error('Error fetching purchase orders:', e);
+      setLivePos([]);
+    } finally {
+      if (requestId === searchRequestId.current) setLoadingPos(false);
+    }
   }, []);
 
+  // Load initial open POs on mount
+  useEffect(() => {
+    fetchPos('');
+  }, [fetchPos]);
+
+  // Debounced server-side search as the user types in the search box
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchPos(searchPo);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchPo, fetchPos]);
+
   const filteredPos = useMemo(() => {
-    const q = searchPo.trim().toLowerCase();
-    if (!q) return livePos.slice(0, 8);
-    return livePos.filter(p =>
-      p.poNumber.toLowerCase().includes(q) ||
-      p.supplierName.toLowerCase().includes(q) ||
-      p.supplierId.toLowerCase().includes(q)
-    );
+    if (!searchPo.trim()) return livePos.slice(0, 8);
+    return livePos;
   }, [searchPo, livePos]);
 
   const poValue = selectedPo?.totalAmount || 0;

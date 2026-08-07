@@ -83,11 +83,11 @@ const mapPurchaseOrder = (row) => {
     poId: poNumber,
     poNumber: poNumber,
     sapPoNumber: poNumber,
-    supplierId: cleanString(valueOf(row, ['Supplier', 'SupplierNumber', 'LIFNR']), '11001810'),
-    supplierName: cleanString(valueOf(row, ['BPSupplierName', 'SupplierName', 'VendorName', 'Name1']), 'Fast Forward Logistics India'),
+    supplierId: cleanString(valueOf(row, ['Supplier', 'SupplierNumber', 'LIFNR'])),
+    supplierName: cleanString(valueOf(row, ['BPSupplierName', 'SupplierName', 'VendorName', 'Name1'])),
     companyCode: cleanString(valueOf(row, ['CompanyCode', 'BUKRS']), '1000'),
     currency: cleanString(valueOf(row, ['DocumentCurrency', 'Currency', 'WAERS']), 'INR'),
-    totalAmount: amt > 0 ? amt : 500000,
+    totalAmount: amt,
     documentDate: parseSapDate(valueOf(row, ['PurchaseOrderDate', 'DocumentDate', 'BEDAT'])) || new Date(),
     status: sanitizePoStatus(valueOf(row, ['PurchasingProcessingStatus', 'Status'])),
     sapUpdatedAt: parseSapDate(valueOf(row, ['LastChangeDateTime', 'ChangedAt'])),
@@ -140,43 +140,19 @@ const persistRows = async (Model, rows, mapRow, key) => {
 };
 
 export const syncPurchaseOrders = async (poNumbers = []) => {
-  let rows = [];
-  try {
-    if (poNumbers.length) {
-      const unique = [...new Set(poNumbers.map(String).map((item) => item.trim()).filter(Boolean))];
-      const filters = unique.map((number) => `PurchaseOrder eq '${number.replaceAll("'", "''")}'`).join(' or ');
-      rows = await fetchAllSapRows(sapConfig.endpoints.purchaseOrders, `$filter=${encodeURIComponent(filters)}`);
-    } else {
-      rows = await fetchAllSapRows(sapConfig.endpoints.purchaseOrders);
-    }
-  } catch (err) {
-    console.warn('[SAP Service] Direct SAP fetch note:', err.message);
+  let rows;
+  if (poNumbers.length) {
+    const unique = [...new Set(poNumbers.map(String).map((item) => item.trim()).filter(Boolean))];
+    const filters = unique.map((number) => `PurchaseOrder eq '${number.replaceAll("'", "''")}'`).join(' or ');
+    rows = await fetchAllSapRows(sapConfig.endpoints.purchaseOrders, `$filter=${encodeURIComponent(filters)}`);
+  } else {
+    rows = await fetchAllSapRows(sapConfig.endpoints.purchaseOrders);
   }
-
-  // Fallback to ensuring requested/default POs exist in DB if SAP returns no rows
-  if (!rows || !rows.length) {
-    const listToSeed = poNumbers.length ? poNumbers : ['4100005638', '4700000251', '4100005639', '4300001234', '6000012345'];
-    rows = listToSeed.map((num) => ({
-      PurchaseOrder: String(num).trim(),
-      Supplier: '11001810',
-      BPSupplierName: 'Fast Forward Logistics India',
-      CompanyCode: '1000',
-      DocumentCurrency: 'INR',
-      NetAmount: 500000,
-      Status: 'open'
-    }));
-  }
-
   return persistRows(PurchaseOrder, rows, mapPurchaseOrder, 'poNumber');
 };
 
 export const syncSuppliers = async () => {
-  let rows = [];
-  try {
-    rows = await fetchAllSapRows(sapConfig.endpoints.suppliers);
-  } catch (err) {
-    console.warn('[SAP Service] Direct SAP suppliers fetch note:', err.message);
-  }
+  const rows = await fetchAllSapRows(sapConfig.endpoints.suppliers);
   return persistRows(Supplier, rows, mapSupplier, 'supplierId');
 };
 
@@ -184,4 +160,3 @@ export const testSapConnection = async () => {
   await sapFetch(`${sapConfig.endpoints.purchaseOrders}?$top=1`);
   return true;
 };
-

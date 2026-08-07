@@ -41,7 +41,7 @@ const getMongoConfig = () => {
   };
 };
 
-export const connectDB = async () => {
+export const connectDB = async ({ seed = process.env.AUTO_SEED === 'true' } = {}) => {
   try {
     const { uri, databaseName } = getMongoConfig();
     if (uri.includes('mongodb+srv://')) {
@@ -59,7 +59,7 @@ export const connectDB = async () => {
 
     mongoose.set('bufferCommands', true);
     console.log(`[DB] Connected to "${mongoose.connection.name}" on ${mongoose.connection.host}`);
-    await seedDatabase();
+    if (seed) await seedDatabase();
     return true;
   } catch (error) {
     mongoose.set('bufferCommands', false);

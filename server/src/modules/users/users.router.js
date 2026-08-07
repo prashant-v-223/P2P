@@ -1,12 +1,13 @@
 import { Router } from 'express';
-import { getUsers, createUser, updateUser, deleteUser, getUserDelegation } from './users.controller.js';
-import { authenticateToken, optionalAuth } from '../../middleware/auth.middleware.js';
+import { getUsers, createUser, updateUser, deleteUser, getUserDelegation, getUserHierarchy } from './users.controller.js';
+import { authenticateToken } from '../../middleware/auth.middleware.js';
 import { authorizePermission } from '../../middleware/rbac.middleware.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 
 const router = Router();
 
-router.get('/', optionalAuth, asyncHandler(getUsers));
+router.get('/', authenticateToken, authorizePermission('users', 'view'), asyncHandler(getUsers));
+router.get('/hierarchy', authenticateToken, authorizePermission('users', 'view'), asyncHandler(getUserHierarchy));
 router.post('/', authenticateToken, authorizePermission('users', 'create'), asyncHandler(createUser));
 router.put('/:id', authenticateToken, authorizePermission('users', 'edit'), asyncHandler(updateUser));
 router.delete('/:id', authenticateToken, authorizePermission('users', 'delete'), asyncHandler(deleteUser));

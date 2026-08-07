@@ -227,10 +227,10 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
         <Link to={homePath} onClick={onNavigate} className="flex items-center gap-3 overflow-hidden transition-all duration-200">
           {collapsed ? (
 
-            <img src="/favicon.ico" alt="logo" srcset="" width={30} height={20} />
+            <img src="/favicon.ico" alt="logo" width={30} height={20} />
           ) : (
             <>
-              <img src="/logo.png" alt="logo" srcset="" width={150} height={25}  />
+              <img src="/logo.png" alt="logo" width={150} height={25} />
             </>
           )}
         </Link>

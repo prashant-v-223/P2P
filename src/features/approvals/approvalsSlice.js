@@ -1,17 +1,22 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { apiFetch } from '../../services/api';
 
+// ═══════════════════════════════════════════════════════════════════
+// HIERARCHICAL APPROVALS - Updated for new hierarchy system
+// ═══════════════════════════════════════════════════════════════════
+
 export const fetchPendingApprovals = createAsyncThunk(
   'approvals/fetchPendingApprovals',
-  async (roleArg, { getState, rejectWithValue }) => {
+  async (_, { rejectWithValue }) => {
     try {
-      const state = getState();
-      const role  = roleArg || state.auth.user?.role || 'Finance Lead';
-      const params = new URLSearchParams({ role, scope: 'actionable' });
-
-      const res  = await apiFetch(`/api/approvals/pending?${params.toString()}`);
+      // Use new hierarchical endpoint
+      const res = await apiFetch('/api/approvals/pending');
       const data = await res.json();
-      if (!res.ok) return rejectWithValue(data.error);
+      
+      if (!res.ok) {
+        return rejectWithValue(data.error || 'Failed to fetch approvals');
+      }
+      
       return data;
     } catch (err) {
       return rejectWithValue(err.message);
@@ -21,17 +26,27 @@ export const fetchPendingApprovals = createAsyncThunk(
 
 export const processApprovalAction = createAsyncThunk(
   'approvals/processApprovalAction',
-  async ({ id, action }, { rejectWithValue, dispatch }) => {
+  async ({ id, action, remarks }, { rejectWithValue, dispatch }) => {
     try {
       const res = await apiFetch(`/api/approvals/${id}/action`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${id}:${String(action).toLowerCase()}` },
-        body: JSON.stringify({ action })
+        headers: { 
+          'Content-Type': 'application/json', 
+          'Idempotency-Key': `${id}:${String(action).toLowerCase()}`
+        },
+        body: JSON.stringify({ action, remarks })
       });
+      
       const data = await res.json();
-      if (!res.ok) return rejectWithValue(data.error);
+      
+      if (!res.ok) {
+        return rejectWithValue(data.error || 'Action failed');
+      }
+      
+      // Refresh the list after action
       dispatch(fetchPendingApprovals());
-      return { id, action };
+      
+      return { id, action, data };
     } catch (err) {
       return rejectWithValue(err.message);
     }
@@ -43,26 +58,55 @@ const approvalsSlice = createSlice({
   initialState: {
     pendingQueue: [],
     pendingCount: 0,
+    userInfo: null,           // User's hierarchy info
     loading: false,
-    error: null
+    error: null,
+    actionLoading: false,
+    actionError: null
   },
   reducers: {
     setPendingCount: (state, action) => {
       state.pendingCount = Math.max(0, Number(action.payload) || 0);
+    },
+    clearError: (state) => {
+      state.error = null;
+      state.actionError = null;
     }
   },
   extraReducers: (builder) => {
     builder
+      // Fetch pending approvals
       .addCase(fetchPendingApprovals.pending, (state) => {
         state.loading = true;
+        state.error = null;
       })
       .addCase(fetchPendingApprovals.fulfilled, (state, action) => {
         state.loading = false;
-        state.pendingQueue = action.payload.approvals;
-        state.pendingCount = action.payload.actionableCount ?? action.payload.total ?? action.payload.count ?? 0;
+        state.pendingQueue = action.payload.requests || [];
+        state.pendingCount = action.payload.count || 0;
+        state.userInfo = action.payload.userInfo || null;
+        state.error = null;
+      })
+      .addCase(fetchPendingApprovals.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || 'Failed to load approvals';
+      })
+      
+      // Process approval action
+      .addCase(processApprovalAction.pending, (state) => {
+        state.actionLoading = true;
+        state.actionError = null;
+      })
+      .addCase(processApprovalAction.fulfilled, (state) => {
+        state.actionLoading = false;
+        state.actionError = null;
+      })
+      .addCase(processApprovalAction.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.actionError = action.payload || 'Action failed';
       });
   }
 });
 
 export default approvalsSlice.reducer;
-export const { setPendingCount } = approvalsSlice.actions;
+export const { setPendingCount, clearError } = approvalsSlice.actions;

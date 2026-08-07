@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import {
   UserPlus, Search, Shield, CheckCircle2, Loader2, X,
-  XCircle, ArrowRightLeft, Users, AlertCircle, Pencil, Trash2, ShieldAlert
+  XCircle, Users, AlertCircle, Pencil, Trash2, ShieldAlert, GitBranch, ChevronDown, ChevronRight, List, Network
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { SearchableSelect } from '../ui/searchable-select';
@@ -13,145 +13,107 @@ import { useToast } from '../ui/toast';
 import { ServerPagination } from '../ui/server-pagination';
 import { userHasPermission } from '../../lib/permissions';
 
-// ── Delegation Badge ─────────────────────────────────────────────────────────
-function DelegationBadge({ user }) {
-  if (user.delegationActive) {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-        <ArrowRightLeft className="w-2.5 h-2.5" />
-        On Leave
-      </span>
-    );
-  }
-  if (user.parentUserId) {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-600 border border-blue-200">
-        <ArrowRightLeft className="w-2.5 h-2.5" />
-        Delegate set
-      </span>
-    );
-  }
-  return <span className="text-[10px] text-slate-300">—</span>;
-}
-
-// ── Set Delegation Modal (Admin) ─────────────────────────────────────────────
-function DelegationModal({ user, allUsers, onClose, onSaved }) {
-  const [parentUserId, setParentUserId] = useState(user.parentUserId || '');
-  const [saving, setSaving] = useState(false);
-  const { showToast } = useToast();
-
-  const eligibleParents = allUsers.filter((u) => u.id !== user.id && u.status === 'Active');
-
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      const res = await apiFetch(`/api/users/${user.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          parentUserId: parentUserId || null,
-          delegationActive: Boolean(parentUserId),
-          delegationNote: ''
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to update delegation.');
-      showToast({ title: 'Delegation updated', description: `${user.name}'s delegation was saved.` });
-      onSaved();
-    } catch (err) {
-      showToast({ type: 'error', title: 'Update failed', description: err.message });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleRemove = async () => {
-    setSaving(true);
-    try {
-      const res = await apiFetch(`/api/users/${user.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parentUserId: null, delegationActive: false, delegationNote: '' })
-      });
-      if (!res.ok) throw new Error('Failed to remove delegation.');
-      showToast({ title: 'Delegation removed', description: `${user.name}'s delegation cleared.` });
-      onSaved();
-    } catch (err) {
-      showToast({ type: 'error', title: 'Failed', description: err.message });
-    } finally {
-      setSaving(false);
-    }
-  };
+// ── Hierarchy Node Component ──────────────────────────────────────────────────
+function HierarchyNode({ user, canEditUser, onEdit, level = 0 }) {
+  const [expanded, setExpanded] = useState(level < 2);
+  const hasReports = user.reports?.length > 0;
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && !saving && onClose()}>
-      <section className="modal-panel max-w-md">
-        <header className="modal-header">
-          <div className="flex items-center gap-3">
-            <span className="section-icon bg-amber-50 text-amber-600"><ArrowRightLeft className="h-4 w-4" /></span>
-            <div>
-              <h3 className="text-sm font-bold text-slate-950">Delegation Settings</h3>
-              <p className="mt-0.5 text-xs text-slate-500">{user.name} — {user.role}</p>
-            </div>
-          </div>
-          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100">
-            <X className="h-4 w-4" />
-          </button>
-        </header>
-
-        <div className="modal-body space-y-4">
-          {/* Info box */}
-          <div className="flex gap-2.5 rounded-xl bg-blue-50 border border-blue-200 p-3">
-            <AlertCircle className="h-4 w-4 text-blue-500 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-blue-700">
-              Select a parent/delegate user below. Once saved, the selected user can act on all pending approvals assigned to <strong>{user.name}</strong>.
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Delegate / Parent User <span className="text-rose-500">*</span>
-            </label>
-            <SearchableSelect
-              options={eligibleParents.map((u) => ({ label: `${u.name} (${u.role})`, value: u.id }))}
-              value={parentUserId}
-              onChange={(val) => setParentUserId(val)}
-              placeholder="— Select a delegate user —"
-            />
-          </div>
-
-          <div className="modal-footer">
-            {user.parentUserId && (
-              <button type="button" onClick={handleRemove} disabled={saving}
-                className="px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-lg border border-rose-200 transition">
-                Remove Delegation
+    <li className="relative">
+      {/* Tree line connector */}
+      {level > 0 && (
+        <div className="absolute left-0 top-0 h-full w-6">
+          <div className="absolute left-[11px] top-0 h-[26px] w-[1px] bg-slate-200"></div>
+          <div className="absolute left-[11px] top-[26px] h-[calc(100%-26px)] w-[1px] bg-slate-200"></div>
+          <div className="absolute left-[11px] top-[26px] h-[1px] w-3 bg-slate-200"></div>
+        </div>
+      )}
+      
+      <div className={`relative group rounded-lg transition-all duration-200 ${level > 0 ? 'ml-6' : ''}`}>
+        <div className="flex items-start gap-2 py-1.5">
+          <span className="mt-3 w-5 shrink-0">
+            {hasReports && (
+              <button 
+                type="button" 
+                onClick={() => setExpanded((value) => !value)} 
+                className="rounded p-0.5 text-slate-500 hover:bg-slate-100" 
+                aria-label={`${expanded ? 'Collapse' : 'Expand'} ${user.name}'s reports`}
+              >
+                {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
               </button>
             )}
-            <div className="flex gap-2 ml-auto">
-              <button type="button" onClick={onClose} disabled={saving}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg">
-                Cancel
+          </span>
+          
+          <div className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 py-2 shadow-2xs ${
+            user.status === 'Active' 
+              ? 'border-slate-200 bg-white' 
+              : 'border-rose-100 bg-rose-50/50 opacity-60'
+          }`}>
+            <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+              user.status === 'Active' ? 'bg-teal-100 text-teal-700' : 'bg-slate-200 text-slate-500'
+            }`}>
+              {user.avatar}
+            </span>
+            
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[11px] font-bold text-slate-800">{user.name}</span>
+              <span className="block truncate text-[10px] text-slate-500">{user.role} · {user.department}</span>
+            </span>
+            
+            <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${
+              user.status === 'Active' 
+                ? 'bg-emerald-50 text-emerald-700' 
+                : 'bg-slate-100 text-slate-500'
+            }`}>
+              {user.status}
+            </span>
+            
+            {hasReports && (
+              <span className="hidden rounded bg-teal-50 px-1.5 py-0.5 text-[9px] font-bold text-teal-700 sm:inline">
+                {user.reports.length} report{user.reports.length === 1 ? '' : 's'}
+              </span>
+            )}
+            
+            {canEditUser && (
+              <button 
+                type="button" 
+                onClick={() => onEdit(user)} 
+                className="rounded p-1 text-slate-400 hover:bg-teal-50 hover:text-teal-700" 
+                title={`Edit ${user.name}`} 
+                aria-label={`Edit ${user.name}`}
+              >
+                <Pencil className="h-3.5 w-3.5" />
               </button>
-              <button type="button" onClick={handleSave} disabled={saving || !parentUserId}
-                className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg disabled:opacity-50">
-                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-                Save Delegation
-              </button>
-            </div>
+            )}
           </div>
         </div>
-      </section>
-    </div>
+        
+        {hasReports && expanded && (
+          <ul className="ml-4 border-l border-slate-200 pl-3">
+            {user.reports.map((report) => (
+              <HierarchyNode 
+                key={report.id} 
+                user={report} 
+                level={level + 1}
+                canEditUser={canEditUser} 
+                onEdit={onEdit} 
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+    </li>
   );
 }
 
-// ── Edit User Modal (Permission Controlled) ──────────────────────────────────
-function EditUserModal({ user, roleOptions, onClose, onSaved }) {
+// ── Edit User Modal ──────────────────────────────────────────────────────────
+function EditUserModal({ user, roleOptions, allUsers, onClose, onSaved }) {
   const [name, setName] = useState(user.name || '');
   const [email, setEmail] = useState(user.email || '');
   const [role, setRole] = useState(user.role || 'procurement');
   const [department, setDepartment] = useState(user.department || 'Procurement');
   const [status, setStatus] = useState(user.status || 'Active');
+  const [managerId, setManagerId] = useState(user.managerId || '');
   const [password, setPassword] = useState('');
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
@@ -170,7 +132,14 @@ function EditUserModal({ user, roleOptions, onClose, onSaved }) {
 
     try {
       setSaving(true);
-      const payload = { name: name.trim(), email: email.trim(), role, department, status };
+      const payload = { 
+        name: name.trim(), 
+        email: email.trim(), 
+        role, 
+        department, 
+        status, 
+        managerId: managerId || null 
+      };
       if (password) payload.password = password;
 
       const res = await apiFetch(`/api/users/${user.id}`, {
@@ -208,25 +177,66 @@ function EditUserModal({ user, roleOptions, onClose, onSaved }) {
         <form noValidate onSubmit={handleUpdate} className="modal-body max-h-[calc(100dvh-5.5rem)] overflow-y-auto space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name <span className="text-rose-500">*</span></label>
-            <input type="text" required value={name} onChange={(e) => { setName(e.target.value); setErrors({ ...errors, name: '' }); }} className={`w-full text-sm p-2.5 rounded-lg border ${errors.name ? 'border-rose-400' : 'border-slate-300'}`} />
+            <input 
+              type="text" 
+              required 
+              value={name} 
+              onChange={(e) => { setName(e.target.value); setErrors({ ...errors, name: '' }); }} 
+              className={`w-full text-sm p-2.5 rounded-lg border ${errors.name ? 'border-rose-400' : 'border-slate-300'}`} 
+            />
             <FieldError>{errors.name}</FieldError>
           </div>
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Official Email <span className="text-rose-500">*</span></label>
-            <input type="email" required value={email} onChange={(e) => { setEmail(e.target.value); setErrors({ ...errors, email: '' }); }} className={`w-full text-sm p-2.5 rounded-lg border ${errors.email ? 'border-rose-400' : 'border-slate-300'}`} />
+            <input 
+              type="email" 
+              required 
+              value={email} 
+              onChange={(e) => { setEmail(e.target.value); setErrors({ ...errors, email: '' }); }} 
+              className={`w-full text-sm p-2.5 rounded-lg border ${errors.email ? 'border-rose-400' : 'border-slate-300'}`} 
+            />
             <FieldError>{errors.email}</FieldError>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">System Role <span className="text-rose-500">*</span></label>
-              <SearchableSelect value={role} onChange={(value) => { setRole(value); setErrors({ ...errors, role: '' }); }} error={errors.role} options={roleOptions} searchPlaceholder="Search roles..." />
+              <SearchableSelect 
+                value={role} 
+                onChange={(value) => { setRole(value); setErrors({ ...errors, role: '' }); }} 
+                error={errors.role} 
+                options={roleOptions} 
+                searchPlaceholder="Search roles..." 
+              />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Department <span className="text-rose-500">*</span></label>
-              <SearchableSelect value={department} onChange={(value) => { setDepartment(value); setErrors({ ...errors, department: '' }); }} error={errors.department} options={['Procurement', 'Finance & Accounts', 'EXIM & Logistics', 'Supply Chain', 'IT Operations', 'Executive Management', 'Accounts & Finance']} searchPlaceholder="Search departments..." />
+              <SearchableSelect 
+                value={department} 
+                onChange={(value) => { setDepartment(value); setErrors({ ...errors, department: '' }); }} 
+                error={errors.department} 
+                options={['Procurement', 'Finance & Accounts', 'EXIM & Logistics', 'Supply Chain', 'IT Operations', 'Executive Management', 'Accounts & Finance']} 
+                searchPlaceholder="Search departments..." 
+              />
             </div>
+          </div>
+
+          <div className="rounded-xl border border-teal-100 bg-teal-50/50 p-3 space-y-3">
+            <p className="text-xs font-bold text-teal-900">Organisation hierarchy</p>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Reports to</label>
+            <SearchableSelect 
+              value={managerId} 
+              onChange={setManagerId} 
+              options={[
+                { label: 'No manager (system-managed role)', value: '' },
+                ...allUsers
+                  .filter((item) => item.id !== user.id && item.status === 'Active')
+                  .map((item) => ({ label: `${item.name} — ${item.role}`, value: item.id }))
+              ]} 
+              searchable 
+            />
+            <p className="text-[11px] text-teal-800">Level, visibility, and approval scope are assigned automatically from the selected role and reporting manager.</p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -242,7 +252,13 @@ function EditUserModal({ user, roleOptions, onClose, onSaved }) {
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Reset Password <span className="font-normal text-slate-400">(optional)</span></label>
-              <input type="password" placeholder="Leave blank to keep current" value={password} onChange={(e) => { setPassword(e.target.value); setErrors({ ...errors, password: '' }); }} className={`w-full text-sm p-2.5 rounded-lg border ${errors.password ? 'border-rose-400' : 'border-slate-300'}`} />
+              <input 
+                type="password" 
+                placeholder="Leave blank to keep current" 
+                value={password} 
+                onChange={(e) => { setPassword(e.target.value); setErrors({ ...errors, password: '' }); }} 
+                className={`w-full text-sm p-2.5 rounded-lg border ${errors.password ? 'border-rose-400' : 'border-slate-300'}`} 
+              />
               <FieldError>{errors.password}</FieldError>
             </div>
           </div>
@@ -260,7 +276,7 @@ function EditUserModal({ user, roleOptions, onClose, onSaved }) {
   );
 }
 
-// ── Delete User Confirmation Modal ───────────────────────────────────────────
+// ── Delete User Confirmation Modal ──────────────────────────────────────────
 function DeleteUserModal({ user, onClose, onDeleted }) {
   const [deleting, setDeleting] = useState(false);
   const { showToast } = useToast();
@@ -298,7 +314,7 @@ function DeleteUserModal({ user, onClose, onDeleted }) {
 
         <div className="modal-body space-y-4">
           <div className="rounded-xl border border-rose-200 bg-rose-50/70 p-3.5 text-xs text-rose-700">
-            Are you sure you want to permanently delete <strong>{user.name}</strong> ({user.email})? This action will remove the account and clear any associated delegation settings.
+            Are you sure you want to permanently delete <strong>{user.name}</strong> ({user.email})? This action cannot be undone.
           </div>
 
           <div className="modal-footer">
@@ -314,9 +330,13 @@ function DeleteUserModal({ user, onClose, onDeleted }) {
   );
 }
 
+// ── Main UserManagementView Component ──────────────────────────────────────
 export default function UserManagementView() {
   const currentUser = useSelector((state) => state.auth?.user);
   const [usersList, setUsersList] = useState([]);
+  const [hierarchyUsers, setHierarchyUsers] = useState([]);
+  const [hierarchyTree, setHierarchyTree] = useState([]);
+  const [viewMode, setViewMode] = useState('table');
   const [roleOptions, setRoleOptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -324,7 +344,6 @@ export default function UserManagementView() {
   const [pagination, setPagination] = useState({ total: 0, page: 1, size: 10, totalPages: 1 });
   const [stats, setStats] = useState({ activeUsers: 0, inactiveUsers: 0, totalUsers: 0 });
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
-  const [delegationModal, setDelegationModal] = useState(null);
   const [editUserModal, setEditUserModal] = useState(null);
   const [deleteUserModal, setDeleteUserModal] = useState(null);
   const [name, setName] = useState('');
@@ -332,6 +351,8 @@ export default function UserManagementView() {
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('procurement');
   const [department, setDepartment] = useState('Procurement');
+  const [managerId, setManagerId] = useState('');
+  const [statusUpdatingId, setStatusUpdatingId] = useState(null);
   const [errors, setErrors] = useState({});
   const { showToast } = useToast();
 
@@ -357,9 +378,10 @@ export default function UserManagementView() {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const [usersRes, rolesRes] = await Promise.all([
+      const [usersRes, rolesRes, hierarchyRes] = await Promise.all([
         apiFetch(`/api/users?${searchParams.toString()}`),
-        apiFetch('/api/roles?size=100')
+        apiFetch('/api/roles?size=100'),
+        apiFetch('/api/users/hierarchy')
       ]);
       if (!usersRes.ok) throw new Error('Unable to load users.');
       const usersData = await usersRes.json();
@@ -371,6 +393,11 @@ export default function UserManagementView() {
         totalPages: usersData.totalPages || 1
       });
       setStats(usersData.stats || { activeUsers: 0, inactiveUsers: 0, totalUsers: usersData.total || 0 });
+      if (hierarchyRes.ok) {
+        const hierarchyData = await hierarchyRes.json();
+        setHierarchyUsers(hierarchyData.users || []);
+        setHierarchyTree(hierarchyData.tree || []);
+      }
       if (rolesRes.ok) {
         const rolesData = await rolesRes.json();
         const activeRoles = (rolesData.roles || []).filter((item) => item.status !== 'Inactive').map((item) => item.roleName);
@@ -404,12 +431,12 @@ export default function UserManagementView() {
       const res = await apiFetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password, role, department })
+        body: JSON.stringify({ name, email, password, role, department, managerId: managerId || null })
       });
       const data = await res.json();
       if (res.ok) {
         setIsAddUserOpen(false);
-        setName(''); setEmail(''); setPassword('');
+        setName(''); setEmail(''); setPassword(''); setManagerId('');
         fetchUsers();
         showToast({ title: 'User provisioned', description: `${name.trim()} can now sign in.` });
       } else {
@@ -422,12 +449,43 @@ export default function UserManagementView() {
     }
   };
 
+  const handleStatusToggle = async (user) => {
+    const nextStatus = user.status === 'Active' ? 'Inactive' : 'Active';
+    setStatusUpdatingId(user.id);
+    try {
+      const res = await apiFetch(`/api/users/${user.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unable to update account status.');
+      showToast({ title: `Account ${nextStatus.toLowerCase()}`, description: `${user.name} is now ${nextStatus.toLowerCase()}.` });
+      fetchUsers();
+    } catch (err) {
+      showToast({ type: 'error', title: 'Status was not updated', description: err.message });
+    } finally {
+      setStatusUpdatingId(null);
+    }
+  };
+
+  // Calculate active reports for each manager
+  const activeReportCounts = hierarchyUsers.reduce((counts, user) => {
+    if (user.status === 'Active' && user.managerId) {
+      counts[user.managerId] = (counts[user.managerId] || 0) + 1;
+    }
+    return counts;
+  }, {});
+
+  const managerCount = Object.keys(activeReportCounts).length;
+  const topLevelCount = hierarchyTree.length;
+
   // Stat cards
   const statCards = [
     { label: 'Total Users', value: stats.totalUsers, color: 'text-teal-700', bg: 'bg-teal-50', border: 'border-teal-200' },
     { label: 'Active', value: stats.activeUsers, color: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-200' },
     { label: 'Inactive', value: stats.inactiveUsers, color: 'text-rose-600', bg: 'bg-rose-50', border: 'border-rose-200' },
-    { label: 'Delegating', value: usersList.filter((u) => u.delegationActive).length, color: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-200' },
+    { label: 'Managers', value: managerCount, color: 'text-blue-700', bg: 'bg-blue-50', border: 'border-blue-200' },
   ];
 
   return (
@@ -446,60 +504,111 @@ export default function UserManagementView() {
         ))}
       </div>
 
+      {/* View Toggle */}
+      <section className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-2 shadow-2xs">
+        <div className="inline-flex rounded-lg bg-slate-100 p-1" role="tablist" aria-label="User directory view">
+          <button 
+            type="button" 
+            role="tab" 
+            aria-selected={viewMode === 'table'} 
+            onClick={() => setViewMode('table')} 
+            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-bold transition ${
+              viewMode === 'table' 
+                ? 'bg-white text-teal-700 shadow-2xs' 
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <List className="h-3.5 w-3.5" />
+            User table
+          </button>
+          <button 
+            type="button" 
+            role="tab" 
+            aria-selected={viewMode === 'hierarchy'} 
+            onClick={() => setViewMode('hierarchy')} 
+            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-bold transition ${
+              viewMode === 'hierarchy' 
+                ? 'bg-white text-teal-700 shadow-2xs' 
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Network className="h-3.5 w-3.5" />
+            Organisation hierarchy
+          </button>
+        </div>
+        <span className="hidden text-[10px] font-medium text-slate-400 sm:block">
+          {viewMode === 'table' ? 'Search, filter, and manage user accounts' : 'Review reporting lines and manage each user'}
+        </span>
+      </section>
+
       {/* Controls Bar */}
       <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs flex flex-col md:flex-row items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto flex-1">
-          <div className="relative min-w-[240px] flex-1">
-            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search user by name, email or role..."
-              value={search}
-              onChange={(e) => updateFilters({ q: e.target.value })}
-              className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#0d7676] focus:outline-none"
-            />
+        {viewMode === 'table' && (
+          <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto flex-1">
+            <div className="relative min-w-[240px] flex-1">
+              <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search user by name, email or role..."
+                value={search}
+                onChange={(e) => updateFilters({ q: e.target.value })}
+                className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:bg-white focus:ring-2 focus:ring-[#0d7676] focus:outline-none"
+              />
+            </div>
+            <div className="w-36">
+              <SearchableSelect
+                options={[
+                  { label: 'All statuses', value: 'All' },
+                  { label: 'Active', value: 'Active' },
+                  { label: 'Inactive', value: 'Inactive' }
+                ]}
+                value={statusFilter}
+                onChange={(val) => updateFilters({ status: val })}
+                size="sm"
+                searchable={false}
+              />
+            </div>
+            <div className="w-36">
+              <SearchableSelect
+                options={[
+                  { label: 'Newest first', value: 'newest' },
+                  { label: 'Oldest first', value: 'oldest' },
+                  { label: 'Name A–Z', value: 'name' }
+                ]}
+                value={sort}
+                onChange={(val) => updateFilters({ sort: val })}
+                size="sm"
+                searchable={false}
+              />
+            </div>
+            <div className="w-32">
+              <SearchableSelect
+                options={[
+                  { label: '10 per page', value: 10 },
+                  { label: '20 per page', value: 20 },
+                  { label: '50 per page', value: 50 },
+                  { label: '100 per page', value: 100 }
+                ]}
+                value={pageSize}
+                onChange={(val) => updateFilters({ size: val })}
+                size="sm"
+                searchable={false}
+              />
+            </div>
           </div>
-          <div className="w-36">
-            <SearchableSelect
-              options={[
-                { label: 'All statuses', value: 'All' },
-                { label: 'Active', value: 'Active' },
-                { label: 'Inactive', value: 'Inactive' }
-              ]}
-              value={statusFilter}
-              onChange={(val) => updateFilters({ status: val })}
-              size="sm"
-              searchable={false}
-            />
+        )}
+        
+        {viewMode === 'hierarchy' && (
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="section-icon hidden bg-teal-50 text-teal-700 sm:inline-flex">
+              <GitBranch className="h-4 w-4" />
+            </span>
+            <div>
+              <p className="text-xs font-bold text-slate-900">Hierarchy management</p>
+              <p className="text-[10px] text-slate-500">Edit a user to update their reporting manager.</p>
+            </div>
           </div>
-          <div className="w-36">
-            <SearchableSelect
-              options={[
-                { label: 'Newest first', value: 'newest' },
-                { label: 'Oldest first', value: 'oldest' },
-                { label: 'Name A–Z', value: 'name' }
-              ]}
-              value={sort}
-              onChange={(val) => updateFilters({ sort: val })}
-              size="sm"
-              searchable={false}
-            />
-          </div>
-          <div className="w-32">
-            <SearchableSelect
-              options={[
-                { label: '10 per page', value: 10 },
-                { label: '20 per page', value: 20 },
-                { label: '50 per page', value: 50 },
-                { label: '100 per page', value: 100 }
-              ]}
-              value={pageSize}
-              onChange={(val) => updateFilters({ size: val })}
-              size="sm"
-              searchable={false}
-            />
-          </div>
-        </div>
+        )}
 
         {canCreateUser ? (
           <button
@@ -521,19 +630,72 @@ export default function UserManagementView() {
         )}
       </div>
 
+      {/* Permission Warning */}
       {!canManageUsers && !canCreateUser && !canEditUser && !canDeleteUser && (
         <div className="flex items-center gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-800 font-medium shadow-2xs">
           <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-          <span>Viewing User Directory in <strong>Read-Only Mode</strong>. Administrative actions (Add, Edit, Delete, Delegation) require <strong>users.manage</strong> permission.</span>
+          <span>Viewing User Directory in <strong>Read-Only Mode</strong>. Administrative actions require <strong>users.manage</strong> permission.</span>
         </div>
       )}
 
-      {/* Main Table Card */}
+      {/* Main Content */}
       <div className="surface-card flex min-h-0 flex-1 flex-col border border-slate-200 rounded-xl bg-white shadow-2xs overflow-hidden">
         {loading ? (
           <div className="py-16 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
             <Loader2 className="w-5 h-5 animate-spin text-[#0d7676]" />
             <span>Loading user directory...</span>
+          </div>
+        ) : viewMode === 'hierarchy' ? (
+          <div className="report-scroll min-h-0 flex-1 overflow-auto p-4">
+            <div className="mx-auto grid w-full max-w-7xl gap-4 xl:grid-cols-[minmax(0,1fr)_270px]">
+              <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs">
+                {hierarchyTree.length > 0 ? (
+                  <ul className="space-y-1">
+                    {hierarchyTree.map((user) => (
+                      <HierarchyNode 
+                        key={user.id} 
+                        user={user} 
+                        canEditUser={canEditUser} 
+                        onEdit={setEditUserModal} 
+                      />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="py-12 text-center text-xs text-slate-400">No hierarchy data available.</p>
+                )}
+              </section>
+              
+              <aside className="h-fit space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-2xs xl:sticky xl:top-4">
+                <div>
+                  <p className="text-xs font-bold text-slate-900">Hierarchy overview</p>
+                  <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                    Keep managers active and assign each team member to the right reporting line.
+                  </p>
+                </div>
+                
+                <div className="grid grid-cols-3 gap-2 xl:grid-cols-1">
+                  <div className="rounded-lg border border-teal-100 bg-teal-50 p-2.5">
+                    <p className="text-[10px] font-semibold uppercase text-teal-700">People</p>
+                    <p className="mt-1 text-xl font-extrabold text-teal-800">{stats.totalUsers}</p>
+                  </div>
+                  <div className="rounded-lg border border-blue-100 bg-blue-50 p-2.5">
+                    <p className="text-[10px] font-semibold uppercase text-blue-700">Managers</p>
+                    <p className="mt-1 text-xl font-extrabold text-blue-800">{managerCount}</p>
+                  </div>
+                  <div className="rounded-lg border border-amber-100 bg-amber-50 p-2.5">
+                    <p className="text-[10px] font-semibold uppercase text-amber-700">Top level</p>
+                    <p className="mt-1 text-xl font-extrabold text-amber-800">{topLevelCount}</p>
+                  </div>
+                </div>
+                
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Management tip</p>
+                  <p className="mt-1.5 text-[11px] leading-5 text-slate-600">
+                    Before deactivating a manager, reassign their active direct reports through the edit form.
+                  </p>
+                </div>
+              </aside>
+            </div>
           </div>
         ) : (
           <div className="report-scroll min-h-0 flex-1 overflow-auto">
@@ -545,7 +707,7 @@ export default function UserManagementView() {
                   <th className="py-3.5 px-4">EMAIL</th>
                   <th className="py-3.5 px-4">ASSIGNED ROLE</th>
                   <th className="py-3.5 px-4">DEPARTMENT</th>
-                  <th className="py-3.5 px-4">DELEGATION</th>
+                  <th className="py-3.5 px-4">HIERARCHY</th>
                   <th className="py-3.5 px-4">STATUS</th>
                   <th className="py-3.5 px-4 text-right">ACTIONS</th>
                 </tr>
@@ -556,21 +718,20 @@ export default function UserManagementView() {
                     <td colSpan={8} className="py-12 text-center text-xs text-slate-400">No users found.</td>
                   </tr>
                 ) : usersList.map((usr, index) => (
-                  <tr key={usr.id} className={`hover:bg-teal-50/20 transition ${usr.delegationActive ? 'bg-amber-50/30' : ''}`}>
+                  <tr key={usr.id} className="hover:bg-teal-50/20 transition">
                     <td className="w-12 font-semibold tabular-nums text-slate-400 px-4 py-3">
                       {(pagination.page - 1) * pagination.size + index + 1}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-full font-bold text-xs flex items-center justify-center border shadow-2xs ${usr.delegationActive ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-teal-100 text-[#0d7676] border-teal-200'}`}>
+                        <div className={`w-8 h-8 rounded-full font-bold text-xs flex items-center justify-center border shadow-2xs ${
+                          usr.status === 'Active' 
+                            ? 'bg-teal-100 text-[#0d7676] border-teal-200' 
+                            : 'bg-slate-200 text-slate-500 border-slate-300'
+                        }`}>
                           {usr.avatar}
                         </div>
-                        <div>
-                          <span className="font-bold text-slate-900">{usr.name}</span>
-                          {usr.delegationNote && (
-                            <p className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[160px]">{usr.delegationNote}</p>
-                          )}
-                        </div>
+                        <span className="font-bold text-slate-900">{usr.name}</span>
                       </div>
                     </td>
                     <td className="text-slate-600 font-mono px-4 py-3">{usr.email}</td>
@@ -582,20 +743,51 @@ export default function UserManagementView() {
                     </td>
                     <td className="text-slate-500 font-medium px-4 py-3">{usr.department}</td>
                     <td className="px-4 py-3">
-                      <div className="flex flex-col gap-1">
-                        <DelegationBadge user={usr} />
-                        {usr.parentUser && (
-                          <span className="text-[10px] text-slate-400">
-                            → {usr.parentUser.name}
-                          </span>
-                        )}
+                      <div className="text-[11px] text-slate-600">
+                        <span className="font-bold">Level {usr.hierarchyLevel ?? '—'}</span>
+                        <p className="mt-0.5 text-[10px] text-slate-400">
+                          {usr.managerName ? `Reports to ${usr.managerName}` : 'Top-level user'}
+                        </p>
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${usr.status === 'Active' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-600 border-rose-200'}`}>
-                        {usr.status === 'Active' ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                        {usr.status}
-                      </span>
+                      {canEditUser ? (() => {
+                        const hasActiveReports = Boolean(activeReportCounts[usr.id]);
+                        const isCurrentUser = currentUser?.id === usr.id;
+                        const disabled = statusUpdatingId === usr.id || (usr.status === 'Active' && (hasActiveReports || isCurrentUser));
+                        const title = hasActiveReports 
+                          ? 'Reassign or deactivate direct reports before deactivating this manager.' 
+                          : isCurrentUser 
+                            ? 'You cannot deactivate your own account.' 
+                            : `Set account to ${usr.status === 'Active' ? 'inactive' : 'active'}`;
+                        return (
+                          <button 
+                            type="button" 
+                            role="switch" 
+                            aria-checked={usr.status === 'Active'} 
+                            disabled={disabled} 
+                            title={title} 
+                            onClick={() => handleStatusToggle(usr)} 
+                            className="inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <span className={`relative h-5 w-9 rounded-full transition ${usr.status === 'Active' ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${usr.status === 'Active' ? 'left-[18px]' : 'left-0.5'}`} />
+                            </span>
+                            <span className={`text-[10px] font-bold ${usr.status === 'Active' ? 'text-emerald-700' : 'text-slate-500'}`}>
+                              {statusUpdatingId === usr.id ? 'Saving...' : usr.status}
+                            </span>
+                          </button>
+                        );
+                      })() : (
+                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                          usr.status === 'Active' 
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                            : 'bg-rose-50 text-rose-600 border-rose-200'
+                        }`}>
+                          {usr.status === 'Active' ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                          {usr.status}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
@@ -607,17 +799,6 @@ export default function UserManagementView() {
                           >
                             <Pencil className="w-3 h-3 text-teal-600" />
                             Edit
-                          </button>
-                        )}
-                        
-                        {canManageUsers && (
-                          <button
-                            onClick={() => setDelegationModal(usr)}
-                            title="Manage delegation"
-                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg border border-slate-200 transition"
-                          >
-                            <ArrowRightLeft className="w-3 h-3 text-amber-600" />
-                            Delegate
                           </button>
                         )}
 
@@ -632,7 +813,7 @@ export default function UserManagementView() {
                           </button>
                         )}
 
-                        {!canEditUser && !canManageUsers && !canDeleteUser && (
+                        {!canEditUser && !canDeleteUser && (
                           <span className="text-[11px] text-slate-400 italic">Read-only</span>
                         )}
                       </div>
@@ -645,20 +826,24 @@ export default function UserManagementView() {
         )}
       </div>
 
-      <ServerPagination
-        page={pagination.page}
-        totalPages={pagination.totalPages}
-        total={pagination.total}
-        pageSize={pagination.size}
-        itemLabel="users"
-        onPageChange={(nextPage) => updateFilters({ page: nextPage })}
-      />
+      {/* Pagination */}
+      {viewMode === 'table' && (
+        <ServerPagination
+          page={pagination.page}
+          totalPages={pagination.totalPages}
+          total={pagination.total}
+          pageSize={pagination.size}
+          itemLabel="users"
+          onPageChange={(nextPage) => updateFilters({ page: nextPage })}
+        />
+      )}
 
       {/* Edit User Modal */}
       {editUserModal && createPortal(
         <EditUserModal
           user={editUserModal}
           roleOptions={roleOptions}
+          allUsers={hierarchyUsers}
           onClose={() => setEditUserModal(null)}
           onSaved={() => { setEditUserModal(null); fetchUsers(); }}
         />,
@@ -675,17 +860,6 @@ export default function UserManagementView() {
         document.body
       )}
 
-      {/* Delegation Modal */}
-      {delegationModal && createPortal(
-        <DelegationModal
-          user={delegationModal}
-          allUsers={usersList}
-          onClose={() => setDelegationModal(null)}
-          onSaved={() => { setDelegationModal(null); fetchUsers(); }}
-        />,
-        document.body
-      )}
-
       {/* Add User Modal */}
       {isAddUserOpen && createPortal(
         <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !submitting && setIsAddUserOpen(false)}>
@@ -698,36 +872,108 @@ export default function UserManagementView() {
                   <p className="mt-0.5 text-xs text-slate-500">Create an account and assign database-backed access.</p>
                 </div>
               </div>
-              <button type="button" disabled={submitting} onClick={() => setIsAddUserOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close modal"><X className="h-4 w-4" /></button>
+              <button 
+                type="button" 
+                disabled={submitting} 
+                onClick={() => setIsAddUserOpen(false)} 
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" 
+                aria-label="Close modal"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </header>
-            <form noValidate onSubmit={handleCreateUser} className="modal-body max-h-[calc(100dvh-5.5rem)] overflow-y-auto">
+            
+            <form noValidate onSubmit={handleCreateUser} className="modal-body max-h-[calc(100dvh-5.5rem)] overflow-y-auto space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name <span className="text-rose-500" aria-hidden="true">*</span></label>
-                <input type="text" required placeholder="e.g. Ramesh Shah" value={name} onChange={(e) => { setName(e.target.value); setErrors({ ...errors, name: '' }); }} className={`w-full text-sm p-2.5 rounded-lg border ${errors.name ? 'border-rose-400' : 'border-slate-300'}`} />
+                <input 
+                  type="text" 
+                  required 
+                  placeholder="e.g. Ramesh Shah" 
+                  value={name} 
+                  onChange={(e) => { setName(e.target.value); setErrors({ ...errors, name: '' }); }} 
+                  className={`w-full text-sm p-2.5 rounded-lg border ${errors.name ? 'border-rose-400' : 'border-slate-300'}`} 
+                />
                 <FieldError>{errors.name}</FieldError>
               </div>
+              
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Official Email <span className="text-rose-500" aria-hidden="true">*</span></label>
-                <input type="email" required placeholder="ramesh@rayzon.one" value={email} onChange={(e) => { setEmail(e.target.value); setErrors({ ...errors, email: '' }); }} className={`w-full text-sm p-2.5 rounded-lg border ${errors.email ? 'border-rose-400' : 'border-slate-300'}`} />
+                <input 
+                  type="email" 
+                  required 
+                  placeholder="ramesh@rayzon.one" 
+                  value={email} 
+                  onChange={(e) => { setEmail(e.target.value); setErrors({ ...errors, email: '' }); }} 
+                  className={`w-full text-sm p-2.5 rounded-lg border ${errors.email ? 'border-rose-400' : 'border-slate-300'}`} 
+                />
                 <FieldError>{errors.email}</FieldError>
               </div>
+              
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Temporary Password <span className="text-rose-500" aria-hidden="true">*</span></label>
-                <input type="password" required minLength={8} placeholder="Minimum 8 characters" value={password} onChange={(e) => { setPassword(e.target.value); setErrors({ ...errors, password: '' }); }} className={`w-full text-sm p-2.5 rounded-lg border ${errors.password ? 'border-rose-400' : 'border-slate-300'}`} />
+                <input 
+                  type="password" 
+                  required 
+                  minLength={8} 
+                  placeholder="Minimum 8 characters" 
+                  value={password} 
+                  onChange={(e) => { setPassword(e.target.value); setErrors({ ...errors, password: '' }); }} 
+                  className={`w-full text-sm p-2.5 rounded-lg border ${errors.password ? 'border-rose-400' : 'border-slate-300'}`} 
+                />
                 <FieldError>{errors.password}</FieldError>
               </div>
+              
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">System Role <span className="text-rose-500" aria-hidden="true">*</span></label>
-                <SearchableSelect value={role} onChange={(value) => { setRole(value); setErrors({ ...errors, role: '' }); }} error={errors.role} options={roleOptions} searchPlaceholder="Search roles..." />
+                <SearchableSelect 
+                  value={role} 
+                  onChange={(value) => { setRole(value); setErrors({ ...errors, role: '' }); }} 
+                  error={errors.role} 
+                  options={roleOptions} 
+                  searchPlaceholder="Search roles..." 
+                />
               </div>
+              
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Department <span className="text-rose-500" aria-hidden="true">*</span></label>
-                <SearchableSelect value={department} onChange={(value) => { setDepartment(value); setErrors({ ...errors, department: '' }); }} error={errors.department} options={['Procurement', 'Finance & Accounts', 'EXIM & Logistics', 'Supply Chain', 'IT Operations', 'Executive Management', 'Accounts & Finance']} searchPlaceholder="Search departments..." />
+                <SearchableSelect 
+                  value={department} 
+                  onChange={(value) => { setDepartment(value); setErrors({ ...errors, department: '' }); }} 
+                  error={errors.department} 
+                  options={['Procurement', 'Finance & Accounts', 'EXIM & Logistics', 'Supply Chain', 'IT Operations', 'Executive Management', 'Accounts & Finance']} 
+                  searchPlaceholder="Search departments..." 
+                />
               </div>
+              
+              <div className="rounded-xl border border-teal-100 bg-teal-50/50 p-3 space-y-2">
+                <p className="text-xs font-bold text-teal-900">Organisation hierarchy</p>
+                <label className="block text-xs font-semibold text-slate-700">Reports to</label>
+                <SearchableSelect 
+                  value={managerId} 
+                  onChange={setManagerId} 
+                  options={[
+                    { label: 'No manager (system-managed role)', value: '' },
+                    ...hierarchyUsers
+                      .filter((item) => item.status === 'Active')
+                      .map((item) => ({ label: `${item.name} — ${item.role}`, value: item.id }))
+                  ]} 
+                  searchable 
+                />
+                <p className="text-[11px] text-teal-800">The system automatically assigns the hierarchy level, visibility, and approval scope.</p>
+              </div>
+              
               <div className="modal-footer">
                 <button type="button" onClick={() => setIsAddUserOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
                 <button type="submit" disabled={submitting} className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-[#0d7676] hover:bg-[#0a5c5c] rounded-lg disabled:opacity-50">
-                  {submitting ? <><Loader2 className="w-4 h-4 animate-spin text-white" /><span>Provisioning...</span></> : <span>Provision User</span>}
+                  {submitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      <span>Provisioning...</span>
+                    </>
+                  ) : (
+                    <span>Provision User</span>
+                  )}
                 </button>
               </div>
             </form>

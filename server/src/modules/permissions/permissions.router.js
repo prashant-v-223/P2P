@@ -1,14 +1,14 @@
 import { Router } from 'express';
-import { authenticateToken, optionalAuth } from '../../middleware/auth.middleware.js';
+import { authenticateToken } from '../../middleware/auth.middleware.js';
 import { authorizeRole } from '../../middleware/rbac.middleware.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { createPermission, deletePermission, getPermissions, updatePermission } from './permissions.controller.js';
 
 const router = Router();
 
-router.get('/', optionalAuth, asyncHandler(getPermissions));
-router.post('/', optionalAuth, asyncHandler(createPermission));
-router.put('/:id', optionalAuth, asyncHandler(updatePermission));
-router.delete('/:id', optionalAuth, asyncHandler(deletePermission));
+router.get('/', authenticateToken, asyncHandler(getPermissions));
+router.post('/', authenticateToken, authorizeRole(['admin', 'System Admin']), asyncHandler(createPermission));
+router.put('/:id', authenticateToken, authorizeRole(['admin', 'System Admin']), asyncHandler(updatePermission));
+router.delete('/:id', authenticateToken, authorizeRole(['admin', 'System Admin']), asyncHandler(deletePermission));
 
 export default router;

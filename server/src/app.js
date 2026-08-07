@@ -14,6 +14,7 @@ import p2pRouter from './modules/p2p/p2pRoutes.js';
 import eventsRouter from './modules/events/events.router.js';
 import documentsRouter from './modules/documents/documents.router.js';
 import permissionsRouter from './modules/permissions/permissions.router.js';
+import sapRouter from './modules/sap/sap.router.js';
 import { errorHandler } from './middleware/error.middleware.js';
 
 const app = express();
@@ -40,6 +41,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/roles', rolesRouter);
 app.use('/api/permissions', permissionsRouter);
+app.use('/api/sap', sapRouter);
 app.use('/api/workflows', workflowsRouter);
 app.use('/api/exchange-rates', exchangeRatesRouter);
 app.use('/api/approvals', approvalsRouter);

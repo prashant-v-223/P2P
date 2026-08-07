@@ -231,30 +231,27 @@ export default function PendingApprovalsView() {
   const fetchApprovals = useCallback(async () => {
     try {
       setLoading(true);
-      const params = new URLSearchParams(searchParams);
-      params.set('role', currentUserRole);
-
-      // Default to actionable scope if not specified or when 'mine' is true
-      if (!params.get('scope')) {
-        params.set('scope', onlyMine ? 'actionable' : 'actionable');
-      }
-
-      const res = await apiFetch(`/api/approvals/pending?${params.toString()}`);
+      const res = await apiFetch('/api/approvals/pending');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Unable to load approvals.');
 
-      setApprovals(data.approvals || []);
-      const aCount = data.actionableCount ?? data.total ?? (data.approvals || []).length;
+      const visibleApprovals = (data.approvals || []).filter((approval) => {
+        const matchesQuery = !query || [approval.id, approval.vendorName, approval.requestedBy, approval.type].filter(Boolean).some((value) => String(value).toLowerCase().includes(query.toLowerCase()));
+        const matchesType = type === 'All' || approval.type === type;
+        return matchesQuery && matchesType && (!onlyMine || approval.canApprove);
+      });
+      setApprovals(visibleApprovals);
+      const aCount = (data.approvals || []).filter((approval) => approval.canApprove).length;
       setActionableCount(aCount);
-      setAllCount(data.allCount ?? data.total ?? (data.approvals || []).length);
+      setAllCount(data.count || 0);
 
       dispatch(setPendingCount(aCount));
 
       setPagination({
-        total: data.total || 0,
-        page: data.page || 1,
-        size: data.size || pageSize,
-        totalPages: data.totalPages || 1
+        total: visibleApprovals.length,
+        page: 1,
+        size: pageSize,
+        totalPages: 1
       });
     } catch (error) {
       showToast({ type: 'error', title: 'Could not load approvals', description: error.message });
@@ -268,16 +265,6 @@ export default function PendingApprovalsView() {
     fetchApprovals();
   }, [fetchApprovals]);
 
-  // Check if logged-in user's role matches the current active step role
-  const canUserActOnApproval = useCallback((approval) => {
-    const ur = (currentUserRole || '').toLowerCase().replace(/[\s_-]+/g, ' ').trim();
-    if (ur === 'admin' || ur === 'system admin') return true;
-    const reqRole = (approval.currentStepRole || '').toLowerCase();
-    if (!reqRole) return true;
-    const ur2 = ur.replace(/[\s_-]+/g, '');
-    const req2 = reqRole.replace(/[\s_-]+/g, '');
-    return req2.includes(ur2) || ur2.includes(req2);
-  }, [currentUserRole]);
 
   // Summary derived from the current page — labelled "on page" since the API doesn't
   // (yet) return aggregate totals for the whole queue.
@@ -290,11 +277,10 @@ export default function PendingApprovalsView() {
         ? parseFloat(approval.amountINR.replace(/[^0-9.-]+/g, '')) || 0
         : (approval.amountINR || 0);
       value += amt;
-      if (canUserActOnApproval(approval)) awaitingMe += 1;
       if (getUrgency(approval.submittedAt) === 'critical') aging += 1;
     });
     return { value, awaitingMe, aging };
-  }, [approvals, canUserActOnApproval]);
+  }, [approvals]);
 
   const handleAction = async (id, action) => {
     const trimmedRemark = remarks[id]?.trim() || '';
@@ -488,7 +474,6 @@ export default function PendingApprovalsView() {
               const urgencyStyle = URGENCY_STYLES[urgency];
               const statusStyle = STATUS_STYLES[approval.status];
               const typeStyle = TYPE_STYLES[approval.type] || DEFAULT_TYPE_STYLE;
-              const canAct = canUserActOnApproval(approval);
               const allocations = Array.isArray(approval.allocations) ? approval.allocations : null;
 
               return (
@@ -701,12 +686,6 @@ export default function PendingApprovalsView() {
                     {/* 5. Comments + actions */}
                     {!isTerminal && (
                       <div className="space-y-2.5 border-t border-slate-100 pt-2.5">
-                        {!canAct && (
-                          <div role="status" className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
-                            <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" />
-                            This step requires <strong className="mx-1">{approval.currentStepRole || 'another role'}</strong> to act. You're logged in as <strong className="ml-1">{currentUserRole}</strong>.
-                          </div>
-                        )}
 
                         <div className="flex flex-col items-stretch justify-between gap-2.5 md:flex-row md:items-end">
                           <div className="flex-1 space-y-1">
@@ -734,8 +713,7 @@ export default function PendingApprovalsView() {
                           <div className="flex shrink-0 items-center justify-end gap-2">
                             <button
                               onClick={() => handleAction(approval.id, 'Approve')}
-                              disabled={isProcessing || !canAct}
-                              title={!canAct ? `Only ${approval.currentStepRole} can approve this step` : 'Approve this request'}
+                              disabled={isProcessing }
                               className="flex h-10 items-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-extrabold text-white shadow-2xs transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               {isProcessing && processingAction === 'Approve' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
@@ -744,8 +722,7 @@ export default function PendingApprovalsView() {
 
                             <button
                               onClick={() => handleAction(approval.id, 'Return')}
-                              disabled={isProcessing || !canAct}
-                              title={!canAct ? `Only ${approval.currentStepRole} can return this step` : 'Return for changes'}
+                              disabled={isProcessing }
                               className="flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 text-xs font-bold text-slate-700 transition-all hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               {isProcessing && processingAction === 'Return' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5 text-slate-500" />}
@@ -755,8 +732,7 @@ export default function PendingApprovalsView() {
                             <button
                               onClick={() => handleAction(approval.id, 'Reject')}
                               onBlur={() => setConfirmingReject((current) => (current === approval.id ? null : current))}
-                              disabled={isProcessing || !canAct}
-                              title={!canAct ? `Only ${approval.currentStepRole} can reject this step` : 'Reject this request'}
+                              disabled={isProcessing }
                               className={`flex h-10 items-center gap-1.5 rounded-xl border px-4 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
                                 confirmingReject === approval.id
                                   ? 'border-rose-600 bg-rose-600 text-white hover:bg-rose-700'

@@ -12,6 +12,7 @@ import { Badge } from '../ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { FieldError } from '../ui/field-error';
 import { ServerPagination } from '../ui/server-pagination';
+import { SearchableSelect } from '../ui/searchable-select';
 
 const emptyRole = { roleName: '', description: '', status: 'Active' };
 const emptyPermission = { key: '', name: '', module: '', description: '', status: 'Active' };

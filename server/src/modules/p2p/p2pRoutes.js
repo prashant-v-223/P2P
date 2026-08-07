@@ -20,10 +20,12 @@ import { User } from '../../models/User.js';
 import { broadcastEvent } from '../../services/sse.service.js';
 import { sendApprovalCreatedEmails } from '../../services/notification.service.js';
 import { authenticateToken, optionalAuth } from '../../middleware/auth.middleware.js';
+import { authorizeRole } from '../../middleware/rbac.middleware.js';
 import { sendRfqInvitationEmail, sendBlSubmittedEmail, sendBlAssignedToAgentEmail, sendBlCustomsClearedEmail, sendRfqAwardedEmail } from '../../services/mail.service.js';
 import crypto from 'node:crypto';
 import { WorkflowAudit } from '../../models/WorkflowAudit.js';
 import { ensureRfqAwardWorkflows, ensureBlInvoiceWorkflows } from '../workflows/workflowDefaults.js';
+import { resolveApprovalChain, FINANCIAL_REVIEW_THRESHOLD, STRATEGIC_REVIEW_THRESHOLD } from '../../services/approvalRouting.service.js';
 
 const router = express.Router();
 
@@ -601,9 +603,14 @@ function getDefaultWorkflow(moduleType, amount) {
   ]);
 }
 
-// Create Approval record from workflow result
+// Create Approval record using the hierarchical routing service
 async function createApprovalRecord({ referenceId, type, vendorName, amountFormatted, poRef, requestedBy, requestedById, requestId, transactionSnapshot = {}, wf }) {
-  const firstStep = wf.steps[0];
+  // Use the hierarchy-aware routing service to determine the correct chain.
+  const requester = requestedById ? await User.findOne({ id: requestedById }, { id: 1, name: 1, role: 1, team: 1, managerId: 1, managerName: 1, department: 1, hierarchyLevel: 1, canSeeAllRequests: 1, isManager: 1 }).lean() : null;
+  const numAmount = Number(transactionSnapshot?.amount || 0) || Number(String(amountFormatted).replace(/[^0-9.-]+/g, '')) || 0;
+  const chain = await resolveApprovalChain({ requester, amount: numAmount });
+  const stepsForWorkflow = chain.length > 0 ? chain : (wf?.steps || []);
+  const firstStep = chain[0] || (wf?.steps?.[0] ? { ...wf.steps[0], statusKey: `Pending ${wf.steps[0].title} Approval` } : null);
   const initialStatus = firstStep?.statusKey || 'Pending Procurement Head Approval';
 
   const newApproval = await Approval.create({
@@ -617,14 +624,18 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
     currentSlab: wf.slab,
     workflowId: wf.workflowId,
     workflowVersion: wf.workflowVersion || 1,
-    workflowSnapshot: { workflowId: wf.workflowId, workflowCode: wf.workflowCode, version: wf.workflowVersion || 1, slab: wf.slab, steps: wf.steps },
+    workflowSnapshot: { workflowId: wf.workflowId, workflowCode: wf.workflowCode, version: wf.workflowVersion || 1, slab: wf.slab, steps: stepsForWorkflow },
     transactionSnapshot: { ...transactionSnapshot, referenceId, type, vendorName, amount: amountFormatted, poReference: poRef },
     requestedById,
+    requestedByTeam: requester?.team || null,
+    assignedApprover: firstStep?.assignedApproverId || null,
+    assignedApproverName: firstStep?.assignedApproverName || null,
+    assignedApproverRole: firstStep?.assignedApproverRole || null,
     requestId,
     poReference: poRef || '',
     currentStep: 1,
-    totalSteps: wf.totalSteps,
-    workflowSteps: JSON.stringify(wf.steps),
+    totalSteps: stepsForWorkflow.length || wf.totalSteps,
+    workflowSteps: JSON.stringify(stepsForWorkflow),
     status: initialStatus,
     submittedAt: new Date(),
     slaHours: 48,
@@ -700,34 +711,6 @@ async function syncExistingBlInvoicesToApprovals() {
     console.error('[Master Data] syncExistingBlInvoicesToApprovals error:', err.message);
   }
 }
-
-
-router.post('/seed', async (req, res) => {
-  try {
-    const { seedDatabase } = await import('../../db/seed.js');
-    await seedDatabase();
-
-    const [poCount, vendorCount, userCount, rfqCount] = await Promise.all([
-      PurchaseOrder.countDocuments(),
-      Vendor.countDocuments(),
-      User.countDocuments(),
-      RfqHeader.countDocuments()
-    ]);
-
-    res.json({
-      success: true,
-      message: 'P2P Master Data successfully seeded and stored in MongoDB database.',
-      data: {
-        purchaseOrders: poCount,
-        vendors: vendorCount,
-        users: userCount,
-        rfqs: rfqCount
-      }
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
 
 
 // ─────────────────────────────────────────────────────────────────────────────

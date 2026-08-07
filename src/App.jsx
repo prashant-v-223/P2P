@@ -48,7 +48,7 @@ const CustomAgentsView = lazy(() => import('./features/p2p/CustomAgentsView'));
 const CustomAgentFormView = lazy(() => import('./features/p2p/CustomAgentFormView'));
 const LogisticsProvidersView = lazy(() => import('./features/p2p/LogisticsProvidersView'));
 const LogisticsProviderFormView = lazy(() => import('./features/p2p/LogisticsProviderFormView'));
-const SapSyncView = lazy(() => import('./features/p2p/SapSyncView'));
+const SapIntegrationView = lazy(() => import('./components/admin/SapIntegrationView'));
 
 const ApprovalEngineView = lazy(() => import('./features/p2p/ApprovalEngineView'));
 const SettlementLedgerView = lazy(() => import('./features/p2p/SettlementLedgerView'));
@@ -110,7 +110,7 @@ export default function App() {
   useRealtimeNotifications();
 
   return (
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <VendorProvider>
         <CustomAgentProvider>
           <Suspense fallback={
@@ -261,8 +261,8 @@ export default function App() {
             <Route path="admin/roles" element={<RolesAndPermissionsView />} />
             
             {/* SYSTEM Group Routes */}
-            <Route path="p2p/sap-sync" element={<SapSyncView />} />
-            <Route path="admin/sap-sync" element={<SapSyncView />} />
+            <Route path="p2p/sap-sync" element={<SapIntegrationView />} />
+            <Route path="admin/sap-sync" element={<SapIntegrationView />} />
             <Route path="workflows" element={<WorkflowsDashboard />} />
             <Route path="admin/workflows" element={<WorkflowsDashboard />} />
             <Route path="exchange-rates" element={<ExchangeRatesDashboard />} />

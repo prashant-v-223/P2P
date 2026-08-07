@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getPendingApprovals, processApprovalAction, getApprovalHistory, getApprovalById } from './approvals.controller.js';
+import { getHierarchyPendingApprovals, getHierarchyTeamStats, getReportingChain } from './approvals.hierarchy.controller.js';
 import { authenticateToken, optionalAuth } from '../../middleware/auth.middleware.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 

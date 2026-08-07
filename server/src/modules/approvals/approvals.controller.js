@@ -153,6 +153,23 @@ function getCurrentStepRole(approval) {
   return '';
 }
 
+async function getStepAssignment(approval, stepNumber) {
+  let step = null;
+  try {
+    step = JSON.parse(approval.workflowSteps || '[]').find((item) => item.step === stepNumber);
+  } catch (_) {}
+  const role = String(step?.roleKey || step?.roleName || '').replace(/[\s-]+/g, '_').toLowerCase();
+  if (!role || role.includes('finance') || role === 'md' || role.includes('director')) {
+    return { assignedApprover: null, assignedApproverName: null, assignedApproverRole: role || null };
+  }
+  const manager = await User.findOne({ status: 'Active', team: approval.requestedByTeam, role: { $in: ['procurement_head', 'exim-manager'] } }, { id: 1, name: 1, role: 1 }).lean();
+  return {
+    assignedApprover: manager?.id || null,
+    assignedApproverName: manager?.name || null,
+    assignedApproverRole: manager?.role || role
+  };
+}
+
 // ── Check if user role(s) can act on current step (with Hierarchy support) ────────────────────────────
 function canActOnStep(userRole, approval) {
   const roles = Array.isArray(userRole) ? userRole : [userRole];
@@ -409,7 +426,8 @@ export const processApprovalAction = async (req, res) => {
       }
     }
 
-    if (!canActOnStep(effectiveRoles, approval)) {
+    const isAssignedApprover = approval.assignedApprover && approval.assignedApprover === actingUserId;
+    if (!isAssignedApprover && !canActOnStep(effectiveRoles, approval)) {
       const requiredRole = getCurrentStepRole(approval);
       return res.status(403).json({
         success: false,
@@ -435,6 +453,10 @@ export const processApprovalAction = async (req, res) => {
       newStatus = 'Rejected';
     }
 
+    const nextAssignment = ['Approved & Dispatched', 'Rejected'].includes(newStatus)
+      ? { assignedApprover: null, assignedApproverName: null, assignedApproverRole: null }
+      : await getStepAssignment(approval, newStep);
+
     const actionRemarks = (req.body.remarks || '').trim() || `${rawAction.charAt(0).toUpperCase() + rawAction.slice(1)} by ${actingUser}`;
 
     // ── Audit History Log ─────────────────────────────────────────────────
@@ -455,7 +477,7 @@ export const processApprovalAction = async (req, res) => {
     approval = await Approval.findOneAndUpdate(
       { _id: approval._id, version: expectedVersion, status: previousState.status, currentStep: previousState.currentStep },
       {
-        $set: { status: newStatus, currentStep: newStep, remarks: actionRemarks, actionedBy: actingUser, actionedAt: actionTime, ...(['Approved & Dispatched', 'Rejected'].includes(newStatus) ? { completedAt: actionTime } : {}) },
+        $set: { status: newStatus, currentStep: newStep, remarks: actionRemarks, actionedBy: actingUser, actionedAt: actionTime, ...nextAssignment, ...(['Approved & Dispatched', 'Rejected'].includes(newStatus) ? { completedAt: actionTime } : {}) },
         $inc: { version: 1 },
         $push: { actionHistory: actionRecord }
       },

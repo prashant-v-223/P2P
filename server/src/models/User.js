@@ -38,7 +38,13 @@ const userSchema = new mongoose.Schema({
   delegationActive: { type: Boolean, default: false },          // When true, parent can act for this user
   delegationStartAt: { type: Date, default: null },
   delegationEndAt: { type: Date, default: null },
-  delegationNote: { type: String, default: '', maxlength: 240 } // e.g. "Annual leave until Aug 15"
+  delegationNote: { type: String, default: '', maxlength: 240 }, // e.g. "Annual leave until Aug 15"
+  managerId: { type: String, default: null, index: true },
+  managerName: { type: String, default: null, trim: true },
+  team: { type: String, default: null, trim: true, index: true },
+  hierarchyLevel: { type: Number, min: 0, max: 10, default: 3, index: true },
+  canSeeAllRequests: { type: Boolean, default: false },
+  isManager: { type: Boolean, default: false, index: true }
 }, {
   timestamps: true,
   toJSON: {
@@ -60,3 +66,4 @@ userSchema.methods.verifyPassword = function verifyUserPassword(password) {
 };
 
 export const User = mongoose.models.User || mongoose.model('User', userSchema);
+
