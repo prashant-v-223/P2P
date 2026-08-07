@@ -100,26 +100,8 @@ const rfqBlEntrySchema = new mongoose.Schema({
   }]
 }, { timestamps: true, strict: false });
 
-// Customs Duty Payments
-const customDutyPaymentSchema = new mongoose.Schema({
-  dutyId: { type: String, required: true, unique: true, index: true },
-  blId: { type: String, required: true, index: true },
-  blNumber: { type: String, required: true },
-  boeNumber: { type: String },
-  portCode: { type: String, default: 'INMUN1' },
-  dutyAmount: { type: Number, required: true },
-  customAgentName: String,
-  icegateRef: { type: String },
-  status: { 
-    type: String, 
-    enum: ['draft', 'pending', 'approved', 'rejected', 'paid'], 
-    default: 'draft',
-    index: true 
-  },
-  approvalInstanceId: String,
-  utrNumber: String,
-  paidAt: Date
-}, { timestamps: true, strict: false });
+// Customs Duty Payments (schema moved to ../CustomDutyPayment.js to prevent
+// duplicate model registration — see server/src/models/CustomDutyPayment.js)
 
 // Logistics & Freight Invoices
 const logisticsPaymentSchema = new mongoose.Schema({
@@ -148,4 +130,4 @@ const logisticsPaymentSchema = new mongoose.Schema({
 export const RfqHeader = mongoose.models.RfqHeader || mongoose.model('RfqHeader', rfqHeaderSchema);
 export const RfqQuote = mongoose.models.RfqQuote || mongoose.model('RfqQuote', rfqQuoteSchema);
 export const RfqBlEntry = mongoose.models.RfqBlEntry || mongoose.model('RfqBlEntry', rfqBlEntrySchema);
-export const CustomDutyPayment = mongoose.models.CustomDutyPayment || mongoose.model('CustomDutyPayment', customDutyPaymentSchema);
+export { CustomDutyPayment } from './CustomDutyPayment.js';

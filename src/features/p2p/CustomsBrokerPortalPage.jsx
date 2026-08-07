@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, Clock, FileText, Loader2, LogOut, Search, ShieldCheck, Ship, Upload } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Clock, Download, FileText, Loader2, LogOut, Search, ShieldCheck, Ship, Upload } from 'lucide-react';
 import { useCustomAgent } from '../customAgentPortal/customAgentContext';
 import { useToast } from '../../components/ui/toast';
 import { SearchableSelect } from '../../components/ui/searchable-select';

@@ -9,6 +9,7 @@ import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { ServerPagination } from '../../components/ui/server-pagination';
+import { downloadDocumentFile } from '../../utils/downloadHelper';
 
 const statusLabel = (value) => ({
   submitted: 'Submitted',
@@ -38,6 +39,20 @@ function AssignModal({ entry, agents, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Deduplicate agents by ID / Agency Name
+  const uniqueAgentMap = new Map();
+  (agents || []).forEach(agent => {
+    const key = String(agent.agentId || agent._id || agent.agencyName || '').trim().toLowerCase();
+    if (key && !uniqueAgentMap.has(key)) {
+      uniqueAgentMap.set(key, agent);
+    }
+  });
+
+  const agentOptions = Array.from(uniqueAgentMap.values()).map((agent) => ({
+    label: `${agent.agencyName || 'Customs Agent'} — ${agent.contactPerson || agent.email || 'Clearance Manager'}`,
+    value: agent.agentId || agent._id
+  }));
+
   const assign = async () => {
     if (!agentId) return setError('Select an active customs agent.');
     setSaving(true); setError('');
@@ -65,7 +80,7 @@ function AssignModal({ entry, agents, onClose, onSaved }) {
           <label className="block text-xs font-bold">Select Agent *
             <div className="mt-1.5">
               <SearchableSelect
-                options={agents.map((agent) => ({ label: `${agent.agencyName} — ${agent.contactPerson || agent.email}`, value: agent.agentId }))}
+                options={agentOptions}
                 value={agentId}
                 onChange={(val) => setAgentId(val)}
                 placeholder="Search and select agent..."
@@ -115,7 +130,7 @@ function EximList() {
       if (resBl.ok) setEntries(dataBl.data || []);
       else setError(dataBl.error || 'Failed to load BL entries.');
 
-      if (resAgents.ok) setAgents(dataAgents.agents || []);
+      if (resAgents.ok) setAgents(dataAgents.agents || dataAgents.data || []);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -168,32 +183,35 @@ function EximList() {
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
                 <tr>
-                  <th className="px-4 py-3">#</th>
-                  <th>BL Number</th>
+                  <th className="p-4">BL Number</th>
                   <th>RFQ</th>
                   <th>Vendor</th>
-                  <th className="text-center">Containers</th>
+                  <th>Clearing Port</th>
+                  <th>Containers</th>
+                  <th>Docs</th>
+                  <th>Agent</th>
                   <th>Status</th>
-                  <th>Assigned Agent</th>
-                  <th>Date</th>
-                  <th className="px-4 text-center">Actions</th>
+                  <th className="p-4 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody>
-                {paginated.map((entry, index) => (
-                  <tr key={entry.blId} className="border-t hover:bg-slate-50/70">
-                    <td className="px-4 py-4 text-slate-400">{(page - 1) * pageSize + index + 1}</td>
-                    <td className="font-bold">{entry.blNumber}</td>
-                    <td><span className="rounded border bg-slate-50 px-2 py-1 font-mono text-[10px]">{entry.rfqNumber || entry.rfqId}</span></td>
-                    <td>{entry.vendorName || '—'}</td>
-                    <td className="text-center"><span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-cyan-50 font-bold text-[#0d7676]">{entry.containerCount}</span></td>
-                    <td><span className={`rounded-full px-2 py-1 text-[10px] font-bold border ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</span></td>
-                    <td>{entry.customAgentName ? <span className="rounded border border-teal-200 bg-teal-50 px-2 py-1 text-[10px] font-semibold text-[#0d7676]">{entry.customAgentName}</span> : <span className="text-slate-400">Unassigned</span>}</td>
-                    <td className="text-slate-500">{dateText(entry.createdAt)}</td>
-                    <td className="px-4 text-center">
-                      <button onClick={() => navigate(`/admin/exim/${entry.blId}`)} className="rounded-lg border p-2 text-slate-500 hover:border-teal-300 hover:text-[#0d7676]" title="View BL Details & Workflow">
-                        <Eye className="h-4 w-4" />
-                      </button>
+              <tbody className="divide-y divide-slate-100">
+                {paginated.map((entry) => (
+                  <tr key={entry.blId} onClick={() => navigate(`/admin/exim/${entry.blId}`)} className="cursor-pointer hover:bg-slate-50 transition">
+                    <td className="p-4 font-mono font-bold text-slate-900">{entry.blNumber}</td>
+                    <td>{entry.rfqNumber || entry.rfqId}</td>
+                    <td className="font-semibold text-slate-700">{entry.vendorName}</td>
+                    <td>{entry.portOfClearing || '—'}</td>
+                    <td>{entry.containerCount}</td>
+                    <td><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold">{entry.documents?.length || 0}</span></td>
+                    <td>{entry.customAgentName || <span className="text-slate-400 italic">Unassigned</span>}</td>
+                    <td><span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold border ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</span></td>
+                    <td className="p-4 text-right">
+                      <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                        <button onClick={() => navigate(`/admin/exim/${entry.blId}`)} className="inline-flex items-center gap-1 rounded border px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50"><Eye className="h-3.5 w-3.5" />Review</button>
+                        {entry.status !== 'custom_cleared' && (
+                          <button onClick={() => setSelected(entry)} className="inline-flex items-center gap-1 rounded bg-[#0d7676] px-2.5 py-1 text-xs font-bold text-white hover:bg-teal-700"><UserPlus className="h-3.5 w-3.5" />Assign</button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -220,8 +238,16 @@ function EximList() {
 
 function EximDetail({ blId }) {
   const { showToast } = useToast();
-  const [entry, setEntry] = useState(null); const [agents, setAgents] = useState([]); const [error, setError] = useState(''); const [loading, setLoading] = useState(true); const [assigning, setAssigning] = useState(false); const [docType, setDocType] = useState(''); const [file, setFile] = useState(null); const [uploading, setUploading] = useState(false);
-  const [remarks, setRemarks] = useState(''); const [actionLoading, setActionLoading] = useState(false);
+  const [entry, setEntry] = useState(null);
+  const [agents, setAgents] = useState([]);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [assigning, setAssigning] = useState(false);
+  const [docType, setDocType] = useState('');
+  const [file, setFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [remarks, setRemarks] = useState('');
+  const [actionLoading, setActionLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -230,11 +256,20 @@ function EximDetail({ blId }) {
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || 'BL entry not found.');
       setEntry(json.data);
-      setAgents(json.agents || []);
+      setAgents(json.agents || json.dataAgents || []);
     } catch (e) { setError(e.message); } finally { setLoading(false); }
   };
 
   useEffect(() => { load(); }, [blId]);
+
+  const handleDownload = (doc) => {
+    const fileTarget = doc.fileUrl || doc.fileName || doc.title || doc.name;
+    if (!fileTarget) {
+      showToast({ type: 'error', title: 'File Missing', description: 'Document file reference is missing.' });
+      return;
+    }
+    downloadDocumentFile(fileTarget, doc.docType || 'EXIM Document');
+  };
 
   const handleWorkflowAction = async (actionType) => {
     if ((actionType === 'reject' || actionType === 'return') && !remarks.trim()) {
@@ -292,7 +327,7 @@ function EximDetail({ blId }) {
         <div className="flex gap-2">
           <Link to={`/admin/rfqs/${entry.rfq?.rfqNumber || entry.rfqId}`} className="rounded-lg px-3 py-2 text-xs font-bold text-[#0d5bd7]">View RFQ →</Link>
           {entry.status !== 'custom_cleared' && (
-            <button onClick={() => setAssigning(true)} className="inline-flex items-center gap-1 rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white">
+            <button onClick={() => setAssigning(true)} className="inline-flex items-center gap-1 rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white hover:bg-teal-700 transition cursor-pointer">
               <UserPlus className="h-4 w-4" />
               {entry.customAgentId ? 'Reassign Agent' : 'Assign to Agent'}
             </button>
@@ -350,14 +385,21 @@ function EximDetail({ blId }) {
             </thead>
             <tbody>
               {entry.documents?.map((doc, index) => (
-                <tr key={`${doc.fileUrl}-${index}`} className="border-t">
+                <tr key={`${doc.fileUrl || doc.fileName}-${index}`} className="border-t">
                   <td className="px-4 py-4 font-semibold">{doc.docType}</td>
                   <td>{doc.stage || (String(doc.uploadedBy).includes('Customs Agent') ? 'Customs Agent' : 'Vendor Submission')}</td>
                   <td>{doc.uploadedBy || 'Vendor'}</td>
-                  <td className="max-w-xs truncate font-mono text-[10px]">{doc.fileUrl}</td>
+                  <td className="max-w-xs truncate font-mono text-[10px]">{doc.fileUrl || doc.fileName}</td>
                   <td>{dateText(doc.uploadedAt, true)}</td>
                   <td className="px-4">
-                    <button className="inline-flex items-center gap-1 rounded border px-2 py-1 text-[#0d5bd7]"><Download className="h-3 w-3" />Download</button>
+                    <button
+                      type="button"
+                      onClick={() => handleDownload(doc)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-2.5 py-1 text-xs font-bold text-[#0d7676] hover:bg-teal-100 transition cursor-pointer shadow-2xs"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      <span>Download</span>
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -379,7 +421,7 @@ function EximDetail({ blId }) {
             searchable={false}
           />
           <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} className="rounded-lg border bg-slate-50 px-3 py-2 text-xs" />
-          <button onClick={upload} disabled={uploading || !docType || !file} className="rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">
+          <button onClick={upload} disabled={uploading || !docType || !file} className="rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white disabled:opacity-50 hover:bg-teal-700 transition cursor-pointer">
             {uploading ? 'Uploading...' : 'Upload Documents'}
           </button>
         </div>

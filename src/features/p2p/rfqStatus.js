@@ -28,7 +28,10 @@ export function getRfqAllocationSummary(rfq) {
   let badgeTone = 'sky';
   let badgeText = (rfq?.status || 'PUBLISHED').replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 
-  if (isPendingApproval) {
+  if (rawStatus === 'closed' || rawStatus === 'cancelled') {
+    badgeTone = 'rose';
+    badgeText = rawStatus === 'closed' ? 'CLOSED' : 'CANCELLED';
+  } else if (isPendingApproval) {
     badgeTone = 'amber';
     badgeText = pendingContainerCount > 0
       ? `AWARD APPROVAL PENDING (${pendingContainerCount}/${totalContainers})`

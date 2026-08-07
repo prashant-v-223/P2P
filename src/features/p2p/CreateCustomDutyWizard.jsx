@@ -245,7 +245,7 @@ export default function CreateCustomDutyWizard() {
                       <div className="flex items-center gap-2 shrink-0">
                         <button
                           type="button"
-                          onClick={() => handleDownloadDoc(fileName)}
+                          onClick={() => handleDownloadDoc(doc.fileUrl || doc.url || doc.fileName || doc.name || fileName, fileName)}
                           className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold text-[11px] transition cursor-pointer"
                           title="Download document from AWS S3"
                         >

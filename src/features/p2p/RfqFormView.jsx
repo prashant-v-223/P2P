@@ -257,6 +257,29 @@ export default function RfqFormView() {
             setEstimatedReadinessDate(cargo.estimatedReadinessDate ? new Date(cargo.estimatedReadinessDate).toISOString().slice(0, 10) : '');
             setSelectedVendors((data.invitedVendors || []).map((vendor) => vendor.vendorId || vendor.sapVendorCode).filter(Boolean));
           }
+        } else if (copyFrom) {
+          const data = copyFrom;
+          const cleanTitle = data.title ? (data.title.startsWith('COPY -') ? data.title : `COPY - ${data.title}`) : '';
+          setTitle(cleanTitle);
+          setLinkedPoId(data.poId || data.sapPoNumber || '');
+          setDescription(data.description || '');
+          if (data.closingDate) {
+            setClosingDate(new Date(data.closingDate).toISOString().slice(0, 16));
+          } else {
+            const d = new Date();
+            d.setDate(d.getDate() + 7);
+            setClosingDate(d.toISOString().slice(0, 16));
+          }
+          const cargo = data.cargoDetails || {};
+          setShippingTerms(cargo.shippingTerms || '');
+          setCargoType(cargo.cargoType || '');
+          setPortOfLoading(cargo.portOfOrigin || '');
+          setPortOfDischarge(cargo.portOfDestination || '');
+          setContainerType(cargo.containerType || '');
+          setContainerCount(String(cargo.containerCount || 1));
+          setWeightPerContainer(cargo.weightPerContainer || '');
+          setEstimatedReadinessDate(cargo.estimatedReadinessDate ? new Date(cargo.estimatedReadinessDate).toISOString().slice(0, 10) : '');
+          setSelectedVendors((data.invitedVendors || []).map((vendor) => vendor.vendorId || vendor.sapVendorCode || vendor.id).filter(Boolean));
         }
       } catch (e) {
         console.error('Fetch data error:', e);
@@ -265,7 +288,7 @@ export default function RfqFormView() {
       }
     }
     loadData();
-  }, [id, isEdit]);
+  }, [id, isEdit, copyFrom]);
 
   const toggleVendor = (vId) => {
     setSelectedVendors((prev) =>

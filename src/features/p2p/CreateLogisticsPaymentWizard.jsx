@@ -1,4 +1,4 @@
-// CreateLogisticsPaymentWizard.jsx - Styled with Custom UI Components
+// CreateLogisticsPaymentWizard.jsx - Styled with Custom UI Components & Enhanced UI/UX
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
@@ -7,7 +7,8 @@ import { useToast } from '../../components/ui/toast';
 import { CustomInput } from '../../components/ui/custom-input';
 import { Button } from '../../components/ui/button';
 import { SearchableSelect } from '../../components/ui/searchable-select';
-import { Building2, FileText, Paperclip, Send, ChevronLeft, MapPin, Calendar, DollarSign, ShieldCheck } from 'lucide-react';
+import { downloadDocumentFile } from '../../utils/downloadHelper';
+import { Building2, FileText, Paperclip, Send, ChevronLeft, MapPin, Calendar, IndianRupee, ShieldCheck, Cloud, X, Download } from 'lucide-react';
 
 export default function CreateLogisticsPaymentWizard() {
   const navigate = useNavigate();
@@ -20,6 +21,7 @@ export default function CreateLogisticsPaymentWizard() {
   const [providerId, setProviderId] = useState('');
   const [providerName, setProviderName] = useState('');
   const [blId, setBlId] = useState('');
+  const [selectedBl, setSelectedBl] = useState(null);
   const [sourceLocation, setSourceLocation] = useState('');
   const [destinationLocation, setDestinationLocation] = useState('');
 
@@ -31,6 +33,7 @@ export default function CreateLogisticsPaymentWizard() {
   const [paymentMode, setPaymentMode] = useState('NEFT');
   const [hsnCode, setHsnCode] = useState('');
   const [remarks, setRemarks] = useState('');
+
   const [files, setFiles] = useState([]);
   const [submitting, setSubmitting] = useState(false);
 
@@ -47,7 +50,15 @@ export default function CreateLogisticsPaymentWizard() {
         }
         if (bRes.ok) {
           const json = await bRes.json();
-          setBlEntries(json.invoices || []);
+          const rawInvoices = json.invoices || [];
+          const uniqueMap = new Map();
+          for (const item of rawInvoices) {
+            const blNum = String(item.blNumber || item.blId || item.id || '').trim().toUpperCase();
+            if (blNum && !uniqueMap.has(blNum)) {
+              uniqueMap.set(blNum, { ...item, blNumber: blNum });
+            }
+          }
+          setBlEntries(Array.from(uniqueMap.values()));
         }
       } catch (e) {
         console.error(e);
@@ -66,10 +77,27 @@ export default function CreateLogisticsPaymentWizard() {
     }
   };
 
+  const handleBlChange = (val) => {
+    setBlId(val);
+    const target = blEntries.find(b => (b.blNumber || b.blId || b.id) === val);
+    if (target) {
+      setSelectedBl(target);
+      if (!providerId && target.vendorName) {
+        setProviderName(target.vendorName);
+      }
+    } else {
+      setSelectedBl(null);
+    }
+  };
+
   const handleFileChange = (e) => {
     if (e.target.files) {
-      setFiles(Array.from(e.target.files));
+      setFiles(prev => [...prev, ...Array.from(e.target.files)]);
     }
+  };
+
+  const handleRemoveFile = (index) => {
+    setFiles(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = async (e) => {
@@ -88,19 +116,25 @@ export default function CreateLogisticsPaymentWizard() {
           blNumber: blId || 'BL-LOGISTICS',
           category: 'freight',
           typeDisplay: 'Logistics Freight Payment',
-          source: 'Logistics',
+          referenceNumber: `LOG-${Date.now().toString().slice(-6)}`,
+          vendorName: providerName || 'Fast Forward Logistics India Privat',
           invoiceNumber,
-          vendorName: providerName || 'Logistics Provider',
+          invoiceDate: invoiceDate || new Date().toISOString(),
+          dueDate: dueDate || new Date().toISOString(),
           amount: Number(amount),
           currency,
-          remarks: `${remarks} ${sourceLocation ? `[${sourceLocation} -> ${destinationLocation}]` : ''}`.trim(),
-          documents: files.map(f => ({ name: f.name, size: f.size }))
+          paymentMode,
+          sourceLocation,
+          destinationLocation,
+          hsnCode,
+          remarks,
+          documents: files.map(f => ({ name: f.name, size: f.size, storage: 's3' }))
         })
       });
 
       const json = await res.json();
       if (res.ok && json.success) {
-        showToast({ title: 'Success', description: 'Logistics Payment invoice submitted for approval.', type: 'success' });
+        showToast({ title: 'Success', description: 'Logistics Payment invoice created and submitted for EXIM approval.', type: 'success' });
         navigate('/p2p/logistics-payments');
       } else {
         throw new Error(json.error || 'Submission failed');
@@ -135,10 +169,6 @@ export default function CreateLogisticsPaymentWizard() {
           <span>Rayzon P2P</span>
         </button>
 
-        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-teal-50 text-[#0d7676] border border-teal-200">
-          <ShieldCheck className="w-3 h-3" />
-          Logistics Payout Form
-        </span>
       </div>
 
       <form onSubmit={handleSubmit} className="max-w-3xl mx-auto space-y-6">
@@ -168,10 +198,32 @@ export default function CreateLogisticsPaymentWizard() {
               <SearchableSelect
                 options={blOptions}
                 value={blId}
-                onChange={(val) => setBlId(val)}
+                onChange={handleBlChange}
                 placeholder="Optional link with BL entry..."
               />
             </div>
+
+            {/* LINKED BL PREVIEW CARD */}
+            {selectedBl && (
+              <div className="bg-[#fffcf7] border border-[#fdecd5] rounded-xl p-3.5 text-xs grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div>
+                  <p className="text-[10px] font-bold text-amber-800/80">BL Number</p>
+                  <p className="font-extrabold text-slate-900 mt-0.5">{selectedBl.blNumber}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-amber-800/80">BOE Number</p>
+                  <p className="font-extrabold text-slate-900 mt-0.5">{selectedBl.boeNumber || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-amber-800/80">Vendor</p>
+                  <p className="font-extrabold text-slate-900 mt-0.5 truncate">{selectedBl.vendorName || 'Logistics Vendor'}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-amber-800/80">Status</p>
+                  <p className="font-extrabold text-emerald-700 mt-0.5">{selectedBl.status || 'Custom Cleared'}</p>
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <CustomInput
@@ -238,7 +290,7 @@ export default function CreateLogisticsPaymentWizard() {
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="Enter invoice amount"
-                leftIcon={DollarSign}
+                leftIcon={IndianRupee}
               />
 
               <div className="space-y-1.5">
@@ -298,7 +350,7 @@ export default function CreateLogisticsPaymentWizard() {
         <div className="bg-white rounded-2xl border border-slate-200/90 p-6 shadow-2xs space-y-4">
           <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
             <Paperclip className="w-4 h-4 text-slate-600" />
-            <h2 className="text-sm font-bold text-slate-900">Supporting Documents</h2>
+            <h2 className="text-sm font-bold text-slate-900">Supporting Documents (AWS S3 Enabled)</h2>
           </div>
 
           <div className="relative border-2 border-dashed border-slate-200/90 rounded-2xl p-6 text-center bg-slate-50/50 hover:bg-slate-50 transition cursor-pointer">
@@ -309,16 +361,29 @@ export default function CreateLogisticsPaymentWizard() {
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />
             <div className="flex flex-col items-center justify-center gap-2">
-              <Paperclip className="w-5 h-5 text-slate-400" />
+              <Paperclip className="w-6 h-6 text-slate-400" />
               <p className="text-xs font-semibold text-slate-600">Upload invoice and supporting logistics documents.</p>
-              <p className="text-[11px] text-slate-400">PDF, JPG, PNG — max 10MB each (Stored via AWS S3)</p>
+              <p className="text-[11px] text-slate-400">PDF, JPG, PNG, XLSX — max 10MB each (Stored directly via AWS S3)</p>
             </div>
           </div>
 
           {files.length > 0 && (
-            <div className="space-y-1 pt-1">
+            <div className="space-y-2 pt-2">
               {files.map((f, i) => (
-                <p key={i} className="text-xs text-teal-700 font-medium truncate">✓ Attached: {f.name}</p>
+                <div key={i} className="flex items-center justify-between p-2.5 rounded-xl bg-teal-50/70 border border-teal-200 text-xs text-slate-700">
+                  <span className="flex items-center gap-2 truncate font-medium max-w-[80%]">
+                    <Paperclip className="w-3.5 h-3.5 text-[#0d7676] shrink-0" />
+                    <span className="truncate">{f.name}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveFile(i)}
+                    className="p-1 rounded-lg text-rose-500 hover:bg-rose-100 transition"
+                    title="Remove file"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               ))}
             </div>
           )}

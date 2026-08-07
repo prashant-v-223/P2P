@@ -32,8 +32,8 @@ export const CustomInput = forwardRef(({
     ? 'h-9 text-xs rounded-xl px-3'
     : 'h-10 text-xs sm:text-sm rounded-xl px-3.5';
 
-  const paddingLeftClass = LeftIcon || leftElement ? (isSm ? 'pl-8' : 'pl-9.5') : '';
-  const paddingRightClass = (RightIcon || rightElement || (clearable && value)) ? (isSm ? 'pr-8' : 'pr-9.5') : '';
+  const paddingLeftClass = LeftIcon || leftElement ? (isSm ? 'pl-8' : 'pl-10') : '';
+  const paddingRightClass = (RightIcon || rightElement || (clearable && value)) ? (isSm ? 'pr-8' : 'pr-10') : '';
 
   const handleClear = (e) => {
     e.stopPropagation();

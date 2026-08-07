@@ -451,6 +451,27 @@ export default function RfqDetailView() {
               <span>Reopen RFQ</span>
             </button>
           )}
+          {rfq.status !== 'closed' && (
+            <button
+              onClick={async () => {
+                if (!window.confirm(`Are you sure you want to close RFQ ${rfq.rfqNumber}? Bidding will be locked.`)) return;
+                try {
+                  const res = await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}/close`, { method: 'POST' });
+                  const json = await res.json();
+                  if (res.ok && json.success) {
+                    showToast({ title: 'RFQ Closed', description: json.message, type: 'success' });
+                    loadRfq();
+                  } else throw new Error(json.error || 'Failed to close RFQ');
+                } catch (err) {
+                  showToast({ title: 'Close Failed', description: err.message, type: 'error' });
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>Close RFQ</span>
+            </button>
+          )}
           <button
             onClick={() => navigate(`/admin/rfqs/${rfq.rfqId}/edit`)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer"
@@ -460,15 +481,20 @@ export default function RfqDetailView() {
           </button>
           <button
             onClick={async () => {
-              const res = await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}/copy`, { method: 'POST' });
-              if (res.ok) {
-                showToast({ title: 'Copied', description: 'RFQ copied in MongoDB.', type: 'success' });
-                navigate('/admin/rfqs');
+              try {
+                const res = await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}/copy`, { method: 'POST' });
+                const json = await res.json();
+                if (res.ok && json.success) {
+                  showToast({ title: 'RFQ Copied', description: `Opening create form with pre-filled details for ${json.data.rfqNumber}...`, type: 'success' });
+                  navigate('/admin/rfqs/create', { state: { copyFrom: json.data } });
+                } else throw new Error(json.error || 'Failed to copy RFQ');
+              } catch (err) {
+                showToast({ title: 'Copy Failed', description: err.message, type: 'error' });
               }
             }}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer"
           >
-            <Copy className="w-3.5 h-3.5" />
+            <Copy className="w-3.5 h-3.5 text-[#0d7676]" />
             <span>Copy RFQ</span>
           </button>
           <button

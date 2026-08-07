@@ -250,41 +250,6 @@ export default function CustomDutyView() {
           onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1); }}
         />
       </div>
-
-      {/* Document Upload Section */}
-      {duties.length > 0 && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <h3 className="text-sm font-bold text-slate-900">Supporting Documents</h3>
-            <p className="text-xs text-slate-500">Attach customs clearance documents, BOE receipts, and ICEGATE confirmations</p>
-          </div>
-
-          <div className="space-y-3">
-            <label className="block text-xs font-semibold text-slate-700">Select Duty Payment</label>
-            <SearchableSelect
-              options={duties.map(duty => ({
-                label: `${duty.dutyId} · ${duty.boeNumber} · ₹${duty.dutyAmount.toLocaleString('en-IN')}`,
-                value: duty.dutyId
-              }))}
-              value={selectedDutyId}
-              onChange={(val) => setSelectedDutyId(val)}
-              placeholder="-- Select a duty payment to upload documents --"
-            />
-          </div>
-
-          {selectedDutyId && (
-            <div className="pt-3">
-              <DocumentUploader
-                documentableType="CustomDutyPayment"
-                documentableId={selectedDutyId}
-                documentType="custom_duty_receipt"
-                multiple={true}
-              />
-            </div>
-          )}
-        </div>
-      )}
-
       {/* New Custom Duty Modal with Auto-Population of Cleared BL / BOE */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">

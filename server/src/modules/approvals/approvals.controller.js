@@ -572,6 +572,16 @@ export const processApprovalAction = async (req, res) => {
       } catch (e) {
         console.error('[Approvals] Sync LogisticsPayment failed:', e.message);
       }
+    } else if (approval.type === 'Custom Duty') {
+      try {
+        const { CustomDutyPayment } = await import('../../models/CustomDutyPayment.js');
+        await CustomDutyPayment.findOneAndUpdate(
+          { $or: [{ dutyId: approval.id }, { blNumber: approval.poReference }, { approvalInstanceId: approval._id }] },
+          { status: terminalMap(newStatus) }
+        );
+      } catch (e) {
+        console.error('[Approvals] Sync CustomDutyPayment failed:', e.message);
+      }
     }
 
     const isFullyApproved = newStatus === 'Approved & Dispatched';

@@ -545,7 +545,7 @@ export const seedDatabase = async () => {
     const customCount = await CustomDutyPayment.countDocuments();
     if (customCount === 0) {
       console.log('[DB] Seeding Custom Duty Payment trace data...');
-      await CustomDutyPayment.create({ customDutyId: 'CD-PAY-001', referenceNumber: 'CD-20260713-0001', boeNumber: 'BOE-994812', boeDate: new Date('2026-07-13'), portCode: 'INNSA1', dutyAmount: 45000, fineInterestAmount: 0, totalAmount: 45000, status: 'draft' });
+      await CustomDutyPayment.create({ dutyId: 'CD-PAY-001', blId: 'BL-98471209', blNumber: 'BL-98471209', boeNumber: 'BOE-994812', portCode: 'INNSA1', dutyAmount: 45000, icegateRef: 'ICEGATE-45000001', customAgentName: 'Magnesh - Fast Forward Logistics India', status: 'draft' });
     }
 
     // ── Logistics Payments ────────────────────────────────────────────────────

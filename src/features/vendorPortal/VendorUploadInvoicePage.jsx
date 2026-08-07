@@ -92,8 +92,15 @@ export default function VendorUploadInvoicePage() {
   }, [poSearch]);
 
   const combinedPOs = useMemo(() => {
-    return purchaseOrders;
-  }, [purchaseOrders]);
+    const map = new Map();
+    (purchaseOrders || []).forEach(p => {
+      if (p.id) map.set(String(p.id).toLowerCase(), p);
+    });
+    (apiSearchResults || []).forEach(p => {
+      if (p.id) map.set(String(p.id).toLowerCase(), p);
+    });
+    return Array.from(map.values());
+  }, [purchaseOrders, apiSearchResults]);
 
   const filteredPOs = useMemo(() => {
     const q = poSearch.trim().toLowerCase();
@@ -390,7 +397,7 @@ export default function VendorUploadInvoicePage() {
                       <p className="text-xs text-slate-500 font-medium">
                         No pre-registered PO found matching "{poSearch}"
                       </p>
-                      {false && poSearch.trim() && (
+                      {poSearch.trim() && (
                         <button
                           type="button"
                           onClick={() => {

@@ -8,6 +8,7 @@ import { CustomDatePicker } from '../../components/ui/custom-date-picker';
 import { CustomFileUpload } from '../../components/ui/custom-file-upload';
 import { ServerPagination } from '../../components/ui/server-pagination';
 import { downloadDocumentFile } from '../../utils/downloadHelper';
+import { formatCurrencyINR } from '../../utils/currencyHelper';
 
 const inputClass = 'w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-medium outline-none focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-100';
 const statusLabel = (value) => ({ submitted: 'Submitted', exim_review: 'EXIM Review', assigned_to_agent: 'With Customs Agent', custom_cleared: 'Customs Cleared', invoice_pending: 'Invoice Pending' }[value] || String(value || '').replaceAll('_', ' '));
@@ -547,12 +548,18 @@ export function FreightBlDetailPage() {
     }
     setSaving(true);
     try {
+      const fileNameTarget = invoiceFile?.s3Key || invoiceFile?.fileUrl || invoiceFile?.name || 'Invoice_Document.pdf';
+      const fileUrlTarget = invoiceFile?.fileUrl || invoiceFile?.s3Key || invoiceFile?.name || 'Invoice_Document.pdf';
+      const docTypeLabel = invoice.invoiceType === 'freight' ? 'Freight Invoice' : invoice.invoiceType === 'destination_charges' ? 'Destination Charges (Shipping Line)' : invoice.invoiceType === 'detention' ? 'Detention & Storage' : invoice.invoiceType === 'agency_fee' ? 'Agency Fee' : 'Logistics Document';
+
       const response = await apiFetch(`/api/p2p/vendor-rfqs/${id}/bl-entries/${blId}/invoices`, {
         method: 'POST',
         body: JSON.stringify({
           ...invoice,
           amount: Number(invoice.amount),
-          fileName: invoiceFile.name
+          fileName: fileNameTarget,
+          fileUrl: fileUrlTarget,
+          documents: [{ docType: docTypeLabel, fileName: fileNameTarget, fileUrl: fileUrlTarget, uploadedBy: 'Vendor' }]
         })
       });
       const json = await response.json();
@@ -897,12 +904,13 @@ export function FreightBlDetailPage() {
                 <th className="px-5 py-3">AMOUNT</th>
                 <th className="px-5 py-3">STATUS</th>
                 <th className="px-5 py-3">DETAILS / NOTES</th>
+                <th className="px-5 py-3 text-right">ACTION</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-800 font-medium">
               {paginatedInvoices.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-5 py-10 text-center text-xs font-semibold text-slate-400 bg-slate-50/30">
+                  <td colSpan={6} className="px-5 py-10 text-center text-xs font-semibold text-slate-400 bg-slate-50/30">
                     No invoice requests matching current search or filter criteria.
                   </td>
                 </tr>
@@ -936,9 +944,17 @@ export function FreightBlDetailPage() {
                       </td>
 
                       <td className="px-5 py-3.5 whitespace-nowrap">
-                        <span className="font-mono font-black text-sm text-slate-900">
-                          {item.currency || 'USD'} {Number(item.amount || 0).toLocaleString('en-US')}
-                        </span>
+                        {(() => {
+                          const formatted = formatCurrencyINR(item.amount, item.currency);
+                          return (
+                            <div>
+                              <span className="font-mono font-black text-sm text-slate-900 block">{formatted.primary}</span>
+                              {formatted.isConverted && (
+                                <span className="text-[10px] text-teal-700 font-bold block">{formatted.secondary}</span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       <td className="px-5 py-3.5 whitespace-nowrap">
@@ -962,6 +978,18 @@ export function FreightBlDetailPage() {
                             {item.description || 'Logistics invoice submitted.'}
                           </span>
                         )}
+                      </td>
+
+                      <td className="px-5 py-3.5 text-right whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => downloadDocumentFile(item.fileUrl || item.fileName || item.invoiceNumber, categoryName)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-teal-50 hover:bg-teal-100 text-[#0d7676] font-extrabold text-[11px] border border-teal-200 transition cursor-pointer shadow-2xs"
+                          title="Download Invoice Document"
+                        >
+                          <Download className="w-3 h-3" />
+                          <span>Download</span>
+                        </button>
                       </td>
                     </tr>
                   );

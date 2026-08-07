@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
-import { 
+import {
   FileSpreadsheet, FileCheck, Plus, Search, Eye, Pencil, Copy, Trash2, Loader2,
-  ChevronLeft, ChevronRight, Box, MapPin
+  ChevronLeft, ChevronRight, Box, MapPin, X, RefreshCw
 } from 'lucide-react';
 import { SearchableSelect } from '../../components/ui/searchable-select';
+import { Button } from '../../components/ui/button';
 import { getRfqAllocationSummary } from './rfqStatus';
 
 export default function RfqSourcingView() {
@@ -18,7 +19,36 @@ export default function RfqSourcingView() {
   const [statusFilter, setStatusFilter] = useState('All');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
+  // Place this outside your main component
+  const ActionButton = ({ onClick, icon: Icon, label, color = "slate", bordered = false }) => {
+    const colorMap = {
+      slate: { text: "text-slate-400", hover: "hover:text-slate-600 hover:bg-slate-50" },
+      blue: { text: "text-slate-400", hover: "hover:text-blue-600 hover:bg-blue-50" },
+      emerald: { text: "text-slate-400", hover: "hover:text-emerald-600 hover:bg-emerald-50" },
+      teal: { text: "text-teal-600", hover: "hover:bg-teal-50" },
+      rose: { text: "text-slate-400", hover: "hover:text-rose-600 hover:bg-rose-50" }
+    };
 
+    const styles = colorMap[color] || colorMap.slate;
+    const borderClass = bordered ? "border border-teal-200" : "";
+
+    return (
+      <button
+        onClick={onClick}
+        title={label}
+        className={`p-1.5 ${styles.text} ${styles.hover} rounded-lg transition ${borderClass}`}
+        aria-label={label}
+      >
+        <Icon className="w-4 h-4" />
+      </button>
+    );
+  };
+
+  // Helper function
+  const isRfqClosed = (rfq) => {
+    return rfq.status === 'closed' ||
+      (rfq.closingDate && new Date(rfq.closingDate) < new Date());
+  };
   const fetchRfqs = async () => {
     try {
       setLoading(true);
@@ -92,16 +122,63 @@ export default function RfqSourcingView() {
     } catch (err) { showToast({ title: 'Delete Blocked', description: err.message, type: 'error' }); }
   };
 
+  const [showReopenModal, setShowReopenModal] = useState(false);
+  const [selectedRfqForReopen, setSelectedRfqForReopen] = useState(null);
+  const [reopenClosingDate, setReopenClosingDate] = useState('');
+  const [submittingReopen, setSubmittingReopen] = useState(false);
+
   const handleCopy = async (rfq, e) => {
     e.stopPropagation();
     try {
       const res = await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}/copy`, { method: 'POST' });
       const json = await res.json();
       if (res.ok && json.success) {
-        fetchRfqs();
-        showToast({ title: 'Draft Copy Created', description: `${json.data.rfqNumber} created.`, type: 'success' });
+        showToast({ title: 'RFQ Copied', description: `${json.data.rfqNumber} pre-filled. Complete details and publish.`, type: 'success' });
+        navigate('/admin/rfqs/create', { state: { copyFrom: json.data } });
       } else throw new Error(json.error || 'Unable to copy RFQ.');
     } catch (err) { showToast({ title: 'Copy Failed', description: err.message, type: 'error' }); }
+  };
+
+  const handleClose = async (rfq, e) => {
+    e.stopPropagation();
+    if (!window.confirm(`Are you sure you want to close RFQ ${rfq.rfqNumber}? Bidding will be locked.`)) return;
+    try {
+      const res = await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}/close`, { method: 'POST' });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        showToast({ title: 'RFQ Closed', description: json.message, type: 'success' });
+        fetchRfqs();
+      } else throw new Error(json.error || 'Unable to close RFQ.');
+    } catch (err) { showToast({ title: 'Close Failed', description: err.message, type: 'error' }); }
+  };
+
+  const handleOpenReopenModal = (rfq, e) => {
+    e.stopPropagation();
+    setSelectedRfqForReopen(rfq);
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    setReopenClosingDate(d.toISOString().slice(0, 10));
+    setShowReopenModal(true);
+  };
+
+  const handleReopenSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedRfqForReopen || !reopenClosingDate) return;
+    setSubmittingReopen(true);
+    try {
+      const res = await apiFetch(`/api/p2p/rfqs/${selectedRfqForReopen.rfqId}/reopen`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ closingDate: reopenClosingDate })
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        showToast({ title: 'RFQ Reopened', description: json.message, type: 'success' });
+        setShowReopenModal(false);
+        fetchRfqs();
+      } else throw new Error(json.error || 'Unable to reopen RFQ.');
+    } catch (err) { showToast({ title: 'Reopen Failed', description: err.message, type: 'error' }); }
+    finally { setSubmittingReopen(false); }
   };
 
   return (
@@ -178,8 +255,18 @@ export default function RfqSourcingView() {
                         </div>
                       </td>
                       <td className="py-3.5 px-4 font-mono text-slate-700">{rfq.sapPoNumber || rfq.poId || '—'}</td>
-                      <td className="py-3.5 px-4 text-slate-600">
-                        {closingDateStr}
+                      <td className="py-3.5 px-4">
+                        <span className={`
+    ${isRfqClosed(rfq)
+                            ? 'text-red-600 font-semibold bg-red-50 px-2 py-0.5 rounded'
+                            : 'text-slate-600'
+                          }
+  `}>
+                          {closingDateStr}
+                          {isRfqClosed(rfq) && (
+                            <span className="ml-1 text-xs text-red-400">(Closed)</span>
+                          )}
+                        </span>
                       </td>
                       <td className="py-3.5 px-4 text-center"><span className="w-6 h-6 rounded-full bg-sky-100 text-sky-800 text-[11px] font-extrabold inline-flex items-center justify-center">{vendorCount}</span></td>
                       <td className="py-3.5 px-4 text-center"><span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-extrabold inline-flex items-center justify-center">{quoteCount}</span></td>
@@ -187,11 +274,59 @@ export default function RfqSourcingView() {
                         {getStatusBadge(rfq)}
                       </td>
                       <td className="py-3.5 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-                          <button onClick={() => navigate(`/admin/rfqs/${rfq.rfqId}`)} className="p-1.5 text-slate-400 hover:text-[#0d7676] hover:bg-teal-50 rounded-lg transition"><Eye className="w-4 h-4" /></button>
-                          <button onClick={() => navigate(`/admin/rfqs/${rfq.rfqId}/edit`)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"><Pencil className="w-4 h-4" /></button>
-                          <button onClick={(e) => handleCopy(rfq, e)} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"><Copy className="w-4 h-4" /></button>
-                          <button onClick={(e) => handleDelete(rfq, e)} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"><Trash2 className="w-4 h-4" /></button>
+                        <div
+                          className="flex items-center justify-end gap-1"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {/* View Button */}
+                          <ActionButton
+                            onClick={() => navigate(`/admin/rfqs/${rfq.rfqId}`)}
+                            icon={Eye}
+                            label="View RFQ"
+                            color="slate"
+                          />
+
+                          {/* Edit Button */}
+                          <ActionButton
+                            onClick={() => navigate(`/admin/rfqs/${rfq.rfqId}/edit`)}
+                            icon={Pencil}
+                            label="Edit RFQ"
+                            color="blue"
+                          />
+
+                          {/* Copy Button */}
+                          <ActionButton
+                            onClick={(e) => handleCopy(rfq, e)}
+                            icon={Copy}
+                            label="Copy RFQ (Opens pre-filled form)"
+                            color="emerald"
+                          />
+
+                          {/* Close/Reopen Button */}
+                          {isRfqClosed(rfq) ? (
+                            <ActionButton
+                              onClick={(e) => handleOpenReopenModal(rfq, e)}
+                              icon={RefreshCw}
+                              label="Reopen Closed RFQ"
+                              color="teal"
+                              bordered
+                            />
+                          ) : (
+                            <ActionButton
+                              onClick={(e) => handleClose(rfq, e)}
+                              icon={X}
+                              label="Close RFQ"
+                              color="rose"
+                            />
+                          )}
+
+                          {/* Delete Button */}
+                          <ActionButton
+                            onClick={(e) => handleDelete(rfq, e)}
+                            icon={Trash2}
+                            label="Delete RFQ"
+                            color="rose"
+                          />
                         </div>
                       </td>
                     </tr>
@@ -212,6 +347,48 @@ export default function RfqSourcingView() {
           </div>
         )}
       </div>
+
+      {/* REOPEN RFQ MODAL */}
+      {showReopenModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="w-4 h-4 text-[#0d7676]" />
+                <h3 className="text-sm font-bold text-slate-900">Reopen RFQ {selectedRfqForReopen?.rfqNumber}</h3>
+              </div>
+              <button type="button" onClick={() => setShowReopenModal(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleReopenSubmit} className="space-y-4">
+              <p className="text-xs text-slate-600">
+                Reopening this RFQ will set its status to <strong className="text-teal-700">Published</strong> and allow vendors to submit new quotations.
+              </p>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700">New Closing Date <span className="text-rose-500">*</span></label>
+                <input
+                  type="date"
+                  required
+                  value={reopenClosingDate}
+                  onChange={(e) => setReopenClosingDate(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-900 outline-none focus:border-[#0d7676] focus:ring-2 focus:ring-teal-500/20"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <Button type="button" variant="secondary" onClick={() => setShowReopenModal(false)}>Cancel</Button>
+                <Button type="submit" loading={submittingReopen}>
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Confirm Reopen</span>
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

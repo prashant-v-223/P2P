@@ -4,7 +4,7 @@ import { useSelector } from 'react-redux';
 import {
   FileText, Search, Eye, Plus, CheckCircle2, XCircle, Clock,
   ArrowLeftRight, AlertCircle, Loader2, X, ShieldCheck, DollarSign,
-  Building2, Layers, Filter, Check, CornerUpLeft
+  Building2, Layers, Filter, Check, CornerUpLeft, Download, Paperclip
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
@@ -12,6 +12,8 @@ import { userHasPermission } from '../../lib/permissions';
 import UniversalApprovalWorkflowCard from '../../components/common/UniversalApprovalWorkflowCard';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { ServerPagination } from '../../components/ui/server-pagination';
+import { downloadDocumentFile } from '../../utils/downloadHelper';
+import { formatCurrencyINR } from '../../utils/currencyHelper';
 
 // ── Status Badge Component ───────────────────────────────────────────────────
 function StatusBadge({ status }) {
@@ -136,11 +138,18 @@ function DetailModal({ invoice, onClose, onRefresh }) {
           {/* Top Status & Summary Banner */}
           <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-4">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Invoice Amount</p>
-              <p className="text-2xl font-black text-slate-900 mt-0.5">
-                {invoice.currency === 'USD' ? '$' : '₹'}{Number(invoice.amount).toLocaleString('en-IN')}
-                <span className="text-xs font-semibold text-slate-400 ml-1.5">{invoice.currency || 'INR'}</span>
-              </p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Invoice Amount (INR Converted)</p>
+              {(() => {
+                const formatted = formatCurrencyINR(invoice.amount, invoice.currency);
+                return (
+                  <div>
+                    <p className="text-2xl font-black text-slate-900 mt-0.5">{formatted.primary}</p>
+                    {formatted.isConverted && (
+                      <p className="text-xs font-bold text-teal-700 mt-0.5">{formatted.secondary}</p>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
             <StatusBadge status={invoice.status} />
           </div>
@@ -163,6 +172,49 @@ function DetailModal({ invoice, onClose, onRefresh }) {
               <span className="text-[10px] font-bold text-slate-400 uppercase">Source Type</span>
               <div><SourceBadge source={invoice.source} /></div>
             </div>
+          </div>
+
+          {/* Supporting Documents Section (AWS S3 Streamed) */}
+          <div className="rounded-xl border border-slate-200/80 bg-white p-4 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+              <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                <Paperclip className="w-3.5 h-3.5 text-[#0d7676]" />
+                Supporting Documents (AWS S3 Storage)
+              </h4>
+              <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                {(invoice.documents || []).length || (invoice.fileName || invoice.fileUrl ? 1 : 0)} file(s)
+              </span>
+            </div>
+
+            {((invoice.documents && invoice.documents.length > 0) || invoice.fileName || invoice.fileUrl) ? (
+              <div className="space-y-2">
+                {(invoice.documents || [{ fileName: invoice.fileName || invoice.fileUrl, docType: invoice.typeDisplay || 'Supporting Document' }]).map((doc, idx) => {
+                  const targetFile = doc.fileUrl || doc.fileName || doc.name || invoice.fileName || invoice.fileUrl;
+                  const docLabel = doc.docType || doc.name || 'Logistics Invoice Document';
+                  return (
+                    <div key={idx} className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/70 text-xs">
+                      <div className="flex items-center gap-2 truncate max-w-[75%]">
+                        <FileText className="w-3.5 h-3.5 text-[#0d7676] shrink-0" />
+                        <div className="truncate">
+                          <p className="font-bold text-slate-800 truncate">{docLabel}</p>
+                          <p className="text-[10px] font-mono text-slate-400 truncate">{targetFile}</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => downloadDocumentFile(targetFile, docLabel)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-teal-200 bg-white hover:bg-teal-50 text-[#0d7676] font-bold text-xs transition shadow-2xs cursor-pointer shrink-0"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Download</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400 italic">No document file attached to this invoice.</p>
+            )}
           </div>
 
           {/* Universal Dynamic Approval Workflow Stepper Component */}
@@ -580,21 +632,42 @@ export default function BlInvoicesView() {
                       <td className="text-slate-600 font-mono px-4 py-3.5">{inv.invoiceNumber}</td>
                       <td className="px-4 py-3.5 font-bold font-mono text-slate-900">{inv.blNumber}</td>
                       <td className="px-4 py-3.5 text-slate-800 font-semibold max-w-[220px] truncate">{inv.vendorName}</td>
-                      <td className="px-4 py-3.5 text-right font-extrabold text-slate-900">
-                        {inv.currency === 'USD' ? 'USD ' : 'INR '}{Number(inv.amount).toLocaleString('en-IN')}
+                      <td className="px-4 py-3.5 text-right font-extrabold text-slate-900 whitespace-nowrap">
+                        {(() => {
+                          const formatted = formatCurrencyINR(inv.amount, inv.currency);
+                          return (
+                            <div>
+                              <span className="block text-xs font-black text-slate-900">{formatted.primary}</span>
+                              {formatted.isConverted && (
+                                <span className="text-[10px] text-teal-700 font-bold block">{formatted.secondary}</span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-3.5 text-center">
                         <StatusBadge status={inv.status} />
                       </td>
                       <td className="px-4 py-3.5 text-slate-500 font-medium whitespace-nowrap">{formatDate(inv.submittedAt || inv.createdAt)}</td>
                       <td className="px-4 py-3.5 text-right">
-                        <button
-                          onClick={() => setSelectedInvoice(inv)}
-                          title="View Invoice & Approval Details"
-                          className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-slate-500 hover:text-teal-700 hover:bg-teal-50 border border-slate-200 transition"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => downloadDocumentFile(inv.fileName || inv.fileUrl || inv.referenceNumber, inv.typeDisplay || 'BL Invoice')}
+                            title="Download Attached Document"
+                            className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-teal-700 hover:bg-teal-50 border border-teal-200 transition cursor-pointer"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedInvoice(inv)}
+                            title="View Invoice & Approval Details"
+                            className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-slate-500 hover:text-teal-700 hover:bg-teal-50 border border-slate-200 transition cursor-pointer"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

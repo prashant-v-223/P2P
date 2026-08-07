@@ -1,26 +1,50 @@
 import mongoose from 'mongoose';
 
+// Customs Duty Payments
 const customDutyPaymentSchema = new mongoose.Schema({
-  customDutyId: { type: String, required: true, unique: true, index: true },
-  referenceNumber: { type: String, required: true, unique: true, index: true },
-  boeNumber: { type: String, required: true, index: true }, // Bill of Entry Number
-  boeDate: { type: Date, default: Date.now },
-  portCode: { type: String, required: true },
+  dutyId: { type: String, required: true, unique: true, index: true },
+  blId: { type: String, required: true, index: true },
+  blNumber: { type: String, required: true },
+  boeNumber: { type: String },
+  portCode: { type: String, default: 'INMUN1' },
   dutyAmount: { type: Number, required: true },
-  fineInterestAmount: { type: Number, default: 0 },
-  totalAmount: { type: Number, required: true },
-  currency: { type: String, default: 'INR' },
-
+  customAgentName: String,
+  icegateRef: { type: String },
+  vesselName: String,
+  remarks: String,
+  documents: [{
+    name: String,
+    size: Number,
+    storage: String,
+    fileUrl: String,
+    fileName: String,
+    docType: String,
+    uploadedBy: String,
+    uploadedAt: { type: Date, default: Date.now }
+  }],
   status: {
     type: String,
-    enum: ['draft', 'pending', 'approved', 'rejected', 'returned', 'paid'],
+    enum: [
+      'draft',
+      'pending',
+      'approved',
+      'rejected',
+      'returned',
+      'paid',
+      'Pending EXIM Manager Approval',
+      'Pending Finance Lead Approval',
+      'Pending Finance Approval',
+      'Pending EXIM Approval',
+      'Approved & Dispatched'
+    ],
     default: 'draft',
     index: true
   },
-  approvalInstanceId: { type: String },
-  utrNumber: { type: String },
-  paidAt: { type: Date },
+  approvalInstanceId: String,
+  utrNumber: String,
+  paidAt: Date,
   createdBy: { type: String, default: 'Finance Team' }
-}, { timestamps: true });
+}, { timestamps: true, strict: false });
 
 export const CustomDutyPayment = mongoose.models.CustomDutyPayment || mongoose.model('CustomDutyPayment', customDutyPaymentSchema);
+
