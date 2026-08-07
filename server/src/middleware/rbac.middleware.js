@@ -62,22 +62,16 @@ export const authorizePermission = (moduleKey, action) => {
       // Check permission across all effective roles
       const roleRecords = await Role.find({ roleName: { $in: effectiveRoles } }).lean();
 
-      console.log(`[RBAC DEBUG] Checking permission: ${action} on ${moduleKey}`);
-      console.log(`[RBAC DEBUG] User: ${req.user.id} (${req.user.role})`);
-      console.log(`[RBAC DEBUG] Effective roles:`, effectiveRoles);
-      console.log(`[RBAC DEBUG] Role records found:`, roleRecords.length);
-      
-      roleRecords.forEach((role) => {
-        const modulePerms = role?.permissions?.[moduleKey] || [];
-        console.log(`[RBAC DEBUG] Role ${role.roleName} has permissions for ${moduleKey}:`, modulePerms);
-      });
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[RBAC DEBUG] Checking permission: ${action} on ${moduleKey}`);
+        console.log(`[RBAC DEBUG] User: ${req.user?.id} (${req.user?.role})`);
+        console.log(`[RBAC DEBUG] Effective roles:`, effectiveRoles);
+      }
 
       const hasPermission = roleRecords.some((role) => {
         const modulePerms = role?.permissions?.[moduleKey] || [];
         return modulePerms.includes(action) || modulePerms.includes('manage') || modulePerms.includes('*');
       });
-
-      console.log(`[RBAC DEBUG] Has permission: ${hasPermission}`);
 
       if (!hasPermission) {
         return res.status(403).json({

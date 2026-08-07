@@ -10,6 +10,30 @@ import { SearchableSelect } from '../../components/ui/searchable-select';
 import { Button } from '../../components/ui/button';
 import { getRfqAllocationSummary } from './rfqStatus';
 
+const ActionButton = ({ onClick, icon: Icon, label, color = "slate", bordered = false }) => {
+  const colorMap = {
+    slate: { text: "text-slate-400", hover: "hover:text-slate-600 hover:bg-slate-50" },
+    blue: { text: "text-slate-400", hover: "hover:text-blue-600 hover:bg-blue-50" },
+    emerald: { text: "text-slate-400", hover: "hover:text-emerald-600 hover:bg-emerald-50" },
+    teal: { text: "text-teal-600", hover: "hover:bg-teal-50" },
+    rose: { text: "text-slate-400", hover: "hover:text-rose-600 hover:bg-rose-50" }
+  };
+
+  const styles = colorMap[color] || colorMap.slate;
+  const borderClass = bordered ? "border border-teal-200" : "";
+
+  return (
+    <button
+      onClick={onClick}
+      title={label}
+      className={`p-1.5 ${styles.text} ${styles.hover} rounded-lg transition ${borderClass}`}
+      aria-label={label}
+    >
+      <Icon className="w-4 h-4" />
+    </button>
+  );
+};
+
 export default function RfqSourcingView() {
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -19,30 +43,6 @@ export default function RfqSourcingView() {
   const [statusFilter, setStatusFilter] = useState('All');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
-  // Place this outside your main component
-  const ActionButton = ({ onClick, icon: Icon, label, color = "slate", bordered = false }) => {
-    const colorMap = {
-      slate: { text: "text-slate-400", hover: "hover:text-slate-600 hover:bg-slate-50" },
-      blue: { text: "text-slate-400", hover: "hover:text-blue-600 hover:bg-blue-50" },
-      emerald: { text: "text-slate-400", hover: "hover:text-emerald-600 hover:bg-emerald-50" },
-      teal: { text: "text-teal-600", hover: "hover:bg-teal-50" },
-      rose: { text: "text-slate-400", hover: "hover:text-rose-600 hover:bg-rose-50" }
-    };
-
-    const styles = colorMap[color] || colorMap.slate;
-    const borderClass = bordered ? "border border-teal-200" : "";
-
-    return (
-      <button
-        onClick={onClick}
-        title={label}
-        className={`p-1.5 ${styles.text} ${styles.hover} rounded-lg transition ${borderClass}`}
-        aria-label={label}
-      >
-        <Icon className="w-4 h-4" />
-      </button>
-    );
-  };
 
   // Helper function
   const isRfqClosed = (rfq) => {
@@ -130,7 +130,8 @@ export default function RfqSourcingView() {
   const handleCopy = async (rfq, e) => {
     e.stopPropagation();
     try {
-      const res = await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}/copy`, { method: 'POST' });
+      const targetId = rfq.rfqId || rfq._id;
+      const res = await apiFetch(`/api/p2p/rfqs/${targetId}/copy`, { method: 'POST' });
       const json = await res.json();
       if (res.ok && json.success) {
         showToast({ title: 'RFQ Copied', description: `${json.data.rfqNumber} pre-filled. Complete details and publish.`, type: 'success' });
@@ -143,7 +144,8 @@ export default function RfqSourcingView() {
     e.stopPropagation();
     if (!window.confirm(`Are you sure you want to close RFQ ${rfq.rfqNumber}? Bidding will be locked.`)) return;
     try {
-      const res = await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}/close`, { method: 'POST' });
+      const targetId = rfq.rfqId || rfq._id;
+      const res = await apiFetch(`/api/p2p/rfqs/${targetId}/close`, { method: 'POST' });
       const json = await res.json();
       if (res.ok && json.success) {
         showToast({ title: 'RFQ Closed', description: json.message, type: 'success' });
@@ -166,7 +168,8 @@ export default function RfqSourcingView() {
     if (!selectedRfqForReopen || !reopenClosingDate) return;
     setSubmittingReopen(true);
     try {
-      const res = await apiFetch(`/api/p2p/rfqs/${selectedRfqForReopen.rfqId}/reopen`, {
+      const targetId = selectedRfqForReopen.rfqId || selectedRfqForReopen._id;
+      const res = await apiFetch(`/api/p2p/rfqs/${targetId}/reopen`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ closingDate: reopenClosingDate })
@@ -241,9 +244,10 @@ export default function RfqSourcingView() {
                   const cargoType = rfq.cargoDetails?.cargoType || 'General';
                   const origin = rfq.cargoDetails?.portOfOrigin || '—';
                   const dest = rfq.cargoDetails?.portOfDestination || '—';
+                  const targetRfqId = rfq.rfqId || rfq._id;
 
                   return (
-                    <tr key={rfq._id} onClick={() => navigate(`/admin/rfqs/${rfq.rfqId}`)} className="hover:bg-slate-50/80 transition cursor-pointer group">
+                    <tr key={rfq._id} onClick={() => navigate(`/admin/rfqs/${targetRfqId}`)} className="hover:bg-slate-50/80 transition cursor-pointer group">
                       <td className="py-3.5 px-4 text-center font-mono text-slate-400 font-bold">{rowNum}</td>
                       <td className="py-3.5 px-4 font-bold text-[#0d7676] font-mono group-hover:underline">{rfq.rfqNumber || '—'}</td>
                       <td className="py-3.5 px-4 font-bold text-slate-900 max-w-xs">
@@ -280,7 +284,7 @@ export default function RfqSourcingView() {
                         >
                           {/* View Button */}
                           <ActionButton
-                            onClick={() => navigate(`/admin/rfqs/${rfq.rfqId}`)}
+                            onClick={() => navigate(`/admin/rfqs/${targetRfqId}`)}
                             icon={Eye}
                             label="View RFQ"
                             color="slate"
@@ -288,7 +292,7 @@ export default function RfqSourcingView() {
 
                           {/* Edit Button */}
                           <ActionButton
-                            onClick={() => navigate(`/admin/rfqs/${rfq.rfqId}/edit`)}
+                            onClick={() => navigate(`/admin/rfqs/${targetRfqId}/edit`)}
                             icon={Pencil}
                             label="Edit RFQ"
                             color="blue"

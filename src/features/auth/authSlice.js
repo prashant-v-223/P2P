@@ -180,6 +180,18 @@ const authSlice = createSlice({
       state.user = action.payload;
       localStorage.setItem('rayzon_user', JSON.stringify(action.payload));
     },
+    updateSessionTokens: (state, action) => {
+      if (action.payload?.accessToken) {
+        state.accessToken = action.payload.accessToken;
+      }
+      if (action.payload?.refreshToken) {
+        state.refreshToken = action.payload.refreshToken;
+      }
+      if (action.payload?.user) {
+        state.user = action.payload.user;
+      }
+      state.isAuthenticated = true;
+    },
     resetForgotStep: (state) => {
       state.forgotStep = 'email';
       state.resetMessage = '';
@@ -273,5 +285,5 @@ const authSlice = createSlice({
   }
 });
 
-export const { setAuthMode, logout, clearAuthError, updateCurrentUser, resetForgotStep } = authSlice.actions;
+export const { setAuthMode, logout, clearAuthError, updateCurrentUser, updateSessionTokens, resetForgotStep } = authSlice.actions;
 export default authSlice.reducer;

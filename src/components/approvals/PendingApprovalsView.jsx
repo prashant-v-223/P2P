@@ -231,35 +231,32 @@ export default function PendingApprovalsView() {
   const fetchApprovals = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await apiFetch('/api/approvals/pending');
+      const queryString = searchParams.toString();
+      const res = await apiFetch(`/api/approvals/pending${queryString ? `?${queryString}` : ''}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Unable to load approvals.');
 
-      const visibleApprovals = (data.approvals || []).filter((approval) => {
-        const matchesQuery = !query || [approval.id, approval.vendorName, approval.requestedBy, approval.type].filter(Boolean).some((value) => String(value).toLowerCase().includes(query.toLowerCase()));
-        const matchesType = type === 'All' || approval.type === type;
-        return matchesQuery && matchesType && (!onlyMine || approval.canApprove);
-      });
-      setApprovals(visibleApprovals);
-      const aCount = (data.approvals || []).filter((approval) => approval.canApprove).length;
+      const rawApprovals = data.approvals || [];
+      setApprovals(rawApprovals);
+
+      const aCount = rawApprovals.filter((approval) => approval.isUserTurnToApprove).length;
       setActionableCount(aCount);
-      setAllCount(data.count || 0);
+      setAllCount(data.total || data.count || rawApprovals.length);
 
       dispatch(setPendingCount(aCount));
 
       setPagination({
-        total: visibleApprovals.length,
-        page: 1,
-        size: pageSize,
-        totalPages: 1
+        total: data.total || rawApprovals.length,
+        page: data.page || page,
+        size: data.size || pageSize,
+        totalPages: data.totalPages || 1
       });
     } catch (error) {
       showToast({ type: 'error', title: 'Could not load approvals', description: error.message });
     } finally {
       setLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, currentUserRole, onlyMine]);
+  }, [searchParams, dispatch, page, pageSize, showToast]);
 
   useEffect(() => {
     fetchApprovals();
@@ -457,15 +454,15 @@ export default function PendingApprovalsView() {
         <div className="flex min-h-0 flex-1 flex-col gap-2.5">
           <div className="report-scroll min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain pr-2">
             {approvals.map((approval, approvalIndex) => {
-              const rawStepObjs = (approval.parsedSteps && approval.parsedSteps.length > 0)
+              const rawStepObjs = (approval.parsedSteps && Array.isArray(approval.parsedSteps) && approval.parsedSteps.length > 0)
                 ? approval.parsedSteps
-                : (JOURNEY_LABELS[approval.type] || JOURNEY_LABELS['BL Freight Invoice']);
+                : (approval.workflowSnapshot?.steps || JOURNEY_LABELS[approval.type] || JOURNEY_LABELS['Advance Payment']);
 
-              const steps = rawStepObjs.map((s) => (typeof s === 'string' ? s : s.title));
-              const stepRoles = rawStepObjs.map((s) => (typeof s === 'string' ? '' : (s.role || s.roleName || '')));
+              const steps = rawStepObjs.map((s) => (typeof s === 'string' ? s : (s.title || s.roleName || s.name || 'Approval')));
+              const stepRoles = rawStepObjs.map((s) => (typeof s === 'string' ? '' : (s.roleName || s.roleKey || s.role || '')));
 
               const activeStep = approval.currentStep
-                ? Math.min(approval.currentStep - 1, steps.length - 1)
+                ? Math.min(approval.currentStep - 1, Math.max(0, steps.length - 1))
                 : getStepFromStatus(approval.type, approval.status);
 
               const isProcessing = processingId === approval.id;
@@ -686,6 +683,14 @@ export default function PendingApprovalsView() {
                     {/* 5. Comments + actions */}
                     {!isTerminal && (
                       <div className="space-y-2.5 border-t border-slate-100 pt-2.5">
+                        {!approval.isUserTurnToApprove && (
+                          <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-1.5 text-xs text-amber-800">
+                            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+                            <span>
+                              {`Pending Step ${approval.currentStep} approval by assigned approver.`}
+                            </span>
+                          </div>
+                        )}
 
                         <div className="flex flex-col items-stretch justify-between gap-2.5 md:flex-row md:items-end">
                           <div className="flex-1 space-y-1">
@@ -699,11 +704,12 @@ export default function PendingApprovalsView() {
                                 setRemarks((current) => ({ ...current, [approval.id]: event.target.value }));
                                 setRemarkErrors((current) => ({ ...current, [approval.id]: undefined }));
                               }}
-                              placeholder="Add a note before acting..."
+                              disabled={!approval.isUserTurnToApprove || isProcessing}
+                              placeholder={approval.isUserTurnToApprove ? "Add a note before acting..." : "Action locked for this step"}
                               aria-invalid={Boolean(remarkErrors[approval.id])}
                               className={`h-10 w-full rounded-xl border bg-slate-50/50 px-3.5 text-xs text-slate-700 outline-none transition-all placeholder:text-slate-400 focus:bg-white focus:ring-2 ${
                                 remarkErrors[approval.id] ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-100' : 'border-slate-200 focus:border-teal-500 focus:ring-teal-100'
-                              }`}
+                              } disabled:cursor-not-allowed disabled:opacity-50`}
                             />
                             {remarkErrors[approval.id] && (
                               <p className="text-[11px] font-semibold text-rose-600">{remarkErrors[approval.id]}</p>
@@ -713,7 +719,7 @@ export default function PendingApprovalsView() {
                           <div className="flex shrink-0 items-center justify-end gap-2">
                             <button
                               onClick={() => handleAction(approval.id, 'Approve')}
-                              disabled={isProcessing }
+                              disabled={!approval.isUserTurnToApprove || isProcessing}
                               className="flex h-10 items-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-extrabold text-white shadow-2xs transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               {isProcessing && processingAction === 'Approve' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
@@ -722,7 +728,7 @@ export default function PendingApprovalsView() {
 
                             <button
                               onClick={() => handleAction(approval.id, 'Return')}
-                              disabled={isProcessing }
+                              disabled={!approval.isUserTurnToApprove || isProcessing}
                               className="flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 text-xs font-bold text-slate-700 transition-all hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               {isProcessing && processingAction === 'Return' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5 text-slate-500" />}
@@ -732,7 +738,7 @@ export default function PendingApprovalsView() {
                             <button
                               onClick={() => handleAction(approval.id, 'Reject')}
                               onBlur={() => setConfirmingReject((current) => (current === approval.id ? null : current))}
-                              disabled={isProcessing }
+                              disabled={!approval.isUserTurnToApprove || isProcessing}
                               className={`flex h-10 items-center gap-1.5 rounded-xl border px-4 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
                                 confirmingReject === approval.id
                                   ? 'border-rose-600 bg-rose-600 text-white hover:bg-rose-700'

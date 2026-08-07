@@ -27,95 +27,135 @@ const DUMMY_PENDING_APPROVALS = [
   }
 ];
 
-// ── Hierarchical Approvals Chain Map ──────────────────────────────────────
-const ROLE_HIERARCHY = {
-  'superadmin': ['admin', 'system admin', 'md', 'director', 'cfo', 'finance head', 'finance lead', 'finance', 'procurement head', 'procurement', 'exim manager', 'exim', 'logistics lead', 'logistics', 'accounts lead', 'accounts', 'manager', 'assistant manager', 'executive'],
-  'admin': ['system admin', 'md', 'director', 'cfo', 'finance head', 'finance lead', 'finance', 'procurement head', 'procurement', 'exim manager', 'exim', 'logistics lead', 'logistics', 'accounts lead', 'accounts', 'manager', 'assistant manager', 'executive'],
-  'system admin': ['md', 'director', 'cfo', 'finance head', 'finance lead', 'finance', 'procurement head', 'procurement', 'exim manager', 'exim', 'logistics lead', 'logistics', 'accounts lead', 'accounts', 'manager', 'assistant manager', 'executive'],
-  'md': ['director', 'cfo', 'finance head', 'finance lead', 'finance', 'procurement head', 'procurement', 'exim manager', 'exim', 'logistics lead', 'logistics', 'accounts lead', 'accounts', 'general manager', 'senior manager', 'manager', 'assistant manager', 'executive'],
-  'director': ['cfo', 'finance head', 'finance lead', 'finance', 'procurement head', 'procurement', 'exim manager', 'exim', 'logistics lead', 'logistics', 'accounts lead', 'accounts', 'general manager', 'senior manager', 'manager', 'assistant manager', 'executive'],
-  'cfo': ['finance head', 'finance lead', 'finance', 'accounts lead', 'accounts'],
-  'finance head': ['finance lead', 'finance', 'accounts lead', 'accounts'],
-  'finance lead': ['finance', 'accounts'],
-  'procurement head': ['procurement manager', 'procurement lead', 'procurement', 'buyer', 'assistant manager', 'executive'],
-  'exim manager': ['exim lead', 'exim officer', 'exim assistant', 'exim', 'assistant manager', 'executive'],
-  'general manager': ['senior manager', 'manager', 'assistant manager', 'executive'],
-  'senior manager': ['manager', 'assistant manager', 'executive'],
-  'manager': ['assistant manager', 'executive', 'officer'],
-  'assistant manager': ['executive', 'officer']
-};
-
-// ── Map a role string to the keywords we look for in status strings ──────────
-function getRoleKeywords(role = '') {
-  const r = role.toLowerCase().replace(/[\s_-]+/g, ' ').trim();
-  if (r.includes('procurement')) return ['procurement'];
-  if (r.includes('finance head') || r.includes('finance_head')) return ['finance head', 'finance lead', 'finance'];
-  if (r.includes('finance lead') || r.includes('finance_lead')) return ['finance lead', 'finance'];
-  if (r.includes('finance')) return ['finance'];
-  if (r.includes('md') || r.includes('director') || r.includes('managing director')) return ['md', 'director'];
-  if (r.includes('exim')) return ['exim'];
-  if (r.includes('logistics')) return ['logistics'];
-  if (r.includes('account')) return ['account'];
-  return [r];
+// ── Normalize Role Keys for Strict Hierarchical Matching ─────────────────────
+function normalizeRoleKey(role = '') {
+  return String(role || '').toLowerCase().replace(/[\s_-]+/g, '_').trim();
 }
 
-// ── Check if an approval's ACTIVE STEP is meant for this role / roles (with Hierarchy support) ───────
-function isApprovalForRole(approval, roleFilter) {
-  const roles = Array.isArray(roleFilter) ? roleFilter : [roleFilter];
-  
-  for (const role of roles) {
-    const rNorm = (role || '').toLowerCase().replace(/[\s_-]+/g, ' ').trim();
-    if (rNorm === 'admin' || rNorm === 'system admin' || rNorm === 'systemadmin' || rNorm === 'superadmin') return true;
+function isRoleMatchingStep(userRole, targetStepRole) {
+  const u = normalizeRoleKey(userRole);
+  const t = normalizeRoleKey(targetStepRole);
+  if (!u || !t) return false;
 
-    const keywords = getRoleKeywords(role);
-    const subordinates = ROLE_HIERARCHY[rNorm] || [];
-    const allAllowedKeywords = Array.from(new Set([
-      ...keywords,
-      ...subordinates.flatMap(s => getRoleKeywords(s))
-    ]));
+  // Exact match
+  if (u === t) return true;
 
-    const statusLower = (approval.status || '').toLowerCase();
+  // System Admin / Admin / Superadmin override
+  if (['admin', 'superadmin', 'system_admin', 'systemadmin'].includes(u)) return true;
 
-    // Primary: status check
-    for (const kw of allAllowedKeywords) {
-      if (statusLower.includes(kw)) return true;
-    }
+  // Procurement Head equivalences
+  if ((t.includes('procurement_head') || t.includes('procurement_lead')) && 
+      (u.includes('procurement_head') || u.includes('procurement_lead'))) return true;
 
-    // Secondary: workflowSteps check
-    if (approval.workflowSteps) {
-      try {
-        const steps = JSON.parse(approval.workflowSteps);
-        const activeStepObj = steps.find(s => s.step === (approval.currentStep || 1));
-        if (activeStepObj) {
-          const roleName = (activeStepObj.roleName || '').toLowerCase();
-          const roleKey  = (activeStepObj.roleKey  || '').toLowerCase();
-          const title    = (activeStepObj.title    || '').toLowerCase();
-          for (const kw of allAllowedKeywords) {
-            if (roleName.includes(kw) || roleKey.includes(kw) || title.includes(kw)) return true;
-          }
-        }
-      } catch (_) {}
-    }
-  }
+  // Procurement Manager equivalences
+  if ((t.includes('procurement_manager') || t.includes('purchase_manager')) &&
+      (u.includes('procurement_manager') || u.includes('purchase_manager') || u === 'manager')) return true;
+
+  // Finance Lead / Head equivalences
+  if ((t.includes('finance_lead') || t.includes('finance_head') || t.includes('finance')) &&
+      (u.includes('finance_lead') || u.includes('finance_head') || u.includes('cfo') || u === 'finance')) return true;
+
+  // MD equivalences
+  if ((t === 'md' || t.includes('director')) && (u === 'md' || u.includes('director'))) return true;
+
+  // EXIM Manager equivalences
+  if (t.includes('exim') && u.includes('exim')) return true;
+
+  // Logistics equivalences
+  if (t.includes('logistics') && u.includes('logistics')) return true;
 
   return false;
+}
+
+// ── Strict Active-Step Role & Assigned Approver Matching ──────────────────────────
+function isApprovalForRole(approval, roleFilter, userId = null) {
+  const roles = Array.isArray(roleFilter) ? roleFilter : [roleFilter];
+
+  // 1. System Admins can view all requests
+  const isSuperUser = roles.some(r => {
+    const u = normalizeRoleKey(r);
+    return ['admin', 'superadmin', 'system_admin', 'systemadmin'].includes(u);
+  });
+
+  // 2. Active Step check (from workflowSteps JSON)
+  const currentStepNum = approval.currentStep || 1;
+  let activeStepObj = null;
+
+  if (approval.workflowSteps) {
+    try {
+      const steps = typeof approval.workflowSteps === 'string'
+        ? JSON.parse(approval.workflowSteps)
+        : approval.workflowSteps;
+      if (Array.isArray(steps)) {
+        activeStepObj = steps.find(s => (s.step || s.stepNumber) === currentStepNum);
+      }
+    } catch (_) {}
+  }
+
+  // 3. STRICT ASSIGNED APPROVER MATCHING:
+  // If the active step or approval record has an explicit assignedApproverId (and is NOT pool approval),
+  // ONLY that specific user ID (or superadmin) is authorized! Cross users are strictly blocked.
+  const assignedId = activeStepObj?.assignedApproverId || approval.assignedApprover;
+  const isPool = activeStepObj?.isPoolApproval;
+
+  if (assignedId && !isPool) {
+    if (userId && String(assignedId) === String(userId)) return true;
+    return isSuperUser; // Strict isolation: cross-users with same role cannot act
+  }
+
+  // 4. POOL APPROVAL MATCHING:
+  if (isPool) {
+    if (activeStepObj?.approverPool && Array.isArray(activeStepObj.approverPool) && userId) {
+      const inPool = activeStepObj.approverPool.some(p => String(p.id) === String(userId));
+      if (inPool) return true;
+    }
+    const targetRole = activeStepObj?.roleKey || activeStepObj?.roleName || activeStepObj?.title || '';
+    for (const r of roles) {
+      if (isRoleMatchingStep(r, targetRole)) return true;
+    }
+    return isSuperUser;
+  }
+
+  // 5. UNASSIGNED STEP ROLE MATCHING:
+  if (activeStepObj) {
+    const targetRole = activeStepObj.roleKey || activeStepObj.roleName || activeStepObj.title || '';
+    for (const r of roles) {
+      if (isRoleMatchingStep(r, targetRole)) return true;
+    }
+    return isSuperUser;
+  }
+
+  // Fallback: infer from approval.status string (e.g. "Pending Procurement Head Approval")
+  const statusLower = (approval.status || '').toLowerCase();
+  for (const r of roles) {
+    const u = normalizeRoleKey(r);
+    if (isSuperUser) return true;
+    if (statusLower.includes('procurement head') && (u.includes('procurement_head') || u.includes('procurement_lead'))) return true;
+    if (statusLower.includes('procurement manager') && (u.includes('procurement_manager') || u === 'manager')) return true;
+    if (statusLower.includes('finance') && (u.includes('finance') || u.includes('cfo'))) return true;
+    if (statusLower.includes('md') && (u === 'md' || u.includes('director'))) return true;
+    if (statusLower.includes('exim') && u.includes('exim')) return true;
+    if (statusLower.includes('logistics') && u.includes('logistics')) return true;
+  }
+
+  return isSuperUser;
 }
 
 // ── Advance to next step using stored workflowSteps JSON ─────────────────────
 function getNextStepStatus(approval) {
   if (approval.workflowSteps) {
     try {
-      const steps = JSON.parse(approval.workflowSteps);
-      const sorted = steps.sort((a, b) => (a.step || 0) - (b.step || 0));
-      const currentIdx = sorted.findIndex(s =>
-        approval.status === s.statusKey ||
-        approval.status === `Pending ${s.title}`
-      );
-      if (currentIdx >= 0 && currentIdx < sorted.length - 1) {
-        const nextStep = sorted[currentIdx + 1];
-        return nextStep.statusKey || `Pending ${nextStep.title}`;
+      const steps = typeof approval.workflowSteps === 'string' ? JSON.parse(approval.workflowSteps) : approval.workflowSteps;
+      if (Array.isArray(steps) && steps.length > 0) {
+        const sorted = steps.sort((a, b) => (a.step || 0) - (b.step || 0));
+        const currentStepNum = approval.currentStep || 1;
+        const currentIdx = sorted.findIndex(s => (s.step || s.stepNumber) === currentStepNum);
+        if (currentIdx >= 0 && currentIdx < sorted.length - 1) {
+          const nextStep = sorted[currentIdx + 1];
+          return nextStep.statusKey || `Pending ${nextStep.title || nextStep.roleName || 'Approval'}`;
+        }
+        return 'Approved & Dispatched';
       }
-      return 'Approved & Dispatched';
     } catch (e) {
       console.error('[getNextStepStatus] parse error:', e.message);
     }
@@ -136,15 +176,19 @@ function getCurrentStepRole(approval) {
   // Try workflowSteps first
   if (approval.workflowSteps) {
     try {
-      const steps = JSON.parse(approval.workflowSteps);
-      const activeStepObj = steps.find(s => s.step === (approval.currentStep || 1));
-      if (activeStepObj) {
-        return (activeStepObj.roleName || activeStepObj.roleKey || '').toLowerCase();
+      const steps = typeof approval.workflowSteps === 'string' ? JSON.parse(approval.workflowSteps) : approval.workflowSteps;
+      if (Array.isArray(steps)) {
+        const activeStepObj = steps.find(s => (s.step || s.stepNumber) === (approval.currentStep || 1));
+        if (activeStepObj) {
+          return (activeStepObj.roleName || activeStepObj.roleKey || activeStepObj.title || '').toLowerCase();
+        }
       }
     } catch (_) {}
   }
 
   // Fallback: infer from status string
+  if (statusLower.includes('procurement head')) return 'procurement head';
+  if (statusLower.includes('procurement manager')) return 'procurement manager';
   if (statusLower.includes('procurement')) return 'procurement head';
   if (statusLower.includes('finance')) return 'finance';
   if (statusLower.includes('md') || statusLower.includes('director')) return 'md';
@@ -154,21 +198,54 @@ function getCurrentStepRole(approval) {
 }
 
 async function getStepAssignment(approval, stepNumber) {
-  let step = null;
+  let stepObj = null;
   try {
-    step = JSON.parse(approval.workflowSteps || '[]').find((item) => item.step === stepNumber);
+    const steps = typeof approval.workflowSteps === 'string'
+      ? JSON.parse(approval.workflowSteps || '[]')
+      : (approval.workflowSteps || []);
+    if (Array.isArray(steps)) {
+      stepObj = steps.find((item) => (item.step || item.stepNumber) === stepNumber);
+    }
   } catch (_) {}
-  const role = String(step?.roleKey || step?.roleName || '').replace(/[\s-]+/g, '_').toLowerCase();
+
+  // Pool approval step → no single assigned approver
+  if (stepObj?.isPoolApproval) {
+    return {
+      assignedApprover: null,
+      assignedApproverName: null,
+      assignedApproverRole: stepObj.roleKey || null
+    };
+  }
+
+  // Single approver was hydrated at creation time → reuse it
+  if (stepObj?.assignedApproverId) {
+    return {
+      assignedApprover: stepObj.assignedApproverId,
+      assignedApproverName: stepObj.assignedApproverName || null,
+      assignedApproverRole: stepObj.assignedApproverRole || stepObj.roleKey || null
+    };
+  }
+
+  // Derive role from step
+  const role = String(stepObj?.roleKey || stepObj?.roleName || '').replace(/[\s-]+/g, '_').toLowerCase();
+
+  // Finance / CFO / MD steps → no explicit user assignment needed (role-based)
   if (!role || role.includes('finance') || role === 'md' || role.includes('director') || role.includes('cfo')) {
     return { assignedApprover: null, assignedApproverName: null, assignedApproverRole: role || null };
   }
 
-  // Manager step: assign the requester's actual reporting manager so the right person acts.
-  if (role === 'manager' || role.includes('team manager')) {
+  // Manager step: find requester's direct manager
+  if (role === 'manager' || role.includes('team_manager') || role.includes('procurement_manager')) {
     if (approval.requestedById) {
-      const requester = await User.findOne({ id: approval.requestedById }, { id: 1, name: 1, role: 1, managerId: 1, managerName: 1, team: 1 }).lean();
+      const requester = await User.findOne(
+        { id: approval.requestedById },
+        { id: 1, name: 1, role: 1, managerId: 1, managerName: 1, team: 1 }
+      ).lean();
       if (requester?.managerId) {
-        const manager = await User.findOne({ id: requester.managerId, status: 'Active' }, { id: 1, name: 1, role: 1 }).lean();
+        const manager = await User.findOne(
+          { id: requester.managerId, status: 'Active' },
+          { id: 1, name: 1, role: 1 }
+        ).lean();
         if (manager) {
           return {
             assignedApprover: manager.id,
@@ -177,9 +254,11 @@ async function getStepAssignment(approval, stepNumber) {
           };
         }
       }
-      // Fallback: any active manager on the requester's team.
       if (requester?.team) {
-        const teamManager = await User.findOne({ status: 'Active', team: requester.team, isManager: true }, { id: 1, name: 1, role: 1 }).lean();
+        const teamManager = await User.findOne(
+          { status: 'Active', team: requester.team, isManager: true },
+          { id: 1, name: 1, role: 1 }
+        ).lean();
         if (teamManager) {
           return {
             assignedApprover: teamManager.id,
@@ -192,43 +271,26 @@ async function getStepAssignment(approval, stepNumber) {
     return { assignedApprover: null, assignedApproverName: null, assignedApproverRole: role || null };
   }
 
-  // Procurement Head / EXIM Manager step: pick the department head on the requester's team.
-  const manager = await User.findOne({ status: 'Active', team: approval.requestedByTeam, role: { $in: ['procurement_head', 'exim-manager'] } }, { id: 1, name: 1, role: 1 }).lean();
-  return {
-    assignedApprover: manager?.id || null,
-    assignedApproverName: manager?.name || null,
-    assignedApproverRole: manager?.role || role
-  };
-}
-
-// ── Check if user role(s) can act on current step (with Hierarchy support) ────────────────────────────
-function canActOnStep(userRole, approval) {
-  const roles = Array.isArray(userRole) ? userRole : [userRole];
-  
-  for (const role of roles) {
-    const ur = (role || '').toLowerCase().replace(/[\s_-]+/g, ' ').trim();
-    if (ur === 'admin' || ur.replace(/\s+/g, '') === 'systemadmin' || ur === 'superadmin') return true;
-
-    const requiredRole = getCurrentStepRole(approval);
-    if (!requiredRole) return true;
-
-    // Direct role keyword match
-    const keywords = getRoleKeywords(role);
-    for (const kw of keywords) {
-      if (requiredRole.includes(kw)) return true;
-    }
-
-    // Hierarchical role match (Higher-level approvers can act on subordinate steps)
-    const subordinates = ROLE_HIERARCHY[ur] || [];
-    for (const subRole of subordinates) {
-      const subKeywords = getRoleKeywords(subRole);
-      for (const kw of subKeywords) {
-        if (requiredRole.includes(kw) || kw.includes(requiredRole)) return true;
-      }
-    }
+  // Procurement Head / EXIM Manager step
+  const PH_REGEX = /procurement[\s_-]*head/i;
+  if (PH_REGEX.test(role) || role.includes('exim')) {
+    const manager = await User.findOne(
+      { status: 'Active', role: PH_REGEX },
+      { id: 1, name: 1, role: 1 }
+    ).lean();
+    return {
+      assignedApprover: manager?.id || null,
+      assignedApproverName: manager?.name || null,
+      assignedApproverRole: manager?.role || role
+    };
   }
 
-  return false;
+  return { assignedApprover: null, assignedApproverName: null, assignedApproverRole: role || null };
+}
+
+// ── Check if user role(s) can act on current step ────────────────────────────
+function canActOnStep(userRole, approval, userId = null) {
+  return isApprovalForRole(approval, userRole, userId);
 }
 
 // ── GET /api/approvals/pending ───────────────────────────────────────────────
@@ -302,8 +364,11 @@ export const getPendingApprovals = async (req, res) => {
       return rNorm === 'admin' || rNorm.replace(/\s+/g, '') === 'systemadmin';
     });
 
-    // Actionable items specifically assigned to user's role step
-    const actionableApprovals = allApprovals.filter(a => isApprovalForRole(a, effectiveRoles));
+    // Primary user ID
+    const currentUserId = req.user?.id || req.user?.userId;
+
+    // Actionable items specifically assigned to user's role step or direct assignment
+    const actionableApprovals = allApprovals.filter(a => isApprovalForRole(a, effectiveRoles, currentUserId));
     const actionableCount = actionableApprovals.length;
     const allCount = allApprovals.length;
 
@@ -311,7 +376,7 @@ export const getPendingApprovals = async (req, res) => {
     let approvals = (scope === 'actionable' || req.query.actionableOnly === 'true') ? actionableApprovals : allApprovals;
 
     if (!isSuperUser && scope !== 'all') {
-      approvals = approvals.filter(a => isApprovalForRole(a, effectiveRoles));
+      approvals = approvals.filter(a => isApprovalForRole(a, effectiveRoles, currentUserId));
     }
 
     // ── Self-submission exclusion ────────────────────────────────────────
@@ -336,14 +401,16 @@ export const getPendingApprovals = async (req, res) => {
     const enriched = paginated.map(a => {
       let parsedSteps = null;
       if (a.workflowSteps) {
-        try { parsedSteps = JSON.parse(a.workflowSteps); } catch (_) {}
+        try { parsedSteps = typeof a.workflowSteps === 'string' ? JSON.parse(a.workflowSteps) : a.workflowSteps; } catch (_) {}
       }
       const stepRole = getCurrentStepRole(a);
       // Check if this approval was matched via delegation
       let matchedDelegator = null;
-      if (delegatorMap[stepRole] && !isApprovalForRole(a, primaryRole)) {
+      if (delegatorMap[stepRole] && !isApprovalForRole(a, primaryRole, currentUserId)) {
         matchedDelegator = delegatorMap[stepRole][0];
       }
+
+      const isUserTurnToApprove = isApprovalForRole(a, effectiveRoles, currentUserId);
 
       return {
         ...a,
@@ -357,6 +424,7 @@ export const getPendingApprovals = async (req, res) => {
         delegatorRole:    matchedDelegator?.role || null,
         parsedSteps,
         currentStepRole: stepRole,
+        isUserTurnToApprove,
         delegatedFrom: matchedDelegator ? {
           id: matchedDelegator.id,
           name: matchedDelegator.name,
@@ -442,8 +510,7 @@ export const processApprovalAction = async (req, res) => {
     const actingRole = primaryRole; // The role of the user performing the action
     
     if (!actingUserId) return res.status(401).json({ success: false, error: 'A verified user identity is required.' });
-    const requester = String(approval.requestedById || approval.requestedBy || '').trim().toLowerCase();
-    if (requester && [actingUserId, req.user?.email, req.user?.name].filter(Boolean).some((value) => requester === String(value).trim().toLowerCase())) return res.status(403).json({ success: false, error: 'You cannot approve, return, or reject your own request.' });
+    
     if (['reject', 'return'].includes(rawAction) && !String(req.body.remarks || '').trim()) return res.status(400).json({ success: false, error: 'A reason is required when returning or rejecting a request.' });
     const idempotencyKey = String(req.headers['idempotency-key'] || req.body.idempotencyKey || '').trim();
     if (idempotencyKey && approval.actionHistory?.some((record) => record.idempotencyKey === idempotencyKey)) return res.json({ success: true, message: 'This approval action was already processed.', data: { id: approval.id, status: approval.status, currentStep: approval.currentStep, actionHistory: approval.actionHistory } });
@@ -458,7 +525,7 @@ export const processApprovalAction = async (req, res) => {
     }
 
     const isAssignedApprover = approval.assignedApprover && approval.assignedApprover === actingUserId;
-    if (!isAssignedApprover && !canActOnStep(effectiveRoles, approval)) {
+    if (!isAssignedApprover && !canActOnStep(effectiveRoles, approval, actingUserId)) {
       const requiredRole = getCurrentStepRole(approval);
       return res.status(403).json({
         success: false,

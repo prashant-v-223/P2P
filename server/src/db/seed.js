@@ -404,6 +404,7 @@ const DUMMY_USERS = [
   // ── Procurement Head ────────────────────────────────────────────────────────
   { id: 'usr-022', name: 'Harish Solanki', email: 'harish.solanki@rayzon.com', role: 'procurement_head', department: 'Procurement', avatar: 'HS', status: 'Active',
     parentUserId: 'usr-013', delegationActive: false, delegationNote: 'Annual leave delegation' },
+  { id: 'usr-025', name: 'Meera Iyer', email: 'meera.iyer@rayzon.com', role: 'procurement_head', department: 'Procurement', avatar: 'MI', status: 'Active' },
 
   // ── Purchase Manager - East ─────────────────────────────────────────────────
   { id: 'usr-023', name: 'Harish Solanki East', email: 'east.manager@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'EM', status: 'Active', isManager: true },
@@ -427,6 +428,7 @@ const DEMO_HIERARCHY = {
 
   // Level 1 — Procurement Head (reports to MD)
   'usr-022': { managerId: 'usr-013', managerName: 'Arjun Shah', team: 'Procurement', hierarchyLevel: 1, canSeeAllRequests: false },
+  'usr-025': { managerId: 'usr-013', managerName: 'Arjun Shah', team: 'Procurement', hierarchyLevel: 1, canSeeAllRequests: false },
 
   // Level 2 — Purchase Manager - East (reports to Procurement Head)
   'usr-023': { managerId: 'usr-022', managerName: 'Harish Solanki', team: 'East', hierarchyLevel: 2, canSeeAllRequests: false, isManager: true },

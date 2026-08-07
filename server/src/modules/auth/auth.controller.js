@@ -157,8 +157,21 @@ export const refreshTokenController = async (req, res) => {
     if (!refreshToken) return res.status(401).json({ success: false, error: 'Refresh token required.' });
 
     const decoded = jwt.verify(refreshToken, config.jwtRefreshSecret);
-    const user = await User.findOne({ $or: [{ id: decoded.id }, { _id: decoded.id }] });
-    if (!user || user.status !== 'Active') {
+    let user = null;
+
+    if (mongoose.connection.readyState === 1) {
+      try {
+        user = await User.findOne({ $or: [{ id: decoded.id }, { _id: decoded.id }, { email: decoded.email }] });
+      } catch (dbErr) {
+        console.warn('[REFRESH DB WARN]:', dbErr.message);
+      }
+    }
+
+    if (!user) {
+      user = FALLBACK_USERS.find((u) => u.id === decoded.id || u.email?.toLowerCase() === decoded.email?.toLowerCase());
+    }
+
+    if (!user || (user.status && user.status !== 'Active')) {
       return res.status(403).json({ success: false, error: 'User is unavailable or inactive.' });
     }
 

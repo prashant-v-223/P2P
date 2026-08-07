@@ -266,8 +266,9 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
       <button
         onClick={() => setCollapsed(!collapsed)}
         className="hidden lg:flex absolute -right-3 top-1/2 transform -translate-y-1/2 w-8 h-8 rounded-full bg-white border border-slate-200 shadow-xs items-center justify-center hover:bg-slate-50 transition-colors"
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
       >
-        <ChevronRight className={cn("w-4 h-4 ml-0.5 text-slate-500 transition-transform", collapsed ? "rotate-180" : "")} />
+        <ChevronRight className={cn("w-4 h-4 ml-0.5 text-slate-500 transition-transform", collapsed ? "" : "rotate-180")} />
       </button>
     </aside>
   );

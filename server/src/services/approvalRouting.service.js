@@ -71,8 +71,50 @@ async function findManagerOf(requester) {
   return null;
 }
 
-async function findProcurementHead() {
-  return User.findOne({ status: 'Active', role: /procurement[\s_-]*head/i }).lean();
+// ── Procurement Head Routing (Smart 3-Case Logic) ────────────────────────────
+// Case 1: Subordinate / child creates request → resolve their direct PH manager
+//         (walks up the hierarchy to find the PH)
+// Case 2: Procurement Head creates own request → pool mode (all PHs, API self-check blocks self)
+// Case 3: MD / CFO / higher-level creates request → pool mode (all PHs, any can approve)
+async function findProcurementHead(requester = null) {
+  const PH_REGEX = /procurement[\s_-]*head/i;
+  const requesterRole = String(requester?.role || '').toLowerCase().replace(/[\s_-]+/g, '_');
+  const isRequesterProcHead = PH_REGEX.test(requester?.role || '');
+  const isRequesterUpperLevel = ['md', 'cfo', 'director', 'admin', 'superadmin', 'finance_head', 'finance_lead'].some(
+    (r) => requesterRole.includes(r)
+  );
+
+  // Case 2 & 3: PH self-request OR upper-level (MD/CFO) request → pool mode (ALL PHs)
+  if (isRequesterProcHead || isRequesterUpperLevel) {
+    const allPHs = await User.find({ status: 'Active', role: PH_REGEX }, { id: 1, name: 1, role: 1 }).lean();
+    if (allPHs.length > 0) {
+      return { _pool: true, pool: allPHs, id: allPHs[0].id, name: allPHs[0].name, role: allPHs[0].role };
+    }
+  }
+
+  // Case 1: Subordinate/child → resolve their direct PH manager
+  if (requester?.managerId) {
+    const directManager = await User.findOne({ id: requester.managerId, status: 'Active' }).lean();
+    if (directManager && PH_REGEX.test(directManager.role || '')) {
+      return directManager; // exact PH found as direct manager
+    }
+    // Direct manager exists but is not PH (e.g. it's a Purchase Manager) → look at that manager's manager
+    if (directManager?.managerId) {
+      const grandManager = await User.findOne({ id: directManager.managerId, status: 'Active' }).lean();
+      if (grandManager && PH_REGEX.test(grandManager.role || '')) {
+        return grandManager;
+      }
+    }
+  }
+
+  // Fallback: any active Procurement Head on same team
+  if (requester?.team) {
+    const teamPH = await User.findOne({ status: 'Active', role: PH_REGEX, team: requester.team }).lean();
+    if (teamPH) return teamPH;
+  }
+
+  // Final fallback: first active PH in org
+  return User.findOne({ status: 'Active', role: PH_REGEX }).lean();
 }
 
 async function findCFO() {
@@ -89,36 +131,60 @@ async function findEximManager() {
 
 // Resolve the actual approver users for a chain, attaching names/ids.
 // `requestedById` is passed so self-approval can be blocked at the last step.
-async function attachApprovers(steps, requester) {
+export async function attachApprovers(steps, requester) {
   const hydrated = [];
   for (const s of steps) {
     const roleNorm = normRole(s.roleKey);
     let approver = null;
+    let isPool = false;
+    let pool = [];
 
     if (roleNorm === 'manager') {
       approver = await findManagerOf(requester);
-    } else if (roleNorm === 'procurement head') {
-      approver = await findProcurementHead();
-    } else if (roleNorm === 'cfo' || roleNorm === 'finance') {
+    } else if (roleNorm === 'procurement head' || roleNorm === 'procurement_head') {
+      // Pass requester so smart routing (Case 1/2/3) can determine the right PH
+      approver = await findProcurementHead(requester);
+      if (approver?._pool) {
+        isPool = true;
+        pool = approver.pool || [];
+        // For pool mode, assignedApproverId = null (any active PH can approve)
+        approver = null;
+      }
+    } else if (roleNorm === 'cfo' || roleNorm === 'finance' || roleNorm === 'finance lead' || roleNorm === 'finance_lead') {
       approver = await findCFO();
     } else if (roleNorm === 'md') {
       approver = await findMD();
-    } else if (roleNorm === 'exim manager') {
+    } else if (roleNorm === 'exim manager' || roleNorm === 'exim_manager' || roleNorm === 'exim-manager') {
       approver = await findEximManager();
     } else {
       approver = await findUserByRole(s.roleKey, { team: requester?.team, department: requester?.department });
     }
 
-    // When the resolved approver is the requester (self), skip this step so it
-    // stays non-actionable by the requester (self-approval prevention).
-    const isSelf = approver?.id && requester?.id && approver.id === requester.id;
-    hydrated.push({
-      ...s,
-      isSelfApproval: isSelf,
-      assignedApproverId: isSelf ? null : (approver?.id || null),
-      assignedApproverName: isSelf ? null : (approver?.name || null),
-      assignedApproverRole: approver?.role || s.roleKey
-    });
+    // Self-approval prevention: if resolved approver is the requester, use pool fallback or null
+    const isSelf = !isPool && approver?.id && requester?.id && String(approver.id) === String(requester.id);
+
+    if (isPool) {
+      // Pool mode: any approver in pool can act; no single assigned approver
+      hydrated.push({
+        ...s,
+        isSelfApproval: false,
+        isPoolApproval: true,
+        assignedApproverId: null,              // null = any PH in pool can approve
+        assignedApproverName: null,
+        assignedApproverRole: s.roleKey,
+        approverPool: pool.map((u) => ({ id: u.id, name: u.name, role: u.role }))
+      });
+    } else {
+      hydrated.push({
+        ...s,
+        isSelfApproval: isSelf,
+        isPoolApproval: false,
+        assignedApproverId: isSelf ? null : (approver?.id || null),
+        assignedApproverName: isSelf ? null : (approver?.name || null),
+        assignedApproverRole: approver?.role || s.roleKey,
+        approverPool: []
+      });
+    }
   }
   return hydrated;
 }
@@ -160,14 +226,19 @@ export async function resolveApprovalChain({ requester, amount }) {
   }
 
   // ── Department Head — Procurement Head (Level 1) ─────────────────────────
+  // PH creates request → peer PHs approve via pool mode (findProcurementHead returns _pool=true)
+  // Self-approval is blocked by isSelfSubmission check in processApprovalAction.
   if (isAnyRole(reqRole, 'procurement head', 'procurement_head')) {
     if (!amountIsAbove(numAmount, FINANCIAL_REVIEW_THRESHOLD)) {
       const steps = [step(1, 'procurement_head', 'Procurement Head', 'Procurement Head Approval')];
       return attachApprovers(steps, requester);
     }
-    const steps = [step(1, 'cfo', 'CFO', 'CFO Financial Review')];
+    const steps = [step(1, 'procurement_head', 'Procurement Head', 'Procurement Head Approval')];
+    if (amountIsAbove(numAmount, FINANCIAL_REVIEW_THRESHOLD)) {
+      steps.push(step(2, 'cfo', 'CFO', 'CFO Financial Review'));
+    }
     if (amountIsAbove(numAmount, STRATEGIC_REVIEW_THRESHOLD)) {
-      steps.push(step(2, 'md', 'Managing Director', 'MD Strategic Review'));
+      steps.push(step(3, 'md', 'Managing Director', 'MD Strategic Review'));
     }
     return attachApprovers(steps, requester);
   }

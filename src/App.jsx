@@ -74,13 +74,45 @@ import { getFirstAllowedRoute } from './lib/permissions';
 
 function HomeRedirect() {
   const { user } = useSelector((state) => state.auth);
-  const homePath = getFirstAllowedRoute(user?.role);
+  const customPerms = user?.permissions || user?.customPermissions;
+  const homePath = getFirstAllowedRoute(user?.role, customPerms);
   return <Navigate to={homePath} replace />;
 }
 
 export default function App() {
   const dispatch = useDispatch();
   const { isAuthenticated, user } = useSelector((state) => state.auth);
+
+  // Sync token refresh & logout events across tabs/fetches
+  useEffect(() => {
+    const handleAuthRefreshed = (e) => {
+      if (e.detail) {
+        dispatch(updateSessionTokens(e.detail));
+      }
+    };
+    const handleAuthLogout = () => {
+      dispatch(logout());
+    };
+
+    window.addEventListener('rayzon_auth_refreshed', handleAuthRefreshed);
+    window.addEventListener('rayzon_auth_logout', handleAuthLogout);
+
+    return () => {
+      window.removeEventListener('rayzon_auth_refreshed', handleAuthRefreshed);
+      window.removeEventListener('rayzon_auth_logout', handleAuthLogout);
+    };
+  }, [dispatch]);
+
+  // Automatic proactive token refresh every 10 minutes to maintain an infinite smooth session
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    
+    const refreshTimer = setInterval(() => {
+      dispatch(refreshAccessToken());
+    }, 10 * 60 * 1000); // Proactively refresh token every 10 min (before 15m expiry)
+
+    return () => clearInterval(refreshTimer);
+  }, [isAuthenticated, dispatch]);
 
   // Initial fetch + live-refresh every 60 s so the sidebar badge stays current
   useEffect(() => {
@@ -126,8 +158,8 @@ export default function App() {
 
           {/* Dedicated Vendor & Customs Portal Routes */}
           <Route path="/vendor/login" element={<VendorLoginPage />} />
-          <Route path="/vendor" element={<Navigate to="/vendor/dashboard" replace />} />
           <Route path="/vendor" element={<VendorLayout />}>
+            <Route index element={<Navigate to="/vendor/dashboard" replace />} />
             <Route path="dashboard" element={<VendorDashboardPage />} />
             <Route path="invoices" element={<VendorInvoicesListPage />} />
             <Route path="invoices/upload" element={<VendorUploadInvoicePage />} />

@@ -170,19 +170,27 @@ export const ROUTE_PERMISSIONS = {
   '/dashboard': 'dashboard.view',
   '/p2p/purchase-orders': 'purchase-orders.view',
   '/p2p/advances': 'advance-payments.view',
+  '/p2p/advance-payments': 'advance-payments.view',
   '/p2p/invoices': 'invoice-payments.view',
+  '/p2p/invoice-payments': 'invoice-payments.view',
   '/p2p/custom-duty': 'custom-duty.view',
   '/p2p/logistics-payments': 'logistics-payments.view',
   '/p2p/rfq': 'rfq.view',
+  '/admin/rfqs': 'rfq.view',
   '/p2p/exim-review': 'exim.view',
+  '/admin/exim': 'exim.view',
   '/p2p/bl-invoices': 'bl.view',
   '/approvals': 'approvals.view',
   '/management/vendors': 'vendors.view',
+  '/admin/vendors': 'vendors.view',
   '/management/custom-agents': 'custom-agents.view',
+  '/admin/custom-agents': 'custom-agents.view',
   '/management/logistics-providers': 'logistics-providers.view',
+  '/admin/logistics-providers': 'logistics-providers.view',
   '/admin/users': 'users.view',
   '/admin/roles': 'roles.view',
   '/admin/sap-sync': 'sap.view',
+  '/p2p/sap-sync': 'sap.view',
   '/admin/workflows': 'workflows.view',
   '/admin/exchange-rates': 'exchange-rates.view',
   '/profile': '*'
@@ -193,8 +201,8 @@ export const ROUTE_PERMISSIONS = {
  */
 export function userHasPermission(userRole, permissionKey, customPermissions) {
   if (!userRole) return false;
-  const roleNorm = String(userRole).toLowerCase().trim();
-  if (roleNorm === 'admin' || roleNorm === 'system admin' || roleNorm === 'systemadmin' || roleNorm === 'superadmin') return true;
+  const roleNorm = String(userRole).toLowerCase().replace(/[\s_-]+/g, '').trim();
+  if (['admin', 'systemadmin', 'superadmin'].includes(roleNorm)) return true;
   if (permissionKey === '*') return true;
 
   const [mod, act] = permissionKey.split('.');
@@ -211,8 +219,23 @@ export function userHasPermission(userRole, permissionKey, customPermissions) {
     if (Array.isArray(modPerms) && (modPerms.includes(act) || modPerms.includes('manage') || modPerms.includes('view') || modPerms.includes('*'))) return true;
   }
 
-  // 3. Check static role permissions map
-  const rolePerms = ROLE_PERMISSIONS[userRole] || ROLE_PERMISSIONS[roleNorm];
+  // 3. Check static role permissions map with key aliases
+  const rawRoleNorm = String(userRole).toLowerCase().trim();
+  let rolePerms = ROLE_PERMISSIONS[userRole] || ROLE_PERMISSIONS[rawRoleNorm];
+
+  if (!rolePerms) {
+    // Try matching aliases
+    if (rawRoleNorm.includes('cfo')) rolePerms = ROLE_PERMISSIONS['cfo'];
+    else if (rawRoleNorm.includes('finance')) rolePerms = ROLE_PERMISSIONS['finance'];
+    else if (rawRoleNorm.includes('account')) rolePerms = ROLE_PERMISSIONS['accounts'];
+    else if (rawRoleNorm.includes('procurement') && rawRoleNorm.includes('head')) rolePerms = ROLE_PERMISSIONS['procurement_head'];
+    else if (rawRoleNorm.includes('procurement')) rolePerms = ROLE_PERMISSIONS['procurement'];
+    else if (rawRoleNorm.includes('exim') && rawRoleNorm.includes('manager')) rolePerms = ROLE_PERMISSIONS['exim-manager'];
+    else if (rawRoleNorm.includes('exim')) rolePerms = ROLE_PERMISSIONS['exim'];
+    else if (rawRoleNorm.includes('logistics')) rolePerms = ROLE_PERMISSIONS['logistics'];
+    else if (rawRoleNorm.includes('md') || rawRoleNorm.includes('managing')) rolePerms = ROLE_PERMISSIONS['md'];
+  }
+
   if (rolePerms) {
     if (rolePerms.includes('*')) return true;
     if (rolePerms.includes(permissionKey)) return true;
@@ -247,8 +270,19 @@ export function userCanAccessRoute(userRole, routePath, customPermissions) {
   // Normalize path (strip query params / trailing slashes)
   const cleanPath = (routePath || '/').split('?')[0].replace(/\/$/, '') || '/';
   
-  // Find matching route permission
-  const permKey = ROUTE_PERMISSIONS[cleanPath];
+  // Find matching route permission (exact match first)
+  let permKey = ROUTE_PERMISSIONS[cleanPath];
+
+  // Prefix matching for sub-routes like /p2p/advance-payments/create or /p2p/invoices/INV-123
+  if (!permKey) {
+    for (const [routePattern, perm] of Object.entries(ROUTE_PERMISSIONS)) {
+      if (routePattern !== '/' && cleanPath.startsWith(routePattern)) {
+        permKey = perm;
+        break;
+      }
+    }
+  }
+
   if (!permKey) return true; // Unmapped routes default to accessible
   
   return userHasPermission(userRole, permKey, customPermissions);

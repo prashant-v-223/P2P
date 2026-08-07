@@ -174,6 +174,16 @@ export default function NotificationPanel() {
     
     const type = approvalType?.toLowerCase() || '';
     
+    // Logistics Payment
+    if (type.includes('logistics payment')) {
+      return `/p2p/logistics-payments?id=${approvalId}`;
+    }
+    
+    // Custom Duty Payment
+    if (type.includes('custom') || type.includes('duty')) {
+      return `/p2p/custom-duty?id=${approvalId}`;
+    }
+
     // Advance Payment
     if (type.includes('advance')) {
       return `/p2p/advance-payments/${approvalId}`;
@@ -184,19 +194,9 @@ export default function NotificationPanel() {
       return `/p2p/invoice-payments/${approvalId}`;
     }
     
-    // RFQ Logistics
+    // RFQ / Logistics sourcing
     if (type.includes('rfq') || type.includes('logistics')) {
       return `/admin/rfqs/${approvalId}`;
-    }
-    
-    // Custom Duty Payment
-    if (type.includes('custom') || type.includes('duty')) {
-      return `/p2p/custom-duty?id=${approvalId}`;
-    }
-    
-    // Logistics Payment
-    if (type.includes('logistics payment')) {
-      return `/p2p/logistics-payments?id=${approvalId}`;
     }
     
     // Default fallback to approvals page with search

@@ -243,7 +243,7 @@ export default function OverviewDashboard() {
 
         {/* 5. ACTIVE VENDORS */}
         <div 
-          onClick={() => navigate('/p2p/vendors')}
+          onClick={() => navigate('/management/vendors')}
           className="bg-white border border-slate-200/80 rounded-2xl p-5 cursor-pointer transition hover:shadow-md hover:border-slate-300 flex flex-col justify-between min-h-[128px]"
         >
           <div className="flex items-start justify-between">

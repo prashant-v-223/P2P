@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import dns from 'node:dns';
 import { seedDatabase } from './seed.js';
+import { ensureAllWorkflows } from '../modules/workflows/workflowDefaults.js';
 
 const DEFAULT_DATABASE_NAME = 'rayzon_p2p';
 const DEFAULT_ATLAS_DNS_SERVERS = ['1.1.1.1', '8.8.8.8'];
@@ -59,6 +60,7 @@ export const connectDB = async ({ seed = process.env.AUTO_SEED === 'true' } = {}
 
     mongoose.set('bufferCommands', true);
     console.log(`[DB] Connected to "${mongoose.connection.name}" on ${mongoose.connection.host}`);
+    await ensureAllWorkflows().catch((err) => console.warn('[DB WORKFLOW SEED WARN]', err.message));
     if (seed) await seedDatabase();
     return true;
   } catch (error) {

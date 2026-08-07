@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useLocation, Link, useNavigate } from 'react-router-dom';
 import { logout } from '../../features/auth/authSlice';
@@ -15,10 +15,22 @@ export default function Header({ collapsed, setCollapsed, onOpenMobile }) {
   const { user } = useSelector((state) => state.auth);
 
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
 
   useEffect(() => {
     dispatch(fetchPendingApprovals(user?.role || 'Finance Lead'));
   }, [dispatch, user?.role]);
+
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [dropdownOpen]);
 
   // Exact match first, then try progressive prefix stripping for dynamic routes like /p2p/advance-payments/:id
   const meta = routeMeta[location.pathname]
@@ -60,7 +72,7 @@ export default function Header({ collapsed, setCollapsed, onOpenMobile }) {
         <NotificationPanel />
 
         {/* User Profile */}
-        <div className="relative">
+        <div className="relative" ref={dropdownRef}>
           <button
             onClick={() => setDropdownOpen(!dropdownOpen)}
             className="flex items-center gap-2.5 rounded-xl border border-transparent p-1.5 transition hover:border-slate-200 hover:bg-slate-50"

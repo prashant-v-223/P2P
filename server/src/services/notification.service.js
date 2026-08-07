@@ -152,42 +152,28 @@ export async function sendApprovalCreatedEmails({ approval }) {
 
     const roleKey = step1.roleKey || step1.roleName || '';
     const stepTitle = step1.title || step1.roleName || 'Approval';
+    const assignedId = step1.assignedApproverId || approval.assignedApprover;
 
-    const approvers = await getUsersForRole(roleKey);
-    if (!approvers.length) return;
+    let recipients = [];
 
-    // Never send the approval email to the person who created the request
-    const requesterName = String(approval.requestedBy || '').trim().toLowerCase();
-    const requesterId = String(approval.requestedById || '').trim().toLowerCase();
-    const recipients = approvers.filter(u => {
-      const uname = String(u.name || '').trim().toLowerCase();
-      const uemail = String(u.email || '').trim().toLowerCase();
-      return uname !== requesterName && uemail !== requesterId;
-    });
-    if (!recipients.length) {
-      console.warn(`[notification] All matching approvers for "${roleKey}" are the requester. Notifying all other active users.`);
-      const fallback = (await User.find({ status: 'Active' }).select('name email role').lean())
-        .filter(u => String(u.name || '').trim().toLowerCase() !== requesterName && String(u.email || '').trim().toLowerCase() !== requesterId);
-      if (fallback.length) {
-        await Promise.allSettled(
-          fallback.map(u =>
-            sendNewApprovalRequestEmail({
-              to: u.email,
-              name: u.name,
-              approvalId: approval.id,
-              type: approval.type || 'Payment Request',
-              amount: approval.amountINR || approval.amountOriginal || '',
-              vendorName: approval.vendorName || '',
-              requestedBy: approval.requestedBy || 'Finance Team',
-              stepTitle,
-              stepNum: 1,
-              totalSteps: steps.length,
-            }).catch(e => console.warn('[notification] sendNewApprovalRequestEmail failed:', e.message))
-          )
-        );
-      }
-      return;
+    // If an explicit approver is assigned to step 1 (Case 1 direct manager), notify that exact user
+    if (assignedId && !step1.isPoolApproval) {
+      const targetUser = await User.findOne({ id: assignedId, status: 'Active' }).select('name email role').lean();
+      if (targetUser) recipients = [targetUser];
     }
+
+    if (!recipients.length) {
+      const approvers = await getUsersForRole(roleKey);
+      const requesterName = String(approval.requestedBy || '').trim().toLowerCase();
+      const requesterId = String(approval.requestedById || '').trim().toLowerCase();
+      recipients = approvers.filter(u => {
+        const uname = String(u.name || '').trim().toLowerCase();
+        const uemail = String(u.email || '').trim().toLowerCase();
+        return uname !== requesterName && uemail !== requesterId;
+      });
+    }
+
+    if (!recipients.length) return;
 
     const meta = {
       approvalId: approval.id,

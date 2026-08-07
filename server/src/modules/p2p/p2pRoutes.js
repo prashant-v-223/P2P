@@ -22,12 +22,36 @@ import { sendApprovalCreatedEmails } from '../../services/notification.service.j
 import { authenticateToken, optionalAuth } from '../../middleware/auth.middleware.js';
 import { authorizeRole } from '../../middleware/rbac.middleware.js';
 import { sendRfqInvitationEmail, sendBlSubmittedEmail, sendBlAssignedToAgentEmail, sendBlCustomsClearedEmail, sendRfqAwardedEmail } from '../../services/mail.service.js';
-import crypto from 'node:crypto';
+import { ExchangeRate } from '../../models/ExchangeRate.js';
 import { WorkflowAudit } from '../../models/WorkflowAudit.js';
-import { ensureRfqAwardWorkflows, ensureBlInvoiceWorkflows } from '../workflows/workflowDefaults.js';
-import { resolveApprovalChain, FINANCIAL_REVIEW_THRESHOLD, STRATEGIC_REVIEW_THRESHOLD } from '../../services/approvalRouting.service.js';
+import { ensureRfqAwardWorkflows, ensureBlInvoiceWorkflows, ensureAllWorkflows } from '../workflows/workflowDefaults.js';
+import { attachApprovers, resolveApprovalChain, FINANCIAL_REVIEW_THRESHOLD, STRATEGIC_REVIEW_THRESHOLD } from '../../services/approvalRouting.service.js';
 
 const router = express.Router();
+
+async function getFxConversion(amount, currency = 'INR', customFxRate = null) {
+  const num = Number(amount) || 0;
+  const curr = String(currency || 'INR').toUpperCase();
+  if (curr === 'INR' || num === 0) {
+    return {
+      amountINR: num,
+      fxRate: 1,
+      amountFormatted: `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+    };
+  }
+
+  const DEFAULT_RATES = { USD: 83.5, EUR: 90.2, GBP: 105.4, CNY: 11.5, JPY: 0.56, AED: 22.7, SGD: 62.0 };
+  let rate = customFxRate ? Number(customFxRate) : null;
+  if (!rate || isNaN(rate) || rate <= 0) {
+    const fxDoc = await ExchangeRate.findOne({ currency: curr }).lean().catch(() => null);
+    rate = fxDoc?.rate || DEFAULT_RATES[curr] || 83.5;
+  }
+
+  const amountINR = Math.round((num * rate) * 100) / 100;
+  const amountFormatted = `${curr} ${num.toLocaleString('en-US', { minimumFractionDigits: 2 })} (₹${amountINR.toLocaleString('en-IN')})`;
+
+  return { amountINR, fxRate: rate, amountFormatted };
+}
 
 // Helper to escape regex search inputs
 function escapeRegex(text) {
@@ -602,13 +626,20 @@ function getDefaultWorkflow(moduleType, amount) {
 
 // Create Approval record using the hierarchical routing service
 async function createApprovalRecord({ referenceId, type, vendorName, amountFormatted, poRef, requestedBy, requestedById, requestId, transactionSnapshot = {}, wf }) {
-  // Use the hierarchy-aware routing service to determine the correct chain.
   const requester = requestedById ? await User.findOne({ id: requestedById }, { id: 1, name: 1, role: 1, team: 1, managerId: 1, managerName: 1, department: 1, hierarchyLevel: 1, canSeeAllRequests: 1, isManager: 1 }).lean() : null;
   const numAmount = Number(transactionSnapshot?.amount || 0) || Number(String(amountFormatted).replace(/[^0-9.-]+/g, '')) || 0;
-  const chain = await resolveApprovalChain({ requester, amount: numAmount });
-  const stepsForWorkflow = chain.length > 0 ? chain : (wf?.steps || []);
-  const firstStep = chain[0] || (wf?.steps?.[0] ? { ...wf.steps[0], statusKey: `Pending ${wf.steps[0].title} Approval` } : null);
-  const initialStatus = firstStep?.statusKey || 'Pending Procurement Head Approval';
+
+  // Authoritative steps: Use the exact steps from the database Workflow Slab matching this category & amount
+  let rawSteps = (wf && Array.isArray(wf.steps) && wf.steps.length > 0) ? wf.steps : null;
+  if (!rawSteps || rawSteps.length === 0) {
+    const fallbackWf = getDefaultWorkflow(type, numAmount);
+    rawSteps = fallbackWf.steps || [];
+  }
+
+  // Hydrate each step in the workflow slab with approver user details
+  const stepsForWorkflow = await attachApprovers(rawSteps, requester);
+  const firstStep = stepsForWorkflow[0] || null;
+  const initialStatus = firstStep?.statusKey || (firstStep?.title ? `Pending ${firstStep.title}` : 'Pending Procurement Head Approval');
 
   const newApproval = await Approval.create({
     id: referenceId,
@@ -618,20 +649,20 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
     amountINR: amountFormatted,
     currency: 'INR',
     requestedBy: requestedBy || 'Finance Team',
-    currentSlab: wf.slab,
-    workflowId: wf.workflowId,
-    workflowVersion: wf.workflowVersion || 1,
-    workflowSnapshot: { workflowId: wf.workflowId, workflowCode: wf.workflowCode, version: wf.workflowVersion || 1, slab: wf.slab, steps: stepsForWorkflow },
+    currentSlab: wf?.slab || wf?.name || 'Standard',
+    workflowId: wf?.workflowId || wf?.id || 'WF-STD',
+    workflowVersion: wf?.workflowVersion || 1,
+    workflowSnapshot: { workflowId: wf?.workflowId || wf?.id, workflowCode: wf?.workflowCode || wf?.id, version: wf?.workflowVersion || 1, slab: wf?.slab || wf?.name, steps: stepsForWorkflow },
     transactionSnapshot: { ...transactionSnapshot, referenceId, type, vendorName, amount: amountFormatted, poReference: poRef },
     requestedById,
     requestedByTeam: requester?.team || null,
     assignedApprover: firstStep?.assignedApproverId || null,
     assignedApproverName: firstStep?.assignedApproverName || null,
-    assignedApproverRole: firstStep?.assignedApproverRole || null,
+    assignedApproverRole: firstStep?.assignedApproverRole || firstStep?.roleKey || null,
     requestId,
     poReference: poRef || '',
     currentStep: 1,
-    totalSteps: stepsForWorkflow.length || wf.totalSteps,
+    totalSteps: stepsForWorkflow.length,
     workflowSteps: JSON.stringify(stepsForWorkflow),
     status: initialStatus,
     submittedAt: new Date(),
@@ -640,7 +671,7 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
     isOverdue: false,
     actionHistory: []
   });
-  await WorkflowAudit.create({ eventId: `wa-${crypto.randomUUID()}`, eventType: 'APPROVAL_SUBMITTED', actorId: requestedById || requestedBy || 'system', actorName: requestedBy, entityType: type, entityId: referenceId, workflowId: wf.workflowId, workflowVersion: wf.workflowVersion || 1, step: 1, action: 'submit', previousState: { status: 'draft' }, newState: { status: initialStatus, currentStep: 1 }, requestId });
+  await WorkflowAudit.create({ eventId: `wa-${crypto.randomUUID()}`, eventType: 'APPROVAL_SUBMITTED', actorId: requestedById || requestedBy || 'system', actorName: requestedBy, entityType: type, entityId: referenceId, workflowId: wf?.workflowId || wf?.id, workflowVersion: wf?.workflowVersion || 1, step: 1, action: 'submit', previousState: { status: 'draft' }, newState: { status: initialStatus, currentStep: 1 }, requestId });
 
   // ── Real-time SSE: notify all connected clients of the new request ─────────
   broadcastEvent('APPROVAL_CREATED', {
@@ -1022,9 +1053,11 @@ const createAdvanceHandler = async (req, res) => {
       createdBy: requestedBy || 'Finance Team'
     });
 
-    // Resolve and create approval workflow
-    const wf = await resolveWorkflowFromDB('Advance Payment', numAmount, { currency: poCurrency, vendorType: req.user?.vendorType, poType: po.poType || po.type });
-    const amountFormatted = `₹${numAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+    // Resolve FX currency to INR for workflow slab threshold matching
+    const { amountINR, fxRate, amountFormatted } = await getFxConversion(numAmount, poCurrency, req.body.fxRate);
+
+    // Resolve and create approval workflow based on amountINR
+    const wf = await resolveWorkflowFromDB('Advance Payment', amountINR, { currency: poCurrency, vendorType: req.user?.vendorType, poType: po.poType || po.type });
 
     await createApprovalRecord({
       referenceId: advanceId,
@@ -1035,7 +1068,7 @@ const createAdvanceHandler = async (req, res) => {
       requestedBy: requestedBy || 'Finance Team',
       requestedById: req.user?.id || req.user?.email,
       requestId: req.headers['x-request-id'],
-      transactionSnapshot: { amount: numAmount, currency: poCurrency, poId: poRef, vendorId: vendorIdFinal },
+      transactionSnapshot: { amount: numAmount, amountINR, currency: poCurrency, fxRate, poId: poRef, vendorId: vendorIdFinal },
       wf
     });
 
@@ -1384,9 +1417,9 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       createdBy: requestedBy || 'Finance Team'
     });
 
-    // Workflow & Approval queue creation
-    const wf = await resolveWorkflowFromDB('Invoice Payment', netPayable, { currency: poCurrency, vendorType: vendor?.vendorType, poType: po.poType || po.type });
-    const amountFormatted = `₹${netPayable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+    // Workflow & Approval queue creation (with FX conversion to INR for threshold matching)
+    const { amountINR, fxRate, amountFormatted } = await getFxConversion(netPayable, poCurrency, req.body.fxRate);
+    const wf = await resolveWorkflowFromDB('Invoice Payment', amountINR, { currency: poCurrency, vendorType: vendor?.vendorType, poType: po.poType || po.type });
 
     await createApprovalRecord({
       referenceId: invPaymentId,
@@ -1397,7 +1430,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       requestedBy: requestedBy || 'Finance Team',
       requestedById: req.user?.id || req.user?.email,
       requestId: req.headers['x-request-id'],
-      transactionSnapshot: { netPayable, grossAmount: numGross, currency: poCurrency, poId: poRef, vendorId: vendorIdFinal, invoiceNumber: finalInvoiceNumber },
+      transactionSnapshot: { netPayable, amountINR, grossAmount: numGross, currency: poCurrency, fxRate, poId: poRef, vendorId: vendorIdFinal, invoiceNumber: finalInvoiceNumber },
       wf
     });
 
