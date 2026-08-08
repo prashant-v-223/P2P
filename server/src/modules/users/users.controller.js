@@ -270,3 +270,14 @@ export const getUserDelegation = async (req, res) => {
     delegatingTo
   });
 };
+
+export const resetDatabase = async (req, res) => {
+  try {
+    const { resetAndSeedDatabase } = await import('../../db/seed.js');
+    await resetAndSeedDatabase();
+    return res.json({ success: true, message: 'Database reset and re-seeded successfully.' });
+  } catch (err) {
+    console.error('Reset database error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};

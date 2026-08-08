@@ -350,8 +350,9 @@ export default function CreateAdvancePaymentWizard() {
         </div>
         <div className="p-4 space-y-2.5">
           {(dynamicWorkflow?.steps || [
-            { step: 1, title: 'Procurement Head Approval', roleName: 'Procurement Head' },
-            { step: 2, title: 'Finance Lead Approval', roleName: 'Finance Lead' }
+            { step: 1, title: 'Purchase Manager Review', roleName: 'Purchase Manager' },
+            { step: 2, title: 'Purchase Head Approval', roleName: 'Purchase Head' },
+            { step: 3, title: 'CFO Approval', roleName: 'CFO' }
           ]).map((st, i) => (
             <div key={st.step || i} className="flex items-center gap-3">
               <div className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-[11px] font-bold flex items-center justify-center shrink-0 border border-slate-200">
@@ -996,8 +997,9 @@ export default function CreateAdvancePaymentWizard() {
                     </p>
                     <div className="flex items-center gap-1 flex-wrap">
                       {(dynamicWorkflow?.steps || [
-                        { step: 1, title: 'Procurement Head Approval', roleName: 'Procurement Head' },
-                        { step: 2, title: 'Finance Lead Approval', roleName: 'Finance Lead' }
+                        { step: 1, title: 'Purchase Manager Review', roleName: 'Purchase Manager' },
+                        { step: 2, title: 'Purchase Head Approval', roleName: 'Purchase Head' },
+                        { step: 3, title: 'CFO Approval', roleName: 'CFO' }
                       ]).map((st, i) => (
                         <React.Fragment key={st.step || i}>
                           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold text-teal-700 bg-teal-100 border-teal-200">

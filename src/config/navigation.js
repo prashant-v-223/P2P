@@ -56,6 +56,7 @@ export const navigation = [
       { to: '/management/logistics-providers', label: 'Logistics Providers', icon: Building2 },
       { to: '/admin/users', label: 'Users', icon: Users },
       { to: '/admin/roles', label: 'Roles & Permissions', icon: Lock },
+      { to: '/admin/hierarchy-report', label: 'Hierarchy Report', icon: RefreshCw },
     ],
   },
   {
@@ -188,6 +189,12 @@ export const routeMeta = {
     eyebrow: 'Management',
     title: 'Roles & Permissions',
     description: 'Control RBAC permissions and approval role mappings.',
+  },
+  '/admin/hierarchy-report': {
+    icon: RefreshCw,
+    eyebrow: 'Management',
+    title: 'Hierarchy Report',
+    description: 'Hierarchical grid showing advance QTs, PO amounts, invoice adjustments, and vendor requirements per user.',
   },
   '/admin/sap-sync': {
     icon: Cloud,

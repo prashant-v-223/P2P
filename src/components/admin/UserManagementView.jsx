@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import {
   UserPlus, Search, Shield, CheckCircle2, Loader2, X,
-  XCircle, Users, AlertCircle, Pencil, Trash2, ShieldAlert, GitBranch, ChevronDown, ChevronRight, List, Network
+  XCircle, Users, AlertCircle, Pencil, Trash2, ShieldAlert, GitBranch, ChevronDown, ChevronRight, List, Network, RefreshCw
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { SearchableSelect } from '../ui/searchable-select';
@@ -353,8 +353,27 @@ export default function UserManagementView() {
   const [department, setDepartment] = useState('Procurement');
   const [managerId, setManagerId] = useState('');
   const [statusUpdatingId, setStatusUpdatingId] = useState(null);
+  const [resettingDb, setResettingDb] = useState(false);
   const [errors, setErrors] = useState({});
   const { showToast } = useToast();
+
+  const handleResetDatabase = async () => {
+    if (!window.confirm('Are you sure you want to drop current data and reseed fresh user hierarchy (Admin, MD, CFO, Purchase Head, Purchase Manager, Inner Team)?')) {
+      return;
+    }
+    setResettingDb(true);
+    try {
+      const res = await apiFetch('/api/users/reset-database', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Database reset failed.');
+      showToast({ title: 'Database Reset & Reseeded', description: 'Fresh user hierarchy and seed records loaded.' });
+      fetchUsers();
+    } catch (err) {
+      showToast({ type: 'error', title: 'Reset Failed', description: err.message });
+    } finally {
+      setResettingDb(false);
+    }
+  };
 
   const currentPerms = currentUser?.permissions;
   const canManageUsers = userHasPermission(currentUser?.role, 'users.manage', currentPerms);
@@ -611,24 +630,39 @@ export default function UserManagementView() {
           </div>
         )}
 
-        {canCreateUser ? (
-          <button
-            onClick={() => setIsAddUserOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-[#0d7676] rounded-lg hover:bg-[#0a5c5c] transition shadow-xs flex-shrink-0"
-          >
-            <UserPlus className="w-4 h-4" />
-            Provision New User
-          </button>
-        ) : (
-          <button
-            disabled
-            title="You do not have permission to provision new users."
-            className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 rounded-lg cursor-not-allowed flex-shrink-0"
-          >
-            <ShieldAlert className="w-4 h-4 text-slate-400" />
-            Provisioning Restricted
-          </button>
-        )}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {canManageUsers && (
+            <button
+              type="button"
+              disabled={resettingDb}
+              onClick={handleResetDatabase}
+              title="Reset all DB collections and seed exact user hierarchy"
+              className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100 transition shadow-2xs disabled:opacity-50"
+            >
+              {resettingDb ? <Loader2 className="w-4 h-4 animate-spin text-rose-600" /> : <RefreshCw className="w-4 h-4 text-rose-600" />}
+              <span>Reset & Reseed DB</span>
+            </button>
+          )}
+
+          {canCreateUser ? (
+            <button
+              onClick={() => setIsAddUserOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-[#0d7676] rounded-lg hover:bg-[#0a5c5c] transition shadow-xs"
+            >
+              <UserPlus className="w-4 h-4" />
+              Provision New User
+            </button>
+          ) : (
+            <button
+              disabled
+              title="You do not have permission to provision new users."
+              className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 rounded-lg cursor-not-allowed"
+            >
+              <ShieldAlert className="w-4 h-4 text-slate-400" />
+              Provisioning Restricted
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Permission Warning */}

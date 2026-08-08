@@ -88,8 +88,9 @@ export default function UniversalApprovalWorkflowCard({
 
       // Fallback synthesis only if explicit submission is not required
       const defaultSteps = [
-        { step: 1, title: 'Procurement Head Approval', roleKey: 'procurement_head', roleName: 'Procurement Head', statusKey: 'Pending Procurement Head Approval' },
-        { step: 2, title: 'Finance Approval', roleKey: 'finance_lead', roleName: 'Finance Lead', statusKey: 'Pending Finance Approval' }
+        { step: 1, title: 'Purchase Manager Review', roleKey: 'purchase-manager', roleName: 'Purchase Manager', statusKey: 'Pending Purchase Manager Review' },
+        { step: 2, title: 'Purchase Head Approval', roleKey: 'purchase-head', roleName: 'Purchase Head', statusKey: 'Pending Purchase Head Approval' },
+        { step: 3, title: 'CFO Approval', roleKey: 'cfo', roleName: 'CFO', statusKey: 'Pending CFO Approval' }
       ];
 
       const fallbackApproval = {
@@ -101,9 +102,9 @@ export default function UniversalApprovalWorkflowCard({
         poReference: poRef,
         currentSlab: `${recordType} Slab`,
         currentStep: 1,
-        totalSteps: 2,
+        totalSteps: 3,
         workflowSteps: JSON.stringify(defaultSteps),
-        status: 'Pending Procurement Head Approval',
+        status: 'Pending Purchase Manager Review',
         submittedAt: new Date(),
         actionHistory: [],
         requestedById: null,

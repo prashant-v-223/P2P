@@ -365,7 +365,7 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
   }
 
   const firstStep = finalSteps[0] || null;
-  const initialStatus = firstStep?.statusKey || (firstStep?.title ? `Pending ${firstStep.title}` : 'Pending Procurement Head Approval');
+  const initialStatus = firstStep?.statusKey || (firstStep?.title ? `Pending ${firstStep.title}` : 'Pending Approval');
 
   const safeWf = wf || { totalSteps: finalSteps.length, steps: finalSteps };
 
@@ -1032,6 +1032,267 @@ const getAdvancesHandler = async (req, res) => {
 router.get('/advances', authenticateToken, getAdvancesHandler);
 router.get('/advance-payments', authenticateToken, getAdvancesHandler);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HIERARCHICAL REPORT GRID ENDPOINT
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/reports/hierarchy', authenticateToken, async (req, res) => {
+  try {
+    const loginUser = await User.findOne(
+      { email: req.user?.email },
+      { id: 1, name: 1, email: 1, role: 1, department: 1, managerId: 1, managerName: 1, hierarchyLevel: 1, canSeeAllRequests: 1, team: 1 }
+    ).lean();
+
+    if (!loginUser) {
+      return res.status(401).json({ success: false, error: 'Logged-in user not found.' });
+    }
+
+    const allUsers = await User.find(
+      { status: 'Active' },
+      { id: 1, name: 1, email: 1, role: 1, department: 1, managerId: 1, managerName: 1, hierarchyLevel: 1, canSeeAllRequests: 1, team: 1, avatar: 1 }
+    ).sort({ hierarchyLevel: 1, name: 1 }).lean();
+
+    // Map manager to child users
+    const byManager = new Map();
+    for (const u of allUsers) {
+      const mgrKey = u.managerId || 'root';
+      if (!byManager.has(mgrKey)) byManager.set(mgrKey, []);
+      byManager.get(mgrKey).push(u);
+    }
+
+    // Determine allowed user IDs based on loginUser permissions
+    const accessibleUserIds = new Set();
+    accessibleUserIds.add(loginUser.id);
+
+    const isTopExecutive = ['admin', 'superadmin', 'system_admin', 'md', 'cfo'].includes(String(loginUser.role || '').toLowerCase()) || loginUser.canSeeAllRequests;
+
+    if (isTopExecutive) {
+      allUsers.forEach((u) => accessibleUserIds.add(u.id));
+    } else {
+      const collectSubordinates = (mgrId, visited = new Set()) => {
+        const subs = byManager.get(mgrId) || [];
+        for (const sub of subs) {
+          if (visited.has(sub.id)) continue;
+          accessibleUserIds.add(sub.id);
+          const nextVisited = new Set(visited);
+          nextVisited.add(sub.id);
+          collectSubordinates(sub.id, nextVisited);
+        }
+      };
+      collectSubordinates(loginUser.id);
+    }
+
+    const allowedUserList = allUsers.filter((u) => accessibleUserIds.has(u.id));
+    const allowedUserIds = allowedUserList.map((u) => u.id);
+    const allowedUserNames = allowedUserList.map((u) => u.name).filter(Boolean);
+
+    // Fetch transactions
+    const [advances, invoices, pos, vendors] = await Promise.all([
+      AdvancePayment.find({
+        isDeleted: { $ne: true },
+        $or: [
+          { userId: { $in: allowedUserIds } },
+          { requestedById: { $in: allowedUserIds } },
+          { createdBy: { $in: [...allowedUserIds, ...allowedUserNames] } }
+        ]
+      }).lean(),
+      InvoicePayment.find({
+        isDeleted: { $ne: true },
+        $or: [
+          { userId: { $in: allowedUserIds } },
+          { requestedById: { $in: allowedUserIds } },
+          { createdBy: { $in: [...allowedUserIds, ...allowedUserNames] } }
+        ]
+      }).lean(),
+      PurchaseOrder.find().lean(),
+      Vendor.find({}, { id: 1, supplierId: 1, sapVendorCode: 1, companyName: 1, vendorType: 1, paymentTerms: 1 }).lean()
+    ]);
+
+    const vendorMap = new Map();
+    vendors.forEach((v) => {
+      if (v.sapVendorCode) vendorMap.set(v.sapVendorCode, v);
+      if (v.supplierId) vendorMap.set(v.supplierId, v);
+    });
+
+    // Group metrics by user ID
+    const userMetrics = new Map();
+    for (const u of allowedUserList) {
+      userMetrics.set(u.id, {
+        user: u,
+        records: [],
+        poTotalAmount: 0,
+        advancePaymentTotal: 0,
+        invoicePaymentTotal: 0,
+        invoiceAdvanceAdjustedTotal: 0,
+        pendingNotApprovedAdvanceCount: 0,
+        pendingNotApprovedAdvanceAmount: 0,
+        verifiedRecordsCount: 0,
+        associatedVendors: new Set(),
+        turnaroundHoursList: [],
+        latestCreatedAt: null
+      });
+    }
+
+    // Process Advance Payments
+    for (const adv of advances) {
+      const ownerId = adv.userId || adv.requestedById || allowedUserList.find(u => u.name === adv.createdBy)?.id || loginUser.id;
+      const metric = userMetrics.get(ownerId) || userMetrics.get(loginUser.id);
+      if (!metric) continue;
+
+      const amt = Number(adv.amount || 0);
+      metric.advancePaymentTotal += amt;
+      const isApproved = ['approved', 'paid', 'adjusted'].includes(String(adv.status || '').toLowerCase());
+      if (isApproved) {
+        metric.verifiedRecordsCount += 1;
+      } else if (!String(adv.status || '').toLowerCase().includes('reject')) {
+        metric.pendingNotApprovedAdvanceCount += 1;
+        metric.pendingNotApprovedAdvanceAmount += amt;
+      }
+
+      if (adv.vendorName) metric.associatedVendors.add(adv.vendorName);
+      if (adv.createdAt) {
+        const cDate = new Date(adv.createdAt);
+        if (!metric.latestCreatedAt || cDate > metric.latestCreatedAt) metric.latestCreatedAt = cDate;
+        if (adv.paidAt || adv.updatedAt) {
+          const doneDate = new Date(adv.paidAt || adv.updatedAt);
+          const diffHours = Math.max(0, (doneDate - cDate) / (1000 * 60 * 60));
+          metric.turnaroundHoursList.push(diffHours);
+        }
+      }
+
+      metric.records.push({
+        id: adv.advanceId,
+        type: 'Advance Payment',
+        poNumber: adv.sapPoNumber || adv.poId,
+        vendorName: adv.vendorName,
+        amount: amt,
+        currency: adv.currency || 'INR',
+        status: adv.status,
+        verified: isApproved,
+        createdAt: adv.createdAt,
+        advanceAdjusted: 0
+      });
+    }
+
+    // Process Invoice Payments
+    for (const inv of invoices) {
+      const ownerId = inv.userId || inv.requestedById || allowedUserList.find(u => u.name === inv.createdBy)?.id || loginUser.id;
+      const metric = userMetrics.get(ownerId) || userMetrics.get(loginUser.id);
+      if (!metric) continue;
+
+      const gross = Number(inv.grossAmount || 0);
+      const advAdj = Number(inv.advanceAdjusted || 0);
+      metric.invoicePaymentTotal += gross;
+      metric.invoiceAdvanceAdjustedTotal += advAdj;
+
+      const isVerified = ['approved', 'paid'].includes(String(inv.status || '').toLowerCase()) || inv.threeWayMatch?.status === 'matched';
+      if (isVerified) metric.verifiedRecordsCount += 1;
+
+      if (inv.vendorName) metric.associatedVendors.add(inv.vendorName);
+      if (inv.createdAt) {
+        const cDate = new Date(inv.createdAt);
+        if (!metric.latestCreatedAt || cDate > metric.latestCreatedAt) metric.latestCreatedAt = cDate;
+        if (inv.paidAt || inv.updatedAt) {
+          const doneDate = new Date(inv.paidAt || inv.updatedAt);
+          const diffHours = Math.max(0, (doneDate - cDate) / (1000 * 60 * 60));
+          metric.turnaroundHoursList.push(diffHours);
+        }
+      }
+
+      metric.records.push({
+        id: inv.invoicePaymentId || inv.invoiceNumber,
+        type: 'Invoice Payment',
+        poNumber: inv.sapPoNumber || inv.poId,
+        vendorName: inv.vendorName,
+        amount: gross,
+        currency: inv.currency || 'INR',
+        status: inv.status,
+        threeWayMatchStatus: inv.threeWayMatch?.status || 'pending',
+        verified: isVerified,
+        createdAt: inv.createdAt,
+        advanceAdjusted: advAdj
+      });
+    }
+
+    // Process POs
+    for (const po of pos) {
+      const amt = Number(po.totalAmount || 0);
+      allowedUserList.forEach((u) => {
+        const metric = userMetrics.get(u.id);
+        if (metric) metric.poTotalAmount += Math.round(amt / Math.max(1, allowedUserList.length));
+      });
+    }
+
+    // Build Rows
+    const rows = allowedUserList.map((u) => {
+      const m = userMetrics.get(u.id);
+      const avgHours = m.turnaroundHoursList.length > 0
+        ? Math.round(m.turnaroundHoursList.reduce((a, b) => a + b, 0) / m.turnaroundHoursList.length)
+        : 0;
+
+      return {
+        userId: u.id,
+        userName: u.name,
+        userEmail: u.email,
+        userRole: u.role,
+        department: u.department,
+        managerId: u.managerId,
+        managerName: u.managerName,
+        hierarchyLevel: u.hierarchyLevel,
+        team: u.team,
+        avatar: u.avatar || u.name.slice(0, 2).toUpperCase(),
+        totalRecords: m.records.length,
+        verifiedRecordsCount: m.verifiedRecordsCount,
+        pendingNotApprovedAdvanceCount: m.pendingNotApprovedAdvanceCount,
+        pendingNotApprovedAdvanceAmount: m.pendingNotApprovedAdvanceAmount,
+        poTotalAmount: m.poTotalAmount,
+        advancePaymentTotal: m.advancePaymentTotal,
+        invoicePaymentTotal: m.invoicePaymentTotal,
+        invoiceAdvanceAdjustedTotal: m.invoiceAdvanceAdjustedTotal,
+        vendorRequirements: Array.from(m.associatedVendors),
+        avgTurnaroundHours: avgHours,
+        latestCreatedAt: m.latestCreatedAt ? m.latestCreatedAt.toISOString() : null,
+        records: m.records
+      };
+    });
+
+    // Build Hierarchy Tree
+    const rowMap = new Map(rows.map((r) => [r.userId, { ...r, reports: [] }]));
+    const rootNodes = [];
+
+    rows.forEach((r) => {
+      const node = rowMap.get(r.userId);
+      if (r.managerId && rowMap.has(r.managerId) && r.managerId !== r.userId) {
+        rowMap.get(r.managerId).reports.push(node);
+      } else {
+        rootNodes.push(node);
+      }
+    });
+
+    return res.json({
+      success: true,
+      currentUser: {
+        id: loginUser.id,
+        name: loginUser.name,
+        role: loginUser.role,
+        canSeeAllRequests: isTopExecutive
+      },
+      summary: {
+        totalUsers: rows.length,
+        totalVerifiedRecords: rows.reduce((acc, r) => acc + r.verifiedRecordsCount, 0),
+        totalPendingAdvanceCount: rows.reduce((acc, r) => acc + r.pendingNotApprovedAdvanceCount, 0),
+        totalPendingAdvanceAmount: rows.reduce((acc, r) => acc + r.pendingNotApprovedAdvanceAmount, 0),
+        totalInvoiceAdvanceAdjusted: rows.reduce((acc, r) => acc + r.invoiceAdvanceAdjustedTotal, 0)
+      },
+      rows,
+      tree: rootNodes
+    });
+  } catch (err) {
+    console.error('getHierarchyReport error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
 const getSingleAdvanceHandler = async (req, res) => {
   try {
     const adv = await AdvancePayment.findOne({
@@ -1107,6 +1368,10 @@ const createAdvanceHandler = async (req, res) => {
     const poRef = po?.sapPoNumber || poNumber;
     const numAmount = Number(amount);
 
+    const vendorDoc = await Vendor.findOne({
+      $or: [{ id: vendorIdFinal }, { sapVendorCode: vendorIdFinal }, { supplierId: vendorIdFinal }]
+    }).lean();
+
     const advanceId = 'ADV-' + Date.now().toString().slice(-6);
 
     const newAdv = await AdvancePayment.create({
@@ -1125,11 +1390,14 @@ const createAdvanceHandler = async (req, res) => {
         totalGst: Number(totalGst) || 0
       },
       paymentMode: paymentMode || 'NEFT',
-      bankName: bankName || 'HDFC Bank',
-      bankAccountNumber: bankAccountNumber || '',
+      bankName: bankName || vendorDoc?.bankName || '',
+      bankAccountNumber: bankAccountNumber || vendorDoc?.bankAccountNumber || vendorDoc?.accountNumber || '',
       remarks: remarks || '',
       status: 'pending',
-      createdBy: requestedBy || 'Finance Team'
+      createdBy: req.user?.id || req.user?.email || 'system',
+      requestedById: req.user?.id || req.user?.email || 'system',
+      userId: req.user?.id || req.user?.email || 'system',
+      requestedBy: req.user?.name || requestedBy || 'Finance Team'
     });
 
     const { amountINR, fxRate, amountFormatted } = await getFxConversion(numAmount, poCurrency, req.body.fxRate);
@@ -1499,7 +1767,10 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         matchedAt: new Date()
       },
       status: 'pending',
-      createdBy: requestedBy || 'Finance Team'
+      createdBy: req.user?.id || req.user?.email || 'system',
+      requestedById: req.user?.id || req.user?.email || 'system',
+      userId: req.user?.id || req.user?.email || 'system',
+      requestedBy: req.user?.name || requestedBy || 'Finance Team'
     });
 
     const { amountINR, fxRate, amountFormatted } = await getFxConversion(netPayable, poCurrency, req.body.fxRate);

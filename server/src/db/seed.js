@@ -340,6 +340,61 @@ export const DEFAULT_ROLES = [
       'roles': ['view'],
       'permissions': ['view-perms']
     }
+  },
+  {
+    id: 'role-purchase-manager',
+    roleName: 'purchase-manager',
+    description: 'Purchase Manager — manager level procurement oversight, approvals, and team management.',
+    type: 'Custom',
+    status: 'Active',
+    permissions: {
+      'dashboard': ['view'],
+      'purchase-orders': ['view'],
+      'advance-payments': ['view', 'create'],
+      'invoice-payments': ['view', 'create'],
+      'logistics-payments': ['view', 'create'],
+      'custom-duty': ['view'],
+      'approvals': ['view', 'action'],
+      'rfq': ['view', 'create'],
+      'vendors': ['view', 'manage'],
+      'workflows': ['view'],
+      'users': ['view']
+    }
+  },
+  {
+    id: 'role-cfo-inner',
+    roleName: 'cfo-inner',
+    description: 'CFO Inner / Accounts Finance — finance and accounts processing, verification and payment execution.',
+    type: 'Custom',
+    status: 'Active',
+    permissions: {
+      'dashboard': ['view'],
+      'purchase-orders': ['view'],
+      'advance-payments': ['view', 'mark-paid'],
+      'invoice-payments': ['view', 'mark-paid'],
+      'logistics-payments': ['view', 'mark-paid'],
+      'custom-duty': ['view', 'mark-paid'],
+      'approvals': ['view', 'action'],
+      'blank-invoices': ['view', 'mark-paid'],
+      'exchange-rates': ['view'],
+      'vendors': ['view']
+    }
+  },
+  {
+    id: 'role-inner-team',
+    roleName: 'inner-team',
+    description: 'Inner Team — procurement operational team raising purchase orders, advances and invoices.',
+    type: 'Custom',
+    status: 'Active',
+    permissions: {
+      'dashboard': ['view'],
+      'purchase-orders': ['view'],
+      'advance-payments': ['view', 'create'],
+      'invoice-payments': ['view', 'create'],
+      'logistics-payments': ['view', 'create'],
+      'approvals': ['view'],
+      'rfq': ['view']
+    }
   }
 ];
 
@@ -357,107 +412,70 @@ import { Vendor } from '../models/Vendor.js';
 import { PurchaseOrder } from '../models/PurchaseOrder.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DUMMY USERS — 15+ users across all 10 roles
+// DUMMY USERS — Exact hierarchy per user specification
+//  Admin → MD → CFO → CFO Inner / Account Finance
+//  Admin → MD → Purchase Head → Purchase Manager → Inner Team
 // ─────────────────────────────────────────────────────────────────────────────
 const DUMMY_USERS = [
-  // ── Super Admin ────────────────────────────────────────────────────────────
+  // ── Level 0 ── Admin (System Admin — full access)
   { id: 'usr-001', name: 'Prashant Vadhvana', email: 'prashantvadhvana@gmail.com', role: 'admin', department: 'Executive Administration', avatar: 'PV', status: 'Active' },
 
-  // ── Accounts (role: accounts) ───────────────────────────────────────────────
-  { id: 'usr-002', name: 'Kavya Mehta', email: 'kavya.mehta@rayzon.com', role: 'accounts', department: 'Accounts & Finance', avatar: 'KM', status: 'Active' },
+  // ── Level 0 ── MD (Managing Director — full access, reports to root)
+  { id: 'usr-002', name: 'Arjun Shah', email: 'arjun.shah@rayzon.com', role: 'md', department: 'Executive Board', avatar: 'AS', status: 'Active' },
 
-  // ── CFO ────────────────────────────────────────────────────────────────────
+  // ── Level 1 ── CFO (reports to MD, sees all financial data)
   { id: 'usr-003', name: 'Rajesh Patel', email: 'rajesh.patel@rayzon.com', role: 'cfo', department: 'Finance & Treasury', avatar: 'RP', status: 'Active' },
 
-  // ── EXIM Team (role: exim) ──────────────────────────────────────────────────
-  { id: 'usr-004', name: 'Sneha Sharma', email: 'sneha.sharma@rayzon.com', role: 'exim', department: 'EXIM & Logistics', avatar: 'SS', status: 'Active' },
-  { id: 'usr-005', name: 'Deepak Nair', email: 'deepak.nair@rayzon.com', role: 'exim', department: 'EXIM & Logistics', avatar: 'DN', status: 'Active' },
-  { id: 'usr-006', name: 'Priya Joshi', email: 'priya.joshi@rayzon.com', role: 'exim', department: 'EXIM & Logistics', avatar: 'PJ', status: 'Active' },
-  { id: 'usr-007', name: 'Amit Kulkarni', email: 'amit.kulkarni@rayzon.com', role: 'exim', department: 'EXIM & Logistics', avatar: 'AK', status: 'Active' },
-  { id: 'usr-008', name: 'Riya Desai', email: 'riya.desai@rayzon.com', role: 'exim', department: 'EXIM & Logistics', avatar: 'RD', status: 'Active' },
+  // ── Level 2 ── CFO Inner / Account Finance (reports to CFO)
+  { id: 'usr-004', name: 'Suresh Kumar', email: 'suresh.kumar@rayzon.com', role: 'cfo-inner', department: 'Accounts & Finance', avatar: 'SK', status: 'Active' },
+  { id: 'usr-005', name: 'Anita Verma', email: 'anita.verma@rayzon.com', role: 'cfo-inner', department: 'Accounts & Finance', avatar: 'AV', status: 'Active' },
+  { id: 'usr-006', name: 'Kavya Mehta', email: 'kavya.mehta@rayzon.com', role: 'cfo-inner', department: 'Accounts & Finance', avatar: 'KM', status: 'Active' },
 
-  // ── EXIM Manager ────────────────────────────────────────────────────────────
-  { id: 'usr-009', name: 'Manish Thakkar', email: 'manish.thakkar@rayzon.com', role: 'exim-manager', department: 'EXIM & Logistics', avatar: 'MT', status: 'Active' },
+  // ── Level 1 ── Purchase Head (reports to MD)
+  { id: 'usr-007', name: 'Harish Solanki', email: 'harish.solanki@rayzon.com', role: 'purchase-head', department: 'Purchase', avatar: 'HS', status: 'Active' },
+  { id: 'usr-008', name: 'Meera Iyer', email: 'meera.iyer@rayzon.com', role: 'purchase-head', department: 'Purchase', avatar: 'MI', status: 'Active' },
 
-  // ── Finance ─────────────────────────────────────────────────────────────────
-  { id: 'usr-010', name: 'Suresh Kumar', email: 'suresh.kumar@rayzon.com', role: 'finance', department: 'Finance & Treasury', avatar: 'SK', status: 'Active' },
-  { id: 'usr-011', name: 'Anita Verma', email: 'anita.verma@rayzon.com', role: 'finance', department: 'Finance & Treasury', avatar: 'AV', status: 'Active' },
+  // ── Level 2 ── Purchase Manager (reports to Purchase Head)
+  { id: 'usr-009', name: 'Neha Gupta', email: 'neha.gupta@rayzon.com', role: 'purchase-manager', department: 'Purchase', avatar: 'NG', status: 'Active' },
+  { id: 'usr-010', name: 'Rohit Pandey', email: 'rohit.pandey@rayzon.com', role: 'purchase-manager', department: 'Purchase', avatar: 'RP2', status: 'Active' },
 
-  // ── Logistics ───────────────────────────────────────────────────────────────
-  { id: 'usr-012', name: 'Vikram Singh', email: 'vikram.singh@rayzon.com', role: 'logistics', department: 'Logistics & Supply Chain', avatar: 'VS', status: 'Active' },
-
-  // ── MD ──────────────────────────────────────────────────────────────────────
-  { id: 'usr-013', name: 'Arjun Shah', email: 'arjun.shah@rayzon.com', role: 'md', department: 'Executive Board', avatar: 'AS', status: 'Active' },
-
-  // ── Procurement (East team members) ─────────────────────────────────────────
-  { id: 'usr-014', name: 'Neha Gupta', email: 'neha.gupta@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'NG', status: 'Active' },
-  { id: 'usr-016', name: 'Pooja Agarwal', email: 'pooja.agarwal@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'PA', status: 'Active' },
-  { id: 'usr-018', name: 'Sanjay Bhatt', email: 'sanjay.bhatt@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'SB', status: 'Active' },
-  { id: 'usr-020', name: 'Karan Patel', email: 'karan.patel@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'KP', status: 'Active' },
-
-  // ── Procurement (West team members) ─────────────────────────────────────────
-  { id: 'usr-015', name: 'Rohit Pandey', email: 'rohit.pandey@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'RP', status: 'Active' },
-  { id: 'usr-017', name: 'Rahul Mehta', email: 'rahul.mehta@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'RM', status: 'Active' },
-  { id: 'usr-019', name: 'Divya Rao', email: 'divya.rao@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'DR', status: 'Active' },
-  { id: 'usr-021', name: 'Monika Trivedi', email: 'monika.trivedi@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'MT', status: 'Active' },
-
-  // ── Procurement Head ────────────────────────────────────────────────────────
-  { id: 'usr-022', name: 'Harish Solanki', email: 'harish.solanki@rayzon.com', role: 'procurement_head', department: 'Procurement', avatar: 'HS', status: 'Active',
-    parentUserId: 'usr-013', delegationActive: false, delegationNote: 'Annual leave delegation' },
-  { id: 'usr-025', name: 'Meera Iyer', email: 'meera.iyer@rayzon.com', role: 'procurement_head', department: 'Procurement', avatar: 'MI', status: 'Active' },
-
-  // ── Purchase Manager - East ─────────────────────────────────────────────────
-  { id: 'usr-023', name: 'Harish Solanki East', email: 'east.manager@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'EM', status: 'Active', isManager: true },
-
-  // ── Purchase Manager - West ─────────────────────────────────────────────────
-  { id: 'usr-024', name: 'Harish Solanki West', email: 'west.manager@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'WM', status: 'Active', isManager: true }
+  // ── Level 3 ── Inner Team (reports to Purchase Manager)
+  { id: 'usr-011', name: 'Pooja Agarwal', email: 'pooja.agarwal@rayzon.com', role: 'inner-team', department: 'Purchase', avatar: 'PA', status: 'Active' },
+  { id: 'usr-012', name: 'Sanjay Bhatt', email: 'sanjay.bhatt@rayzon.com', role: 'inner-team', department: 'Purchase', avatar: 'SB', status: 'Active' },
+  { id: 'usr-013', name: 'Karan Patel', email: 'karan.patel@rayzon.com', role: 'inner-team', department: 'Purchase', avatar: 'KP', status: 'Active' },
+  { id: 'usr-014', name: 'Divya Rao', email: 'divya.rao@rayzon.com', role: 'inner-team', department: 'Purchase', avatar: 'DR', status: 'Active' },
+  { id: 'usr-015', name: 'Monika Trivedi', email: 'monika.trivedi@rayzon.com', role: 'inner-team', department: 'Purchase', avatar: 'MT', status: 'Active' }
 ];
 
 const DEMO_HIERARCHY = {
-  // Level 0 — Senior executives, see all
-  'usr-001': { managerId: null, managerName: null, team: null, hierarchyLevel: 0, canSeeAllRequests: true },
-  'usr-013': { managerId: null, managerName: null, team: null, hierarchyLevel: 0, canSeeAllRequests: true },
+  // Level 0 — Admin (System Admin)
+  'usr-001': { managerId: null, managerName: null, team: 'Executive Administration', hierarchyLevel: 0, canSeeAllRequests: true },
+
+  // Level 0 — MD (Managing Director)
+  'usr-002': { managerId: null, managerName: null, team: 'Executive Board', hierarchyLevel: 0, canSeeAllRequests: true },
 
   // Level 1 — CFO (reports to MD, sees all)
-  'usr-003': { managerId: 'usr-013', managerName: 'Arjun Shah', team: 'Finance', hierarchyLevel: 1, canSeeAllRequests: true },
+  'usr-003': { managerId: 'usr-002', managerName: 'Arjun Shah', team: 'Finance', hierarchyLevel: 1, canSeeAllRequests: true },
 
-  // Finance team (reports to CFO)
-  'usr-010': { managerId: 'usr-003', managerName: 'Rajesh Patel', team: 'Finance', hierarchyLevel: 2, canSeeAllRequests: false },
-  'usr-011': { managerId: 'usr-003', managerName: 'Rajesh Patel', team: 'Finance', hierarchyLevel: 2, canSeeAllRequests: false },
-  'usr-002': { managerId: 'usr-003', managerName: 'Rajesh Patel', team: 'Finance', hierarchyLevel: 2, canSeeAllRequests: false },
+  // Level 2 — CFO Inner / Account Finance (report to CFO)
+  'usr-004': { managerId: 'usr-003', managerName: 'Rajesh Patel', team: 'Finance', hierarchyLevel: 2, canSeeAllRequests: false },
+  'usr-005': { managerId: 'usr-003', managerName: 'Rajesh Patel', team: 'Finance', hierarchyLevel: 2, canSeeAllRequests: false },
+  'usr-006': { managerId: 'usr-003', managerName: 'Rajesh Patel', team: 'Finance', hierarchyLevel: 2, canSeeAllRequests: false },
 
-  // Level 1 — Procurement Head (reports to MD)
-  'usr-022': { managerId: 'usr-013', managerName: 'Arjun Shah', team: 'Procurement', hierarchyLevel: 1, canSeeAllRequests: false },
-  'usr-025': { managerId: 'usr-013', managerName: 'Arjun Shah', team: 'Procurement', hierarchyLevel: 1, canSeeAllRequests: false },
+  // Level 1 — Purchase Head (reports to MD)
+  'usr-007': { managerId: 'usr-002', managerName: 'Arjun Shah', team: 'Purchase', hierarchyLevel: 1, canSeeAllRequests: false },
+  'usr-008': { managerId: 'usr-002', managerName: 'Arjun Shah', team: 'Purchase', hierarchyLevel: 1, canSeeAllRequests: false },
 
-  // Level 2 — Purchase Manager - East (reports to Procurement Head)
-  'usr-023': { managerId: 'usr-022', managerName: 'Harish Solanki', team: 'East', hierarchyLevel: 2, canSeeAllRequests: false, isManager: true },
+  // Level 2 — Purchase Manager (reports to Purchase Head / usr-007)
+  'usr-009': { managerId: 'usr-007', managerName: 'Harish Solanki', team: 'Purchase East', hierarchyLevel: 2, canSeeAllRequests: false },
+  'usr-010': { managerId: 'usr-007', managerName: 'Harish Solanki', team: 'Purchase West', hierarchyLevel: 2, canSeeAllRequests: false },
 
-  // Level 2 — Purchase Manager - West (reports to Procurement Head)
-  'usr-024': { managerId: 'usr-022', managerName: 'Harish Solanki', team: 'West', hierarchyLevel: 2, canSeeAllRequests: false, isManager: true },
-
-  // Level 3 — East team members (report to East Manager)
-  'usr-014': { managerId: 'usr-023', managerName: 'Harish Solanki East', team: 'East', hierarchyLevel: 3, canSeeAllRequests: false },
-  'usr-016': { managerId: 'usr-023', managerName: 'Harish Solanki East', team: 'East', hierarchyLevel: 3, canSeeAllRequests: false },
-  'usr-018': { managerId: 'usr-023', managerName: 'Harish Solanki East', team: 'East', hierarchyLevel: 3, canSeeAllRequests: false },
-  'usr-020': { managerId: 'usr-023', managerName: 'Harish Solanki East', team: 'East', hierarchyLevel: 3, canSeeAllRequests: false },
-
-  // Level 3 — West team members (report to West Manager)
-  'usr-015': { managerId: 'usr-024', managerName: 'Harish Solanki West', team: 'West', hierarchyLevel: 3, canSeeAllRequests: false },
-  'usr-017': { managerId: 'usr-024', managerName: 'Harish Solanki West', team: 'West', hierarchyLevel: 3, canSeeAllRequests: false },
-  'usr-019': { managerId: 'usr-024', managerName: 'Harish Solanki West', team: 'West', hierarchyLevel: 3, canSeeAllRequests: false },
-  'usr-021': { managerId: 'usr-024', managerName: 'Harish Solanki West', team: 'West', hierarchyLevel: 3, canSeeAllRequests: false },
-
-  // Level 1 — EXIM Manager (reports to MD)
-  'usr-009': { managerId: 'usr-013', managerName: 'Arjun Shah', team: 'EXIM & Logistics', hierarchyLevel: 1, canSeeAllRequests: false, isManager: true },
-
-  // Level 2 — EXIM team members (report to EXIM Manager)
-  'usr-004': { managerId: 'usr-009', managerName: 'Manish Thakkar', team: 'EXIM & Logistics', hierarchyLevel: 2, canSeeAllRequests: false },
-  'usr-005': { managerId: 'usr-009', managerName: 'Manish Thakkar', team: 'EXIM & Logistics', hierarchyLevel: 2, canSeeAllRequests: false },
-  'usr-006': { managerId: 'usr-009', managerName: 'Manish Thakkar', team: 'EXIM & Logistics', hierarchyLevel: 2, canSeeAllRequests: false },
-  'usr-007': { managerId: 'usr-009', managerName: 'Manish Thakkar', team: 'EXIM & Logistics', hierarchyLevel: 2, canSeeAllRequests: false },
-  'usr-008': { managerId: 'usr-009', managerName: 'Manish Thakkar', team: 'EXIM & Logistics', hierarchyLevel: 2, canSeeAllRequests: false },
-  'usr-012': { managerId: 'usr-009', managerName: 'Manish Thakkar', team: 'EXIM & Logistics', hierarchyLevel: 2, canSeeAllRequests: false }
+  // Level 3 — Inner Team (reports to Purchase Manager / usr-009)
+  'usr-011': { managerId: 'usr-009', managerName: 'Neha Gupta', team: 'Purchase East', hierarchyLevel: 3, canSeeAllRequests: false },
+  'usr-012': { managerId: 'usr-009', managerName: 'Neha Gupta', team: 'Purchase East', hierarchyLevel: 3, canSeeAllRequests: false },
+  'usr-013': { managerId: 'usr-010', managerName: 'Rohit Pandey', team: 'Purchase West', hierarchyLevel: 3, canSeeAllRequests: false },
+  'usr-014': { managerId: 'usr-010', managerName: 'Rohit Pandey', team: 'Purchase West', hierarchyLevel: 3, canSeeAllRequests: false },
+  'usr-015': { managerId: 'usr-010', managerName: 'Rohit Pandey', team: 'Purchase West', hierarchyLevel: 3, canSeeAllRequests: false }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -570,10 +588,41 @@ export const seedDatabase = async () => {
     if (workflowCount === 0) {
       console.log('[DB] Seeding P2P Approval Workflows...');
       await ApprovalWorkflow.insertMany([
-        { workflowId: 'WF-001', name: 'Advance Payment (Up to ₹50K)', module: 'advance_payment', minAmount: 0, maxAmount: 50000, status: 'Active', steps: [{ stepNumber: 1, stepName: 'Procurement Head Approval', approverRole: 'procurement_head', escalationHours: 24 }] },
-        { workflowId: 'WF-002', name: 'Advance Payment (> ₹50K)', module: 'advance_payment', minAmount: 50001, maxAmount: 1000000, status: 'Active', steps: [{ stepNumber: 1, stepName: 'Procurement Head Approval', approverRole: 'procurement_head', escalationHours: 24 }, { stepNumber: 2, stepName: 'Finance Approval', approverRole: 'finance', escalationHours: 24 }] },
-        { workflowId: 'WF-003', name: 'Invoice Payment (Up to ₹1CR)', module: 'invoice_payment', minAmount: 0, maxAmount: 10000000, status: 'Active', steps: [{ stepNumber: 1, stepName: 'Procurement Head Review', approverRole: 'procurement_head', escalationHours: 24 }, { stepNumber: 2, stepName: 'Finance Head Approval', approverRole: 'finance', escalationHours: 48 }] },
-        { workflowId: 'WF-009', name: 'RFQ Vendor Allocation Approval', module: 'rfq', minAmount: 0, maxAmount: 50000000, status: 'Active', steps: [{ stepNumber: 1, stepName: 'Procurement Head Review', approverRole: 'procurement_head', escalationHours: 24 }, { stepNumber: 2, stepName: 'EXIM Manager Signoff', approverRole: 'exim-manager', escalationHours: 24 }, { stepNumber: 3, stepName: 'MD Final Approval', approverRole: 'md', escalationHours: 72 }] }
+        // Advance Payment — small (up to ₹50K): Purchase Manager → Purchase Head
+        {
+          workflowId: 'WF-001', name: 'Advance Payment (Up to ₹50K)', module: 'advance_payment', minAmount: 0, maxAmount: 50000, status: 'Active',
+          steps: [
+            { stepNumber: 1, stepName: 'Purchase Manager Review', approverRole: 'purchase-manager', escalationHours: 24 },
+            { stepNumber: 2, stepName: 'Purchase Head Approval', approverRole: 'procurement_head', escalationHours: 24 }
+          ]
+        },
+        // Advance Payment — large (> ₹50K): Purchase Manager → Purchase Head → CFO
+        {
+          workflowId: 'WF-002', name: 'Advance Payment (> ₹50K)', module: 'advance_payment', minAmount: 50001, maxAmount: 10000000, status: 'Active',
+          steps: [
+            { stepNumber: 1, stepName: 'Purchase Manager Review', approverRole: 'purchase-manager', escalationHours: 24 },
+            { stepNumber: 2, stepName: 'Purchase Head Approval', approverRole: 'procurement_head', escalationHours: 24 },
+            { stepNumber: 3, stepName: 'CFO Final Approval', approverRole: 'cfo', escalationHours: 48 }
+          ]
+        },
+        // Invoice Payment: Purchase Head → CFO Inner → CFO → MD
+        {
+          workflowId: 'WF-003', name: 'Invoice Payment', module: 'invoice_payment', minAmount: 0, maxAmount: 100000000, status: 'Active',
+          steps: [
+            { stepNumber: 1, stepName: 'Purchase Head Review', approverRole: 'procurement_head', escalationHours: 24 },
+            { stepNumber: 2, stepName: 'CFO Inner Verification', approverRole: 'cfo-inner', escalationHours: 24 },
+            { stepNumber: 3, stepName: 'CFO Approval', approverRole: 'cfo', escalationHours: 48 }
+          ]
+        },
+        // RFQ: Purchase Head → CFO → MD
+        {
+          workflowId: 'WF-009', name: 'RFQ Vendor Allocation Approval', module: 'rfq', minAmount: 0, maxAmount: 500000000, status: 'Active',
+          steps: [
+            { stepNumber: 1, stepName: 'Purchase Head Review', approverRole: 'procurement_head', escalationHours: 24 },
+            { stepNumber: 2, stepName: 'CFO Signoff', approverRole: 'cfo', escalationHours: 24 },
+            { stepNumber: 3, stepName: 'MD Final Approval', approverRole: 'md', escalationHours: 72 }
+          ]
+        }
       ]);
     }
 
@@ -581,7 +630,25 @@ export const seedDatabase = async () => {
     const invCount = await InvoicePayment.countDocuments();
     if (invCount === 0) {
       console.log('[DB] Seeding Invoice Payment trace data...');
-      await InvoicePayment.create({ invoicePaymentId: 'INV-PAY-007', poId: 'PO-2026-9901', sapPoNumber: '31094582', vendorId: 'VEND-001', vendorName: 'Solar Tech Industries', invoiceNumber: 'INV-20260713-0001', asnNumber: '', grossAmount: 219497.36, gstAmount: 39509.52, tdsAmount: 4389.95, netPayable: 254616.93, status: 'approved', approvalInstanceId: 'INST-11' });
+      await InvoicePayment.create({
+        invoicePaymentId: 'INV-PAY-007',
+        poId: '4100005638',
+        sapPoNumber: '4100005638',
+        vendorId: '11001810',
+        vendorName: 'Fast Forward Logistics India',
+        invoiceNumber: 'INV-20260713-0001',
+        asnNumber: '',
+        grossAmount: 219497.36,
+        gstAmount: 39509.52,
+        tdsAmount: 4389.95,
+        netPayable: 254616.93,
+        status: 'approved',
+        approvalInstanceId: 'INST-11',
+        userId: 'usr-011',
+        requestedById: 'usr-011',
+        createdBy: 'usr-011',
+        requestedBy: 'Pooja Agarwal'
+      });
     }
 
     // ── Advance Payments ──────────────────────────────────────────────────────
@@ -589,8 +656,38 @@ export const seedDatabase = async () => {
     if (advCount === 0) {
       console.log('[DB] Seeding Advance Payment trace data...');
       await AdvancePayment.insertMany([
-        { advanceId: 'ADV-PAY-001', poId: 'PO-2026-8801', sapPoNumber: '21094581', vendorId: 'VEND-002', vendorName: 'Global Silicon Supplies', amount: 50000, gstBreakup: { cgst: 41.325, sgst: 41.325, igst: 0, totalGst: 82.65 }, paymentMode: 'RTGS', status: 'approved', approvalInstanceId: 'INST-01' },
-        { advanceId: 'ADV-PAY-002', poId: 'PO-2026-8802', sapPoNumber: '21094582', vendorId: 'VEND-003', vendorName: 'Alpha Logistics & Materials', amount: 2194.80, gstBreakup: { cgst: 0, sgst: 0, igst: 0, totalGst: 0 }, paymentMode: 'RTGS', status: 'draft', approvalInstanceId: 'INST-02' }
+        {
+          advanceId: 'ADV-PAY-001',
+          poId: '4100005638',
+          sapPoNumber: '4100005638',
+          vendorId: '11001810',
+          vendorName: 'Fast Forward Logistics India',
+          amount: 50000,
+          gstBreakup: { cgst: 41.325, sgst: 41.325, igst: 0, totalGst: 82.65 },
+          paymentMode: 'RTGS',
+          status: 'approved',
+          approvalInstanceId: 'INST-01',
+          userId: 'usr-011',
+          requestedById: 'usr-011',
+          createdBy: 'usr-011',
+          requestedBy: 'Pooja Agarwal'
+        },
+        {
+          advanceId: 'ADV-PAY-002',
+          poId: '4700000251',
+          sapPoNumber: '4700000251',
+          vendorId: '11002010',
+          vendorName: 'Seaways Shipping & Logistics Ltd',
+          amount: 2194.80,
+          gstBreakup: { cgst: 0, sgst: 0, igst: 0, totalGst: 0 },
+          paymentMode: 'RTGS',
+          status: 'pending',
+          approvalInstanceId: 'INST-02',
+          userId: 'usr-012',
+          requestedById: 'usr-012',
+          createdBy: 'usr-012',
+          requestedBy: 'Sanjay Bhatt'
+        }
       ]);
     }
 
@@ -642,3 +739,16 @@ export const seedDatabase = async () => {
     console.warn('[DB] Seeding error:', err.message);
   }
 };
+
+export const resetAndSeedDatabase = async () => {
+  const mongoose = (await import('mongoose')).default;
+  console.log('[DB RESET] Clearing all collections...');
+  const collections = await mongoose.connection.db.collections();
+  for (const collection of collections) {
+    await collection.deleteMany({});
+  }
+  console.log('[DB RESET] Collections cleared. Starting full re-seed...');
+  await seedDatabase();
+  console.log('[DB RESET] Completed successfully.');
+};
+

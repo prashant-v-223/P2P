@@ -43,20 +43,28 @@ function isRoleMatchingStep(userRole, targetStepRole) {
   // System Admin / Admin / Superadmin override
   if (['admin', 'superadmin', 'system_admin', 'systemadmin'].includes(u)) return true;
 
-  // Procurement Head equivalences
-  if ((t.includes('procurement_head') || t.includes('procurement_lead')) && 
-      (u.includes('procurement_head') || u.includes('procurement_lead'))) return true;
-
-  // Procurement Manager equivalences
-  if ((t.includes('procurement_manager') || t.includes('purchase_manager')) &&
-      (u.includes('procurement_manager') || u.includes('purchase_manager') || u === 'manager')) return true;
-
-  // Finance Lead / Head equivalences
-  if ((t.includes('finance_lead') || t.includes('finance_head') || t.includes('finance')) &&
-      (u.includes('finance_lead') || u.includes('finance_head') || u.includes('cfo') || u === 'finance')) return true;
-
   // MD equivalences
   if ((t === 'md' || t.includes('director')) && (u === 'md' || u.includes('director'))) return true;
+
+  // CFO equivalences
+  if ((t === 'cfo' || t.includes('cfo_approval') || t.includes('cfo_signoff')) &&
+      (u === 'cfo' || u.includes('cfo'))) return true;
+
+  // CFO Inner / Account Finance equivalences
+  if ((t.includes('cfo_inner') || t.includes('account_finance') || t.includes('accounts')) &&
+      (u.includes('cfo_inner') || u.includes('account_finance') || u.includes('accounts') || u.includes('cfo'))) return true;
+
+  // Purchase Head / Procurement Head equivalences
+  if ((t.includes('procurement_head') || t.includes('procurement_lead') || t.includes('purchase_head')) && 
+      (u.includes('procurement_head') || u.includes('procurement_lead') || u.includes('purchase_head'))) return true;
+
+  // Purchase Manager / Procurement Manager equivalences
+  if ((t.includes('procurement_manager') || t.includes('purchase_manager') || t === 'manager') &&
+      (u.includes('procurement_manager') || u.includes('purchase_manager') || u.includes('manager'))) return true;
+
+  // Inner Team / Procurement Executive equivalences
+  if ((t.includes('inner_team') || t.includes('procurement_executive')) &&
+      (u.includes('inner_team') || u.includes('procurement_executive'))) return true;
 
   // EXIM Manager equivalences
   if (t.includes('exim') && u.includes('exim')) return true;
@@ -64,7 +72,7 @@ function isRoleMatchingStep(userRole, targetStepRole) {
   // Logistics equivalences
   if (t.includes('logistics') && u.includes('logistics')) return true;
 
-  return false;
+  return u.includes(t) || t.includes(u);
 }
 
 // ── Strict Active-Step Role & Assigned Approver Matching ──────────────────────────

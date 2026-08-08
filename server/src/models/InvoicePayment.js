@@ -40,6 +40,7 @@ const invoicePaymentSchema = new mongoose.Schema({
   createdBy:          { type: String, default: 'Finance Team' },
   requestedBy:        { type: String, default: '' },
   requestedById:      { type: String, default: '', index: true },
+  userId:             { type: String, default: '', index: true },
   requestedByTeam:    { type: String, default: null, index: true },
   assignedApprover:   { type: String, default: null, index: true },
   assignedApproverName: { type: String, default: null },

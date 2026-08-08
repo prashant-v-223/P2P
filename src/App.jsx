@@ -52,6 +52,7 @@ const SapIntegrationView = lazy(() => import('./components/admin/SapIntegrationV
 
 const ApprovalEngineView = lazy(() => import('./features/p2p/ApprovalEngineView'));
 const SettlementLedgerView = lazy(() => import('./features/p2p/SettlementLedgerView'));
+const HierarchicalReportView = lazy(() => import('./components/admin/HierarchicalReportView'));
 
 // Vendor Portal Imports
 import { VendorProvider } from './features/vendorPortal/vendorContext';
@@ -291,6 +292,7 @@ export default function App() {
             <Route path="admin/users" element={<UserManagementView />} />
             <Route path="roles" element={<RolesAndPermissionsView />} />
             <Route path="admin/roles" element={<RolesAndPermissionsView />} />
+            <Route path="admin/hierarchy-report" element={<HierarchicalReportView />} />
             
             {/* SYSTEM Group Routes */}
             <Route path="p2p/sap-sync" element={<SapIntegrationView />} />

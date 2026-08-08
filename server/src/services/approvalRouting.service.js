@@ -7,6 +7,38 @@ import { Approval } from '../models/Approval.js';
 export const FINANCIAL_REVIEW_THRESHOLD = 5000000; // ₹50 Lakhs
 export const STRATEGIC_REVIEW_THRESHOLD = 10000000; // ₹1 Crore
 
+export function isRoleMatchingStep(userRole = '', targetStepRole = '') {
+  const u = String(userRole || '').toLowerCase().replace(/[\s_-]+/g, '_').trim();
+  const t = String(targetStepRole || '').toLowerCase().replace(/[\s_-]+/g, '_').trim();
+  if (!u || !t) return false;
+
+  if (u === t) return true;
+
+  if (['admin', 'superadmin', 'system_admin', 'systemadmin'].includes(u)) return true;
+
+  if ((t === 'md' || t.includes('director')) && (u === 'md' || u.includes('director'))) return true;
+
+  if ((t === 'cfo' || t.includes('cfo_approval') || t.includes('cfo_signoff')) && (u === 'cfo' || u.includes('cfo'))) return true;
+
+  if ((t.includes('cfo_inner') || t.includes('account_finance') || t.includes('accounts')) &&
+      (u.includes('cfo_inner') || u.includes('account_finance') || u.includes('accounts') || u.includes('cfo'))) return true;
+
+  if ((t.includes('procurement_head') || t.includes('procurement_lead') || t.includes('purchase_head')) && 
+      (u.includes('procurement_head') || u.includes('procurement_lead') || u.includes('purchase_head'))) return true;
+
+  if ((t.includes('procurement_manager') || t.includes('purchase_manager') || t === 'manager') &&
+      (u.includes('procurement_manager') || u.includes('purchase_manager') || u.includes('manager'))) return true;
+
+  if ((t.includes('inner_team') || t.includes('procurement_executive')) &&
+      (u.includes('inner_team') || u.includes('procurement_executive'))) return true;
+
+  if (t.includes('exim') && u.includes('exim')) return true;
+
+  if (t.includes('logistics') && u.includes('logistics')) return true;
+
+  return u.includes(t) || t.includes(u);
+}
+
 /**
  * Main function to resolve approvers for each workflow step
  * Handles both admin requests and hierarchical approvals
@@ -37,7 +69,6 @@ export async function attachApprovers(steps, requester) {
   }).lean();
 
   if (!requesterUser) {
-    // Fallback: find any active user with required role
     return await attachFallbackApprovers(steps);
   }
 
@@ -46,44 +77,20 @@ export async function attachApprovers(steps, requester) {
     steps.map(async (step, index) => {
       const roleKey = step.roleKey || step.roleName;
       const stepNumber = step.step || (index + 1);
-      
-      // Determine if this is a procurement head step
-      const isProcurementHead = roleKey && (
-        roleKey.toLowerCase().includes('procurement') ||
-        roleKey.toLowerCase().includes('procurement_head')
-      );
-
-      // Determine if requester is Admin/System Admin
-      const isAdmin = ['admin', 'system_admin', 'system admin', 'super_admin']
-        .includes(requesterUser.role?.toLowerCase() || '');
-
-      // Determine if requester is Procurement Head
-      const isProcurementHeadUser = requesterUser.role?.toLowerCase().includes('procurement');
 
       let approver = null;
 
-      // --- SCENARIO 1: Admin created request ---
-      if (isAdmin && isProcurementHead) {
-        // Admin request needs Procurement Head approval
-        // Strategy: Find the MOST SUITABLE Procurement Head
-        approver = await findBestProcurementHead(requesterUser);
-      }
-      // --- SCENARIO 2: Child user created request ---
-      else if (requesterUser.managerId && isProcurementHead) {
-        // Child user's request should go to their parent Procurement Head
+      // 1. Try finding in requester's reporting manager hierarchy
+      if (requesterUser.managerId) {
         approver = await findParentManager(requesterUser, roleKey);
       }
-      // --- SCENARIO 3: Procurement Head created request ---
-      else if (isProcurementHeadUser && isProcurementHead) {
-        // Procurement Head created request - route to another Head or escalate
-        approver = await findPeerOrEscalate(requesterUser, roleKey);
-      }
-      // --- SCENARIO 4: Finance/Other roles ---
-      else {
+
+      // 2. If requester is self-role or no parent manager matched, check department/team/role
+      if (!approver) {
         approver = await findApproverByRole(requesterUser, roleKey);
       }
 
-      // If no approver found, use fallback
+      // 3. Fallback to any active user with roleKey
       if (!approver) {
         approver = await findAnyUserWithRole(roleKey);
       }
@@ -96,7 +103,6 @@ export async function attachApprovers(steps, requester) {
         assignedApproverRole: approver?.role || roleKey,
         assignedApproverEmail: approver?.email || null,
         statusKey: step.statusKey || `Pending ${step.title || 'Approval'}`,
-        // Add metadata for audit
         resolutionMethod: approver?.resolutionMethod || 'role_based',
         resolvedAt: new Date()
       };
@@ -110,9 +116,8 @@ export async function attachApprovers(steps, requester) {
  * Find the best Procurement Head based on various factors
  */
 async function findBestProcurementHead(requester) {
-  // Get all active procurement heads
   const allHeads = await User.find({
-    role: { $in: ['procurement_head', 'Procurement Head', 'procurement'] },
+    role: { $in: ['procurement_head', 'Procurement Head', 'purchase_head', 'procurement'] },
     status: 'Active'
   }).lean();
 
@@ -120,12 +125,10 @@ async function findBestProcurementHead(requester) {
     return null;
   }
 
-  // If only one head, return them
   if (allHeads.length === 1) {
     return { ...allHeads[0], resolutionMethod: 'single_head' };
   }
 
-  // Strategy: Load balancing - pick head with least pending approvals
   const withPendingCount = await Promise.all(
     allHeads.map(async (head) => {
       const pendingCount = await Approval.countDocuments({
@@ -142,47 +145,40 @@ async function findBestProcurementHead(requester) {
     })
   );
 
-  // Sort by pending count (ascending)
   const sorted = withPendingCount.sort((a, b) => a.pendingCount - b.pendingCount);
-  
-  // Return the one with least pending
   return { ...sorted[0], resolutionMethod: 'load_balanced' };
 }
 
 /**
- * Find the parent manager based on user's managerId
+ * Find parent manager walking up the managerId hierarchy
  */
 async function findParentManager(requester, roleKey) {
-  if (!requester.managerId) {
-    return null;
+  if (!requester.managerId) return null;
+
+  let current = requester;
+  const visited = new Set([requester.id]);
+
+  while (current && current.managerId && !visited.has(current.managerId)) {
+    visited.add(current.managerId);
+    const manager = await User.findOne({
+      $or: [
+        { id: current.managerId },
+        { userId: current.managerId },
+        { employeeId: current.managerId }
+      ],
+      status: 'Active'
+    }).lean();
+
+    if (!manager) break;
+
+    if (isRoleMatchingStep(manager.role, roleKey)) {
+      return { ...manager, resolutionMethod: 'parent_manager' };
+    }
+
+    current = manager;
   }
 
-  // Find the manager
-  const manager = await User.findOne({
-    $or: [
-      { id: requester.managerId },
-      { userId: requester.managerId },
-      { employeeId: requester.managerId }
-    ],
-    status: 'Active'
-  }).lean();
-
-  if (!manager) {
-    return null;
-  }
-
-  // Check if manager has the required role
-  const roleMatches = roleKey && (
-    manager.role?.toLowerCase().includes(roleKey.toLowerCase()) ||
-    manager.role?.toLowerCase().includes('procurement')
-  );
-
-  if (roleMatches) {
-    return { ...manager, resolutionMethod: 'parent_manager' };
-  }
-
-  // If manager doesn't have the role, find the closest manager who does
-  return await findApproverByRole(manager, roleKey);
+  return null;
 }
 
 /**
