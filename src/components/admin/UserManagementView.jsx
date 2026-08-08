@@ -356,10 +356,11 @@ export default function UserManagementView() {
   const [errors, setErrors] = useState({});
   const { showToast } = useToast();
 
-  const canManageUsers = userHasPermission(currentUser?.role, 'users.manage');
-  const canCreateUser = canManageUsers || userHasPermission(currentUser?.role, 'users.create');
-  const canEditUser = canManageUsers || userHasPermission(currentUser?.role, 'users.edit');
-  const canDeleteUser = canManageUsers || userHasPermission(currentUser?.role, 'users.delete');
+  const currentPerms = currentUser?.permissions;
+  const canManageUsers = userHasPermission(currentUser?.role, 'users.manage', currentPerms);
+  const canCreateUser = canManageUsers || userHasPermission(currentUser?.role, 'users.create', currentPerms);
+  const canEditUser = canManageUsers || userHasPermission(currentUser?.role, 'users.edit', currentPerms);
+  const canDeleteUser = canManageUsers || userHasPermission(currentUser?.role, 'users.delete', currentPerms);
   const search = searchParams.get('q') || '';
   const statusFilter = searchParams.get('status') || 'All';
   const sort = searchParams.get('sort') || 'newest';

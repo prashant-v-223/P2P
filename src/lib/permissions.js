@@ -1,8 +1,18 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // ROLE-BASED ACCESS CONTROL (RBAC) FRONTEND PERMISSION HELPER
-// Enforces precise view & action permissions for all 10 system roles
+//
+// The SOURCE OF TRUTH for permissions is MongoDB:
+//   Role.permissions = { moduleKey: ['view', 'create', ...] }
+//
+// The backend attaches the user's role permissions to the user object on
+// login/refresh/getMe as `user.permissions` (the DB shape above). This module
+// enforces permissions from that DB-driven object FIRST.
+//
+// The static ROLE_PERMISSIONS map below is used ONLY as a fallback when DB
+// permissions are not available (e.g. offline/demo mode, missing role record).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Static fallback permission map (used only when DB permissions are absent) ─
 export const ROLE_PERMISSIONS = {
   'admin': ['*'],
   'System Admin': ['*'],
@@ -196,69 +206,98 @@ export const ROUTE_PERMISSIONS = {
   '/profile': '*'
 };
 
+const ADMIN_ROLES = new Set(['admin', 'systemadmin', 'superadmin', 'system admin']);
+
 /**
- * Check if a user role has a specific permission key.
+ * Normalize a role name for alias matching.
+ */
+const normalizeRole = (role) => String(role || '').toLowerCase().replace(/[\s_-]+/g, '').trim();
+
+/**
+ * Resolve the static fallback permission list for a role.
+ */
+const resolveStaticRolePerms = (userRole) => {
+  const roleNorm = normalizeRole(userRole);
+  if (ADMIN_ROLES.has(roleNorm)) return ['*'];
+
+  let rolePerms = ROLE_PERMISSIONS[userRole] || ROLE_PERMISSIONS[roleNorm];
+
+  if (!rolePerms) {
+    const raw = String(userRole || '').toLowerCase().trim();
+    if (raw.includes('cfo')) rolePerms = ROLE_PERMISSIONS['cfo'];
+    else if (raw.includes('finance')) rolePerms = ROLE_PERMISSIONS['finance'];
+    else if (raw.includes('account')) rolePerms = ROLE_PERMISSIONS['accounts'];
+    else if (raw.includes('procurement') && raw.includes('head')) rolePerms = ROLE_PERMISSIONS['procurement_head'];
+    else if (raw.includes('procurement')) rolePerms = ROLE_PERMISSIONS['procurement'];
+    else if (raw.includes('exim') && raw.includes('manager')) rolePerms = ROLE_PERMISSIONS['exim-manager'];
+    else if (raw.includes('exim')) rolePerms = ROLE_PERMISSIONS['exim'];
+    else if (raw.includes('logistics')) rolePerms = ROLE_PERMISSIONS['logistics'];
+    else if (raw.includes('md') || raw.includes('managing')) rolePerms = ROLE_PERMISSIONS['md'];
+  }
+
+  return rolePerms || [];
+};
+
+/**
+ * Check whether a permission string (e.g. 'users.create') is allowed by the
+ * DB-shaped permissions object: { moduleKey: ['view', 'create', ...] }.
+ */
+const hasPermissionInDbShape = (permissionsObj, moduleKey, action) => {
+  if (!permissionsObj || typeof permissionsObj !== 'object') return false;
+
+  // Wildcard module grant: { '*': ['*'] } (admin)
+  if (permissionsObj['*']) {
+    const wildcard = permissionsObj['*'];
+    if (Array.isArray(wildcard) && (wildcard.includes('*') || wildcard.includes(action))) return true;
+  }
+
+  const modActions = permissionsObj[moduleKey];
+  if (!Array.isArray(modActions)) return false;
+
+  return (
+    modActions.includes('*') ||
+    modActions.includes(action) ||
+    modActions.includes('manage')
+  );
+};
+
+/**
+ * Check if a user role has a specific permission key (e.g. 'users.create').
+ *
+ * Resolution order:
+ *   1. Admin / super-admin roles bypass everything.
+ *   2. If DB-shaped permissions are provided (customPermissions), resolve
+ *      strictly from them — DB revocations are respected.
+ *   3. Otherwise fall back to the static ROLE_PERMISSIONS map (offline/demo).
+ *
+ * NOTE: The previous bug that granted ANY action when a module only had 'view'
+ * has been fixed — only the exact action, 'manage', or '*' grant access.
  */
 export function userHasPermission(userRole, permissionKey, customPermissions) {
   if (!userRole) return false;
-  const roleNorm = String(userRole).toLowerCase().replace(/[\s_-]+/g, '').trim();
-  if (['admin', 'systemadmin', 'superadmin'].includes(roleNorm)) return true;
+
+  // 1. Admin bypass
+  if (ADMIN_ROLES.has(normalizeRole(userRole))) return true;
   if (permissionKey === '*') return true;
 
-  const [mod, act] = permissionKey.split('.');
+  const [mod, act] = String(permissionKey || '').split('.');
 
-  // 1. Check array of permission strings e.g. ['dashboard.view', 'purchase-orders.view']
-  if (Array.isArray(customPermissions)) {
-    if (customPermissions.includes('*') || customPermissions.includes(permissionKey)) return true;
-    if (act && (customPermissions.includes(`${mod}.manage`) || customPermissions.includes(`${mod}.*`))) return true;
+  // 2. DB-driven resolution (source of truth)
+  if (customPermissions && typeof customPermissions === 'object') {
+    // Support both array-of-keys and DB object shape
+    if (Array.isArray(customPermissions)) {
+      if (customPermissions.includes('*') || customPermissions.includes(permissionKey)) return true;
+      if (act && (customPermissions.includes(`${mod}.manage`) || customPermissions.includes(`${mod}.*`))) return true;
+    } else if (hasPermissionInDbShape(customPermissions, mod, act)) {
+      return true;
+    }
   }
 
-  // 2. Check custom permissions object e.g. { dashboard: ['view'], 'purchase-orders': ['view'] }
-  if (customPermissions && typeof customPermissions === 'object' && !Array.isArray(customPermissions)) {
-    const modPerms = customPermissions[mod] || customPermissions[permissionKey] || [];
-    if (Array.isArray(modPerms) && (modPerms.includes(act) || modPerms.includes('manage') || modPerms.includes('view') || modPerms.includes('*'))) return true;
-  }
-
-  // 3. Check static role permissions map with key aliases
-  const rawRoleNorm = String(userRole).toLowerCase().trim();
-  let rolePerms = ROLE_PERMISSIONS[userRole] || ROLE_PERMISSIONS[rawRoleNorm];
-
-  if (!rolePerms) {
-    // Try matching aliases
-    if (rawRoleNorm.includes('cfo')) rolePerms = ROLE_PERMISSIONS['cfo'];
-    else if (rawRoleNorm.includes('finance')) rolePerms = ROLE_PERMISSIONS['finance'];
-    else if (rawRoleNorm.includes('account')) rolePerms = ROLE_PERMISSIONS['accounts'];
-    else if (rawRoleNorm.includes('procurement') && rawRoleNorm.includes('head')) rolePerms = ROLE_PERMISSIONS['procurement_head'];
-    else if (rawRoleNorm.includes('procurement')) rolePerms = ROLE_PERMISSIONS['procurement'];
-    else if (rawRoleNorm.includes('exim') && rawRoleNorm.includes('manager')) rolePerms = ROLE_PERMISSIONS['exim-manager'];
-    else if (rawRoleNorm.includes('exim')) rolePerms = ROLE_PERMISSIONS['exim'];
-    else if (rawRoleNorm.includes('logistics')) rolePerms = ROLE_PERMISSIONS['logistics'];
-    else if (rawRoleNorm.includes('md') || rawRoleNorm.includes('managing')) rolePerms = ROLE_PERMISSIONS['md'];
-  }
-
-  if (rolePerms) {
-    if (rolePerms.includes('*')) return true;
-    if (rolePerms.includes(permissionKey)) return true;
-    if (act && (rolePerms.includes(`${mod}.manage`) || rolePerms.includes(`${mod}.*`))) return true;
-  }
-
-  // 4. Fallback for custom roles missing explicit static entry: grant view permissions to standard modules
-  const defaultCustomRolePerms = [
-    'dashboard.view',
-    'purchase-orders.view',
-    'advance-payments.view',
-    'invoice-payments.view',
-    'logistics-payments.view',
-    'custom-duty.view',
-    'rfq.view',
-    'bl.view',
-    'exim.view',
-    'approvals.view',
-    'vendors.view',
-    'custom-agents.view',
-    'logistics-providers.view'
-  ];
-  if (defaultCustomRolePerms.includes(permissionKey)) return true;
+  // 3. Static fallback (only reached when DB permissions were not provided)
+  const staticPerms = resolveStaticRolePerms(userRole);
+  if (staticPerms.includes('*')) return true;
+  if (staticPerms.includes(permissionKey)) return true;
+  if (act && (staticPerms.includes(`${mod}.manage`) || staticPerms.includes(`${mod}.*`))) return true;
 
   return false;
 }
@@ -269,7 +308,7 @@ export function userHasPermission(userRole, permissionKey, customPermissions) {
 export function userCanAccessRoute(userRole, routePath, customPermissions) {
   // Normalize path (strip query params / trailing slashes)
   const cleanPath = (routePath || '/').split('?')[0].replace(/\/$/, '') || '/';
-  
+
   // Find matching route permission (exact match first)
   let permKey = ROUTE_PERMISSIONS[cleanPath];
 
@@ -284,7 +323,7 @@ export function userCanAccessRoute(userRole, routePath, customPermissions) {
   }
 
   if (!permKey) return true; // Unmapped routes default to accessible
-  
+
   return userHasPermission(userRole, permKey, customPermissions);
 }
 

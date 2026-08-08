@@ -20,8 +20,46 @@ export default function AddWorkflowModal({ isOpen, onClose, editingSlab, onSucce
   const [draggedStep, setDraggedStep] = useState(null);
   const [dragTarget, setDragTarget] = useState(null);
   const [errors, setErrors] = useState({});
+  const [availableRoles, setAvailableRoles] = useState([]);
+  const [loadingRoles, setLoadingRoles] = useState(false);
   const { showToast } = useToast();
   const formRef = useRef(null);
+
+  // Fetch available roles from API
+  useEffect(() => {
+    const fetchRoles = async () => {
+      try {
+        setLoadingRoles(true);
+        const res = await apiFetch('/api/roles');
+        const data = await res.json();
+        if (res.ok && data.success) {
+          setAvailableRoles(data.roles || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch roles:', err);
+        // Fallback to default roles
+        setAvailableRoles([
+          { roleName: 'procurement', description: 'Procurement' },
+          { roleName: 'procurement_head', description: 'Procurement Head' },
+          { roleName: 'finance', description: 'Finance' },
+          { roleName: 'finance_lead', description: 'Finance Lead' },
+          { roleName: 'cfo', description: 'CFO' },
+          { roleName: 'md', description: 'MD' },
+          { roleName: 'exim', description: 'EXIM' },
+          { roleName: 'exim-manager', description: 'EXIM Manager' },
+          { roleName: 'logistics', description: 'Logistics' },
+          { roleName: 'accounts', description: 'Accounts' },
+          { roleName: 'admin', description: 'Admin' }
+        ]);
+      } finally {
+        setLoadingRoles(false);
+      }
+    };
+    
+    if (isOpen) {
+      fetchRoles();
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (editingSlab) {
@@ -292,15 +330,20 @@ export default function AddWorkflowModal({ isOpen, onClose, editingSlab, onSucce
                     onChange={(e) => handleStepChange(idx, 'title', e.target.value)}
                     className="h-8 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2 text-xs focus:border-teal-500 focus:outline-none"
                   />
-                  <input
-                    type="text"
+                  <select
                     required
-                    maxLength={60}
                     value={step.roleKey}
-                    placeholder="Role Key (e.g. md)"
                     onChange={(e) => handleStepChange(idx, 'roleKey', e.target.value)}
-                    className="h-8 w-32 rounded-lg border border-slate-300 bg-white px-2 font-mono text-xs focus:border-teal-500 focus:outline-none"
-                  />
+                    disabled={loadingRoles}
+                    className="h-8 w-40 rounded-lg border border-slate-300 bg-white px-2 text-xs focus:border-teal-500 focus:outline-none disabled:opacity-50"
+                  >
+                    <option value="">{loadingRoles ? 'Loading roles...' : 'Select Role...'}</option>
+                    {availableRoles.map((role) => (
+                      <option key={role.roleName || role.id} value={role.roleName}>
+                        {role.roleName}
+                      </option>
+                    ))}
+                  </select>
                   <div className="flex items-center">
                     <button type="button" disabled={idx === 0} onClick={() => reorderSteps(idx, idx - 1)} className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-teal-700 disabled:opacity-25" title="Move step up"><ArrowUp className="h-3.5 w-3.5" /></button>
                     <button type="button" disabled={idx === steps.length - 1} onClick={() => reorderSteps(idx, idx + 1)} className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-teal-700 disabled:opacity-25" title="Move step down"><ArrowDown className="h-3.5 w-3.5" /></button>

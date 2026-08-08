@@ -23,7 +23,7 @@ export default function LoginPage() {
 
   const signIn = (credentials) => dispatch(loginUser(credentials)).unwrap().then((data) => {
     if (!data.requiresTwoFactor) {
-      const targetPath = getFirstAllowedRoute(data.user?.role);
+      const targetPath = getFirstAllowedRoute(data.user?.role, data.user?.permissions);
       navigate(targetPath);
     }
     return data;

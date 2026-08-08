@@ -3,6 +3,8 @@ import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import { config } from '../../config/index.js';
 import { User } from '../../models/User.js';
+import { Role } from '../../models/Role.js';
+import { DEFAULT_ROLES } from '../../db/seed.js';
 import { sendPasswordResetEmail, sendTwoFactorEmail } from '../../services/mail.service.js';
 
 const refreshTokensStore = new Map();
@@ -23,6 +25,48 @@ const FALLBACK_USERS = [
 ];
 
 const publicUser = (user) => (typeof user.toJSON === 'function' ? user.toJSON() : user);
+
+// Static fallback permissions map used ONLY when the DB is unreachable or the
+// role record cannot be found. Mirrors the seeded DEFAULT_ROLES.
+const staticRolePermissions = (roleName) => {
+  const role = DEFAULT_ROLES.find((r) => r.roleName === roleName);
+  return role?.permissions || {};
+};
+
+// For super-admin roles, grant full wildcard access so the frontend bypasses checks.
+const isAdminRole = (roleName) =>
+  ['admin', 'System Admin', 'system admin', 'superadmin', 'super admin'].some(
+    (r) => String(roleName || '').toLowerCase() === r.toLowerCase()
+  );
+
+/**
+ * Attaches the user's role permissions (MongoDB shape { moduleKey: [action] })
+ * to the public user payload so the frontend can enforce DB-driven RBAC.
+ * Falls back to the seeded DEFAULT_ROLES map when the database is unavailable.
+ */
+const attachRolePermissions = async (user) => {
+  const plain = { ...user };
+
+  let permissions = null;
+  const roleName = plain.role;
+
+  if (isAdminRole(roleName)) {
+    permissions = { '*': ['*'] };
+  } else if (roleName && mongoose.connection.readyState === 1) {
+    try {
+      const role = await Role.findOne({ roleName }).lean();
+      if (role?.permissions) permissions = role.permissions;
+    } catch (err) {
+      console.warn('[AUTH RBAC WARN]: Failed to load role permissions:', err.message);
+    }
+  }
+
+  if (!permissions) permissions = staticRolePermissions(roleName);
+
+  // Do not blow away an explicitly-provided permissions field if the caller set one.
+  plain.permissions = plain.permissions || permissions || {};
+  return plain;
+};
 
 const generateTokens = (user) => {
   const payload = {
@@ -70,7 +114,8 @@ export const register = async (req, res) => {
       avatar: cleanName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()
     });
     const tokens = generateTokens(user);
-    return res.status(201).json({ success: true, ...tokens, user: publicUser(user) });
+    const withPerms = await attachRolePermissions(publicUser(user));
+    return res.status(201).json({ success: true, ...tokens, user: withPerms });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -145,7 +190,8 @@ export const login = async (req, res) => {
     }
 
     const tokens = generateTokens(user);
-    return res.json({ success: true, ...tokens, user: publicUser(user) });
+    const withPerms = await attachRolePermissions(publicUser(user));
+    return res.json({ success: true, ...tokens, user: withPerms });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -176,7 +222,8 @@ export const refreshTokenController = async (req, res) => {
     }
 
     const newTokens = generateTokens(user);
-    return res.json({ success: true, ...newTokens, user: publicUser(user) });
+    const withPerms = await attachRolePermissions(publicUser(user));
+    return res.json({ success: true, ...newTokens, user: withPerms });
   } catch {
     return res.status(403).json({ success: false, error: 'Refresh token is invalid or expired.' });
   }
@@ -218,10 +265,11 @@ export const updateTwoFactor = async (req, res) => {
   }
   user.twoFactorEnabled = enabled;
   await user.save();
+  const withPerms = await attachRolePermissions(publicUser(user));
   return res.json({
     success: true,
     message: enabled ? 'Email two-factor authentication enabled.' : 'Two-factor authentication disabled.',
-    user: publicUser(user)
+    user: withPerms
   });
 };
 
@@ -253,7 +301,8 @@ export const resetPassword = async (req, res) => {
 export const getMe = async (req, res) => {
   const user = await User.findOne({ id: req.user.id });
   if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
-  return res.json({ success: true, user });
+  const withPerms = await attachRolePermissions(publicUser(user));
+  return res.json({ success: true, user: withPerms });
 };
 
 export const updateMe = async (req, res) => {
@@ -269,7 +318,8 @@ export const updateMe = async (req, res) => {
     runValidators: true
   });
   if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
-  return res.json({ success: true, message: 'Profile updated.', user });
+  const withPerms = await attachRolePermissions(publicUser(user));
+  return res.json({ success: true, message: 'Profile updated.', user: withPerms });
 };
 
 export const changePassword = async (req, res) => {
