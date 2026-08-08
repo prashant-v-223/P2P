@@ -1,366 +1,444 @@
+// services/approvalRouting.service.js
+
 import { User } from '../models/User.js';
+import { Approval } from '../models/Approval.js';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HIERARCHICAL APPROVAL ROUTING SERVICE
-// ─────────────────────────────────────────────────────────────────────────────
-// Central place that decides the ordered approval chain for a request based on:
-//   • The submitter's role / hierarchy level
-//   • The request amount (₹50,000 financial review, ₹2,00,000 strategic review)
-//   • Self-approval prevention (skip the submitter's own level)
-//   • EXIM / Purchase-Manager / Procurement-Head / CFO / MD special-casing
-//
-// Role keys are kept workflow-compatible with the existing Approval model and
-// frontend journey labels (`procurement_head`, `finance`, `md`, `exim-manager`).
-// `assignedApproverId` is populated with the exact user who must act at each
-// step so routing is hierarchy-aware instead of role-string fuzzy matching.
-// ─────────────────────────────────────────────────────────────────────────────
+// Constants for approval thresholds
+export const FINANCIAL_REVIEW_THRESHOLD = 5000000; // ₹50 Lakhs
+export const STRATEGIC_REVIEW_THRESHOLD = 10000000; // ₹1 Crore
 
-export const FINANCIAL_REVIEW_THRESHOLD = 50000;   // > ₹50,000  → CFO/finance review
-export const STRATEGIC_REVIEW_THRESHOLD = 200000;  // > ₹2,00,000 → MD review
+/**
+ * Main function to resolve approvers for each workflow step
+ * Handles both admin requests and hierarchical approvals
+ */
+export async function attachApprovers(steps, requester) {
+  if (!steps || !Array.isArray(steps)) {
+    return [];
+  }
 
-const normRole = (role = '') => String(role).toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+  // If no requester info, find any available approver
+  if (!requester) {
+    return steps.map(step => ({
+      ...step,
+      assignedApproverId: null,
+      assignedApproverName: null,
+      assignedApproverRole: step.roleKey || step.roleName,
+      statusKey: step.statusKey || `Pending ${step.title || 'Approval'}`
+    }));
+  }
 
-const isAnyRole = (role, ...targets) => targets.map(normRole).includes(normRole(role));
+  // Get the complete requester object with hierarchy
+  const requesterUser = await User.findOne({
+    $or: [
+      { id: requester.id || requester.userId },
+      { email: requester.email },
+      { userId: requester.id || requester.userId }
+    ]
+  }).lean();
 
-const amountIsAbove = (amount, threshold) => Number(amount) > threshold;
+  if (!requesterUser) {
+    // Fallback: find any active user with required role
+    return await attachFallbackApprovers(steps);
+  }
 
-// Build a step object with a fresh statusKey and workflow-compatible keys.
-function step(seq, roleKey, roleName, title) {
-  return {
-    step: seq,
-    title: title || roleName,
-    roleKey,
-    roleName,
-    approverType: 'role',
-    allowSelfApproval: false,
-    slaHours: 24,
-    statusKey: `Pending ${title || roleName} Approval`
-  };
+  // Process each step
+  const resolvedSteps = await Promise.all(
+    steps.map(async (step, index) => {
+      const roleKey = step.roleKey || step.roleName;
+      const stepNumber = step.step || (index + 1);
+      
+      // Determine if this is a procurement head step
+      const isProcurementHead = roleKey && (
+        roleKey.toLowerCase().includes('procurement') ||
+        roleKey.toLowerCase().includes('procurement_head')
+      );
+
+      // Determine if requester is Admin/System Admin
+      const isAdmin = ['admin', 'system_admin', 'system admin', 'super_admin']
+        .includes(requesterUser.role?.toLowerCase() || '');
+
+      // Determine if requester is Procurement Head
+      const isProcurementHeadUser = requesterUser.role?.toLowerCase().includes('procurement');
+
+      let approver = null;
+
+      // --- SCENARIO 1: Admin created request ---
+      if (isAdmin && isProcurementHead) {
+        // Admin request needs Procurement Head approval
+        // Strategy: Find the MOST SUITABLE Procurement Head
+        approver = await findBestProcurementHead(requesterUser);
+      }
+      // --- SCENARIO 2: Child user created request ---
+      else if (requesterUser.managerId && isProcurementHead) {
+        // Child user's request should go to their parent Procurement Head
+        approver = await findParentManager(requesterUser, roleKey);
+      }
+      // --- SCENARIO 3: Procurement Head created request ---
+      else if (isProcurementHeadUser && isProcurementHead) {
+        // Procurement Head created request - route to another Head or escalate
+        approver = await findPeerOrEscalate(requesterUser, roleKey);
+      }
+      // --- SCENARIO 4: Finance/Other roles ---
+      else {
+        approver = await findApproverByRole(requesterUser, roleKey);
+      }
+
+      // If no approver found, use fallback
+      if (!approver) {
+        approver = await findAnyUserWithRole(roleKey);
+      }
+
+      return {
+        ...step,
+        step: stepNumber,
+        assignedApproverId: approver?.id || null,
+        assignedApproverName: approver?.name || null,
+        assignedApproverRole: approver?.role || roleKey,
+        assignedApproverEmail: approver?.email || null,
+        statusKey: step.statusKey || `Pending ${step.title || 'Approval'}`,
+        // Add metadata for audit
+        resolutionMethod: approver?.resolutionMethod || 'role_based',
+        resolvedAt: new Date()
+      };
+    })
+  );
+
+  return resolvedSteps;
 }
 
-async function findUserByRole(roleKey, { team = null, department = null } = {}) {
-  const roleNorm = normRole(roleKey);
-  const flatRole = roleNorm.replace(/\s+/g, '_');
-  const regexes = [new RegExp(`^${flatRole.replace(/./g, (c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))}$`, 'i')];
-  // Build a tolerant regex that matches both "procurement_head" and "procurement head"
-  const looseRegex = new RegExp('^' + roleNorm.split(' ').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s_-]*') + '$', 'i');
-  const query = { status: 'Active', $or: [{ role: { $regex: looseRegex } }, { role: { $regex: flatRole, $options: 'i' } }] };
+/**
+ * Find the best Procurement Head based on various factors
+ */
+async function findBestProcurementHead(requester) {
+  // Get all active procurement heads
+  const allHeads = await User.find({
+    role: { $in: ['procurement_head', 'Procurement Head', 'procurement'] },
+    status: 'Active'
+  }).lean();
 
-  if (team) {
-    const teamMatch = await User.findOne({ ...query, team }).lean();
-    if (teamMatch) return teamMatch;
+  if (!allHeads || allHeads.length === 0) {
+    return null;
   }
-  if (department) {
-    const deptMatch = await User.findOne({ ...query, department }).lean();
-    if (deptMatch) return deptMatch;
+
+  // If only one head, return them
+  if (allHeads.length === 1) {
+    return { ...allHeads[0], resolutionMethod: 'single_head' };
   }
-  return User.findOne(query).lean();
+
+  // Strategy: Load balancing - pick head with least pending approvals
+  const withPendingCount = await Promise.all(
+    allHeads.map(async (head) => {
+      const pendingCount = await Approval.countDocuments({
+        $or: [
+          { assignedApprover: head.id },
+          { assignedApproverId: head.id },
+          { assignedApproverName: head.name }
+        ],
+        status: { 
+          $nin: ['Approved & Dispatched', 'Approved', 'Rejected', 'Completed'] 
+        }
+      });
+      return { ...head, pendingCount };
+    })
+  );
+
+  // Sort by pending count (ascending)
+  const sorted = withPendingCount.sort((a, b) => a.pendingCount - b.pendingCount);
+  
+  // Return the one with least pending
+  return { ...sorted[0], resolutionMethod: 'load_balanced' };
 }
 
-async function findManagerOf(requester) {
-  if (!requester) return null;
-  if (requester?.managerId) {
-    const direct = await User.findOne({ id: requester.managerId, status: 'Active' }).lean();
-    if (direct) return direct;
+/**
+ * Find the parent manager based on user's managerId
+ */
+async function findParentManager(requester, roleKey) {
+  if (!requester.managerId) {
+    return null;
   }
-  // Fallback: any explicit manager on the requester's team.
-  if (requester?.team) {
-    const teamManager = await User.findOne({ status: 'Active', team: requester.team, isManager: true }).lean();
-    if (teamManager) return teamManager;
+
+  // Find the manager
+  const manager = await User.findOne({
+    $or: [
+      { id: requester.managerId },
+      { userId: requester.managerId },
+      { employeeId: requester.managerId }
+    ],
+    status: 'Active'
+  }).lean();
+
+  if (!manager) {
+    return null;
   }
+
+  // Check if manager has the required role
+  const roleMatches = roleKey && (
+    manager.role?.toLowerCase().includes(roleKey.toLowerCase()) ||
+    manager.role?.toLowerCase().includes('procurement')
+  );
+
+  if (roleMatches) {
+    return { ...manager, resolutionMethod: 'parent_manager' };
+  }
+
+  // If manager doesn't have the role, find the closest manager who does
+  return await findApproverByRole(manager, roleKey);
+}
+
+/**
+ * Find a peer or escalate when Procurement Head creates request
+ */
+async function findPeerOrEscalate(requester, roleKey) {
+  // First, try to find another Procurement Head (peer)
+  const peers = await User.find({
+    role: { $in: ['procurement_head', 'Procurement Head', 'procurement'] },
+    status: 'Active',
+    id: { $ne: requester.id }
+  }).lean();
+
+  if (peers && peers.length > 0) {
+    // Return the first peer (can be load-balanced)
+    return { ...peers[0], resolutionMethod: 'peer' };
+  }
+
+  // If no peers, escalate to MD/Director
+  const md = await User.findOne({
+    role: { $in: ['md', 'director', 'MD', 'Director'] },
+    status: 'Active'
+  }).lean();
+
+  if (md) {
+    return { ...md, resolutionMethod: 'escalated_to_md' };
+  }
+
+  // If no MD, find any other senior user
+  return await findApproverByRole(requester, 'director');
+}
+
+/**
+ * Generic approver finder based on role
+ */
+async function findApproverByRole(requester, roleKey) {
+  // First: Try to find someone in same department
+  if (requester.department) {
+    const deptApprover = await User.findOne({
+      role: { $regex: new RegExp(roleKey, 'i') },
+      department: requester.department,
+      status: 'Active'
+    }).lean();
+
+    if (deptApprover) {
+      return { ...deptApprover, resolutionMethod: 'same_department' };
+    }
+  }
+
+  // Second: Try to find someone in same team
+  if (requester.team) {
+    const teamApprover = await User.findOne({
+      role: { $regex: new RegExp(roleKey, 'i') },
+      team: requester.team,
+      status: 'Active'
+    }).lean();
+
+    if (teamApprover) {
+      return { ...teamApprover, resolutionMethod: 'same_team' };
+    }
+  }
+
+  // Third: Find any user with the required role
+  const anyApprover = await User.findOne({
+    role: { $regex: new RegExp(roleKey, 'i') },
+    status: 'Active'
+  }).lean();
+
+  if (anyApprover) {
+    return { ...anyApprover, resolutionMethod: 'any_available' };
+  }
+
   return null;
 }
 
-// ── Procurement Head Routing (Smart 3-Case Logic) ────────────────────────────
-// Case 1: Subordinate / child creates request → resolve their direct PH manager
-//         (walks up the hierarchy to find the PH)
-// Case 2: Procurement Head creates own request → pool mode (all PHs, API self-check blocks self)
-// Case 3: MD / CFO / higher-level creates request → pool mode (all PHs, any can approve)
-async function findProcurementHead(requester = null) {
-  const PH_REGEX = /procurement[\s_-]*head/i;
-  const requesterRole = String(requester?.role || '').toLowerCase().replace(/[\s_-]+/g, '_');
-  const isRequesterProcHead = PH_REGEX.test(requester?.role || '');
-  const isRequesterUpperLevel = ['md', 'cfo', 'director', 'admin', 'superadmin', 'finance_head', 'finance_lead'].some(
-    (r) => requesterRole.includes(r)
+/**
+ * Find any user with the required role
+ */
+async function findAnyUserWithRole(roleKey) {
+  const user = await User.findOne({
+    role: { $regex: new RegExp(roleKey, 'i') },
+    status: 'Active'
+  }).lean();
+
+  if (user) {
+    return { ...user, resolutionMethod: 'fallback_any' };
+  }
+
+  return null;
+}
+
+/**
+ * Fallback: Find any active user for each role
+ */
+async function attachFallbackApprovers(steps) {
+  return Promise.all(
+    steps.map(async (step, index) => {
+      const roleKey = step.roleKey || step.roleName;
+      const approver = await findAnyUserWithRole(roleKey);
+      
+      return {
+        ...step,
+        step: step.step || (index + 1),
+        assignedApproverId: approver?.id || null,
+        assignedApproverName: approver?.name || null,
+        assignedApproverRole: approver?.role || roleKey,
+        assignedApproverEmail: approver?.email || null,
+        statusKey: step.statusKey || `Pending ${step.title || 'Approval'}`,
+        resolutionMethod: approver?.resolutionMethod || 'fallback'
+      };
+    })
   );
+}
 
-  // Case 2 & 3: PH self-request OR upper-level (MD/CFO) request → pool mode (ALL PHs)
-  if (isRequesterProcHead || isRequesterUpperLevel) {
-    const allPHs = await User.find({ status: 'Active', role: PH_REGEX }, { id: 1, name: 1, role: 1 }).lean();
-    if (allPHs.length > 0) {
-      return { _pool: true, pool: allPHs, id: allPHs[0].id, name: allPHs[0].name, role: allPHs[0].role };
-    }
+/**
+ * Resolve the approval chain based on workflow and amount
+ */
+export async function resolveApprovalChain(moduleType, amount, requester) {
+  // Get the user with hierarchy
+  const requesterUser = await User.findOne({
+    $or: [
+      { id: requester?.id || requester?.userId },
+      { email: requester?.email }
+    ]
+  }).lean();
+
+  // Determine if financial review is needed
+  const needsFinancialReview = amount >= FINANCIAL_REVIEW_THRESHOLD;
+  const needsStrategicReview = amount >= STRATEGIC_REVIEW_THRESHOLD;
+
+  // Build the approval chain
+  let chain = [];
+
+  // Step 1: Always start with Procurement Head (if not already)
+  chain.push({
+    step: 1,
+    title: 'Procurement Head Approval',
+    roleKey: 'procurement_head',
+    statusKey: 'Pending Procurement Head Approval',
+    required: true
+  });
+
+  // Step 2: Financial review for large amounts
+  if (needsFinancialReview) {
+    chain.push({
+      step: 2,
+      title: 'Finance Lead Approval',
+      roleKey: 'finance_lead',
+      statusKey: 'Pending Finance Lead Approval',
+      required: true
+    });
   }
 
-  // Case 1: Subordinate/child → resolve their direct PH manager
-  if (requester?.managerId) {
-    const directManager = await User.findOne({ id: requester.managerId, status: 'Active' }).lean();
-    if (directManager && PH_REGEX.test(directManager.role || '')) {
-      return directManager; // exact PH found as direct manager
-    }
-    // Direct manager exists but is not PH (e.g. it's a Purchase Manager) → look at that manager's manager
-    if (directManager?.managerId) {
-      const grandManager = await User.findOne({ id: directManager.managerId, status: 'Active' }).lean();
-      if (grandManager && PH_REGEX.test(grandManager.role || '')) {
-        return grandManager;
-      }
-    }
+  // Step 3: Strategic review for very large amounts
+  if (needsStrategicReview) {
+    chain.push({
+      step: needsFinancialReview ? 3 : 2,
+      title: 'MD/Director Approval',
+      roleKey: 'md',
+      statusKey: 'Pending MD Approval',
+      required: true
+    });
   }
 
-  // Fallback: any active Procurement Head on same team
-  if (requester?.team) {
-    const teamPH = await User.findOne({ status: 'Active', role: PH_REGEX, team: requester.team }).lean();
-    if (teamPH) return teamPH;
-  }
-
-  // Final fallback: first active PH in org
-  return User.findOne({ status: 'Active', role: PH_REGEX }).lean();
+  // Attach approvers to the chain
+  return await attachApprovers(chain, requesterUser);
 }
 
-async function findCFO() {
-  return User.findOne({ status: 'Active', role: /^cfo$/i }).lean();
-}
+/**
+ * Resolve delegation chain for a specific user
+ */
+export async function resolveDelegationChain(userId, roleKey) {
+  const user = await User.findOne({
+    $or: [{ id: userId }, { userId }]
+  }).lean();
 
-async function findMD() {
-  return User.findOne({ status: 'Active', role: /^md$/i }).lean();
-}
+  if (!user) return [];
 
-async function findEximManager() {
-  return User.findOne({ status: 'Active', role: /exim[\s_-]*manager/i }).lean();
-}
+  const chain = [];
+  let currentUser = user;
 
-// Resolve the actual approver users for a chain, attaching names/ids.
-// `requestedById` is passed so self-approval can be blocked at the last step.
-export async function attachApprovers(steps, requester) {
-  const hydrated = [];
-  for (const s of steps) {
-    const roleNorm = normRole(s.roleKey);
-    let approver = null;
-    let isPool = false;
-    let pool = [];
+  // Walk up the hierarchy
+  while (currentUser) {
+    chain.push({
+      id: currentUser.id,
+      name: currentUser.name,
+      role: currentUser.role,
+      level: currentUser.hierarchyLevel || chain.length + 1
+    });
 
-    if (roleNorm === 'manager') {
-      approver = await findManagerOf(requester);
-    } else if (roleNorm === 'procurement head' || roleNorm === 'procurement_head') {
-      // Pass requester so smart routing (Case 1/2/3) can determine the right PH
-      approver = await findProcurementHead(requester);
-      if (approver?._pool) {
-        isPool = true;
-        pool = approver.pool || [];
-        // For pool mode, assignedApproverId = null (any active PH can approve)
-        approver = null;
-      }
-    } else if (roleNorm === 'cfo' || roleNorm === 'finance' || roleNorm === 'finance lead' || roleNorm === 'finance_lead') {
-      approver = await findCFO();
-    } else if (roleNorm === 'md') {
-      approver = await findMD();
-    } else if (roleNorm === 'exim manager' || roleNorm === 'exim_manager' || roleNorm === 'exim-manager') {
-      approver = await findEximManager();
+    // Stop if we've reached the top
+    if (currentUser.role?.toLowerCase() === 'ceo' || 
+        currentUser.role?.toLowerCase() === 'director') {
+      break;
+    }
+
+    // Move to manager
+    if (currentUser.managerId) {
+      currentUser = await User.findOne({
+        $or: [
+          { id: currentUser.managerId },
+          { userId: currentUser.managerId }
+        ]
+      }).lean();
     } else {
-      approver = await findUserByRole(s.roleKey, { team: requester?.team, department: requester?.department });
-    }
-
-    // Self-approval prevention: if resolved approver is the requester, use pool fallback or null
-    const isSelf = !isPool && approver?.id && requester?.id && String(approver.id) === String(requester.id);
-
-    if (isPool) {
-      // Pool mode: any approver in pool can act; no single assigned approver
-      hydrated.push({
-        ...s,
-        isSelfApproval: false,
-        isPoolApproval: true,
-        assignedApproverId: null,              // null = any PH in pool can approve
-        assignedApproverName: null,
-        assignedApproverRole: s.roleKey,
-        approverPool: pool.map((u) => ({ id: u.id, name: u.name, role: u.role }))
-      });
-    } else {
-      hydrated.push({
-        ...s,
-        isSelfApproval: isSelf,
-        isPoolApproval: false,
-        assignedApproverId: isSelf ? null : (approver?.id || null),
-        assignedApproverName: isSelf ? null : (approver?.name || null),
-        assignedApproverRole: approver?.role || s.roleKey,
-        approverPool: []
-      });
+      break;
     }
   }
-  return hydrated;
+
+  return chain;
 }
 
 /**
- * Determine the full ordered approval chain for a request.
- * @param {object} params
- * @param {object} params.requester  - The user submitting the request (lean doc).
- * @param {number} params.amount     - Request amount in INR.
- * @returns {Promise<Array>} Ordered steps with approver info.
+ * Check for conflicts (requester is also approver)
  */
-export async function resolveApprovalChain({ requester, amount }) {
-  const numAmount = Number(amount) || 0;
-  const role = normRole(requester?.role || '');
-  const isManager = Boolean(requester?.isManager);
-  const isExim = role.includes('exim') && !role.includes('manager');
-  const isProcTeam = role === 'procurement' || role.includes('procurement');
-  const reqRole = requester?.role;
-
-  // ── MD / Director / Admin (Level 0) ──────────────────────────────────────
-  // Skip all department levels. CFO review if above ₹50K, then MD self-approves.
-  if (isAnyRole(reqRole, 'md', 'director', 'admin', 'superadmin')) {
-    const steps = [];
-    if (amountIsAbove(numAmount, FINANCIAL_REVIEW_THRESHOLD)) {
-      steps.push(step(1, 'cfo', 'CFO', 'CFO Financial Review'));
-    }
-    steps.push(step(steps.length + 1, 'md', 'Managing Director', 'MD Final Approval'));
-    return attachApprovers(steps, requester);
-  }
-
-  // ── CFO / Finance Head (Level 1) ─────────────────────────────────────────
-  if (isAnyRole(reqRole, 'cfo', 'finance head', 'finance lead', 'finance')) {
-    if (!amountIsAbove(numAmount, FINANCIAL_REVIEW_THRESHOLD)) {
-      const steps = [step(1, 'finance', 'Finance', 'Finance Approval')];
-      return attachApprovers(steps, requester);
-    }
-    const steps = [step(1, 'md', 'Managing Director', 'MD Executive Review')];
-    return attachApprovers(steps, requester);
-  }
-
-  // ── Department Head — Procurement Head (Level 1) ─────────────────────────
-  // PH creates request → peer PHs approve via pool mode (findProcurementHead returns _pool=true)
-  // Self-approval is blocked by isSelfSubmission check in processApprovalAction.
-  if (isAnyRole(reqRole, 'procurement head', 'procurement_head')) {
-    if (!amountIsAbove(numAmount, FINANCIAL_REVIEW_THRESHOLD)) {
-      const steps = [step(1, 'procurement_head', 'Procurement Head', 'Procurement Head Approval')];
-      return attachApprovers(steps, requester);
-    }
-    const steps = [step(1, 'procurement_head', 'Procurement Head', 'Procurement Head Approval')];
-    if (amountIsAbove(numAmount, FINANCIAL_REVIEW_THRESHOLD)) {
-      steps.push(step(2, 'cfo', 'CFO', 'CFO Financial Review'));
-    }
-    if (amountIsAbove(numAmount, STRATEGIC_REVIEW_THRESHOLD)) {
-      steps.push(step(3, 'md', 'Managing Director', 'MD Strategic Review'));
-    }
-    return attachApprovers(steps, requester);
-  }
-
-  // ── EXIM Manager (Level 1) ───────────────────────────────────────────────
-  if (isAnyRole(reqRole, 'exim manager', 'exim-manager')) {
-    if (!amountIsAbove(numAmount, FINANCIAL_REVIEW_THRESHOLD)) {
-      const steps = [step(1, 'exim-manager', 'EXIM Manager', 'EXIM Manager Approval')];
-      return attachApprovers(steps, requester);
-    }
-    const steps = [step(1, 'cfo', 'CFO', 'CFO Financial Review')];
-    if (amountIsAbove(numAmount, STRATEGIC_REVIEW_THRESHOLD)) {
-      steps.push(step(2, 'md', 'Managing Director', 'MD Strategic Review'));
-    }
-    return attachApprovers(steps, requester);
-  }
-
-  // ── Purchase Manager (Level 2, isManager) ────────────────────────────────
-  // Manager's own request skips their own level → starts at Procurement Head.
-  if (isManager && isProcTeam) {
-    const steps = [step(1, 'procurement_head', 'Procurement Head', 'Procurement Head Approval')];
-    if (amountIsAbove(numAmount, FINANCIAL_REVIEW_THRESHOLD)) {
-      steps.push(step(2, 'cfo', 'CFO', 'CFO Financial Review'));
-    }
-    if (amountIsAbove(numAmount, STRATEGIC_REVIEW_THRESHOLD)) {
-      steps.push(step(3, 'md', 'Managing Director', 'MD Strategic Review'));
-    }
-    return attachApprovers(steps, requester);
-  }
-
-  // ── Standard team member (Level 2/3) ─────────────────────────────────────
-  // Start at the direct manager (or EXIM manager for EXIM team).
-  const steps = [];
-  if (isExim) {
-    steps.push(step(1, 'exim-manager', 'EXIM Manager', 'EXIM Manager Approval'));
-  } else {
-    steps.push(step(1, 'manager', 'Team Manager', 'Manager Approval'));
-  }
-  // Department head approval is ALWAYS required for procurement/EXIM requests.
-  steps.push(step(2, 'procurement_head', 'Procurement Head', 'Procurement Head Approval'));
-  if (amountIsAbove(numAmount, FINANCIAL_REVIEW_THRESHOLD)) {
-    steps.push(step(3, 'cfo', 'CFO', 'CFO Financial Review'));
-  }
-  if (amountIsAbove(numAmount, STRATEGIC_REVIEW_THRESHOLD)) {
-    steps.push(step(4, 'md', 'Managing Director', 'MD Strategic Review'));
-  }
-  return attachApprovers(steps, requester);
+export async function detectApprovalConflict(requesterId, approverId) {
+  if (!requesterId || !approverId) return false;
+  return String(requesterId) === String(approverId);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// VISIBILITY HELPERS
-// ─────────────────────────────────────────────────────────────────────────────
-
 /**
- * Build a Mongo filter that restricts which approvals a user may see.
- * Mirrors the ROLE-BASED VISIBILITY MATRIX from the spec.
+ * Get the best approver for escalation
  */
-export function buildVisibilityFilter(user) {
-  const role = normRole(user?.role || '');
-  const isSuper = ['admin', 'superadmin', 'system admin', 'md', 'director', 'cfo'].some((r) => role.includes(r));
+export async function getEscalationApprover(currentApproverId, stepRole) {
+  // Find the current approver
+  const currentApprover = await User.findOne({
+    $or: [{ id: currentApproverId }, { userId: currentApproverId }]
+  }).lean();
 
-  // Executives see everything.
-  if (isSuper || user?.canSeeAllRequests) return {};
-
-  // Finance team see all requests above the financial review threshold.
-  if (role.includes('finance')) {
-    return { amountINR: { $gt: FINANCIAL_REVIEW_THRESHOLD } };
+  if (!currentApprover) {
+    return await findAnyUserWithRole(stepRole);
   }
 
-  // Procurement Head sees all procurement requests.
-  if (role === 'procurement head' || role.includes('procurement')) {
-    return {};
+  // Escalate to their manager
+  if (currentApprover.managerId) {
+    const manager = await User.findOne({
+      $or: [
+        { id: currentApprover.managerId },
+        { userId: currentApprover.managerId }
+      ]
+    }).lean();
+
+    if (manager) {
+      return { ...manager, resolutionMethod: 'escalated' };
+    }
   }
 
-  // EXIM Manager sees only their team's requests.
-  if (role.includes('exim') && role.includes('manager')) {
-    return { requestedByTeam: user?.team || 'EXIM & Logistics' };
+  // If no manager, escalate to next level
+  const nextLevel = await User.findOne({
+    role: { $in: ['director', 'md', 'ceo'] },
+    status: 'Active'
+  }).lean();
+
+  if (nextLevel) {
+    return { ...nextLevel, resolutionMethod: 'escalated_to_senior' };
   }
 
-  // Purchase Managers see only their own team's requests.
-  if (user?.isManager && user?.team) {
-    return { requestedByTeam: user.team };
-  }
-
-  // Team members / others see only their own requests.
-  if (user?.id) {
-    return { requestedById: user.id };
-  }
-
-  return {};
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// APPROVER RESOLUTION FOR NOTIFICATIONS
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Resolve the specific users who should be notified for the current active step
- * of an approval. Returns an array of user lean docs (never the requester).
- */
-export async function resolveStepApprovers(requester, approval = {}) {
-  const currentStep = Number(approval.currentStep) || 1;
-
-  // If an explicit approver was assigned, notify exactly that person.
-  if (approval.assignedApproverId) {
-    const assigned = await User.findOne({ id: approval.assignedApproverId, status: 'Active' }).lean();
-    if (assigned) return [assigned];
-  }
-
-  // Otherwise recompute the chain and pick the approver of the active step.
-  const amount = Number(
-    approval.amountINR
-      ? String(approval.amountINR).replace(/[^0-9.-]+/g, '')
-      : 0
-  ) || 0;
-  const chain = await resolveApprovalChain({ requester, amount });
-  const activeStepObj = chain.find((s) => Number(s.step) === currentStep) || chain[0];
-  if (!activeStepObj || !activeStepObj.assignedApproverId) return [];
-
-  const approver = await User.findOne({ id: activeStepObj.assignedApproverId, status: 'Active' }).lean();
-  if (!approver) return [];
-  // Scream if the approver is the requester (self-approval).
-  if (requester?.id && approver.id === requester.id) return [];
-  return [approver];
+  return null;
 }

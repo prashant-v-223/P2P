@@ -380,25 +380,6 @@ export default function PendingApprovalsView() {
           />
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            const currentScope = searchParams.get('scope') || 'actionable';
-            const nextScope = currentScope === 'all' ? 'actionable' : 'all';
-            updateFilters({ scope: nextScope, mine: nextScope === 'actionable' ? 'true' : null });
-          }}
-          className={`h-9 rounded-lg border px-3 text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer ${
-            (searchParams.get('scope') || 'actionable') === 'actionable'
-              ? 'border-teal-500 bg-teal-50 text-teal-700 font-bold'
-              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-          }`}
-        >
-          <span>{(searchParams.get('scope') || 'actionable') === 'actionable' ? 'Needs Your Action' : 'All System Pending'}</span>
-          <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-teal-100 text-teal-800 font-extrabold">
-            {(searchParams.get('scope') || 'actionable') === 'actionable' ? (actionableCount || 0) : (allCount || 0)}
-          </span>
-        </button>
-
         <div className="w-32">
           <SearchableSelect
             options={[

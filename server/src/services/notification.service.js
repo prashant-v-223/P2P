@@ -156,8 +156,29 @@ export async function sendApprovalCreatedEmails({ approval }) {
 
     let recipients = [];
 
+    // POOL APPROVAL (e.g. Procurement Head with multiple holders):
+    // Notify EVERY active user in the role/pool so ANY one of them can approve.
+    // This includes the common case where a Procurement Head (or a higher/mgr)
+    // submits and the step must be picked up by any of the Procurement Head users.
+    const isPoolStep = step1.isPoolApproval || step1.approverPool?.length > 0
+      || /procurement[\s_-]*head|procurement[\s_-]*lead/i.test(roleKey);
+
+    if (isPoolStep) {
+      const poolIds = new Set((step1.approverPool || []).map(p => String(p.id)).filter(Boolean));
+      const approvers = await getUsersForRole(roleKey);
+      const requesterName = String(approval.requestedBy || '').trim().toLowerCase();
+      const requesterId = String(approval.requestedById || '').trim().toLowerCase();
+      recipients = approvers.filter(u => {
+        // Always include all pool members (any of them may approve)
+        if (poolIds.size && poolIds.has(String(u.id))) return true;
+        // Exclude the requester themself from self-approval
+        const uname = String(u.name || '').trim().toLowerCase();
+        const uemail = String(u.email || '').trim().toLowerCase();
+        return uname !== requesterName && uemail !== requesterId;
+      });
+    }
     // If an explicit approver is assigned to step 1 (Case 1 direct manager), notify that exact user
-    if (assignedId && !step1.isPoolApproval) {
+    else if (assignedId && !step1.isPoolApproval) {
       const targetUser = await User.findOne({ id: assignedId, status: 'Active' }).select('name email role').lean();
       if (targetUser) recipients = [targetUser];
     }
@@ -177,8 +198,8 @@ export async function sendApprovalCreatedEmails({ approval }) {
 
     const meta = {
       approvalId: approval.id,
-      type:       approval.type || 'Payment Request',
-      amount:     approval.amountINR || approval.amountOriginal || '',
+      type: approval.type || 'Payment Request',
+      amount: approval.amountINR || approval.amountOriginal || '',
       vendorName: approval.vendorName || '',
       requestedBy: approval.requestedBy || 'Finance Team',
       stepTitle,
@@ -202,17 +223,17 @@ export async function sendApprovalCreatedEmails({ approval }) {
  */
 export async function sendApprovalEmails({ approval, action, newStatus, actingUser }) {
   fireAndForget(async () => {
-    const steps     = parseWorkflowSteps(approval);
+    const steps = parseWorkflowSteps(approval);
     const totalSteps = steps.length || approval.totalSteps || 2;
     const isFullyApproved = newStatus === 'Approved & Dispatched';
-    const isRejected      = newStatus === 'Rejected';
-    const isReturned      = newStatus === 'Returned for changes';
-    const isAdvanced      = action === 'approve' && !isFullyApproved;
+    const isRejected = newStatus === 'Rejected';
+    const isReturned = newStatus === 'Returned for changes';
+    const isAdvanced = action === 'approve' && !isFullyApproved;
 
     const meta = {
       approvalId: approval.id,
-      type:       approval.type || 'Payment Request',
-      amount:     approval.amountINR || approval.amountOriginal || '',
+      type: approval.type || 'Payment Request',
+      amount: approval.amountINR || approval.amountOriginal || '',
       vendorName: approval.vendorName || '',
       actingUser,
     };
@@ -247,15 +268,15 @@ export async function sendApprovalEmails({ approval, action, newStatus, actingUs
       } else if (isAdvanced) {
         // Step N approved — tell requester about progress
         const completedStep = getStep(steps, (approval.currentStep || 2) - 1) || getStep(steps, 1);
-        const nextStep      = getStep(steps, approval.currentStep);
+        const nextStep = getStep(steps, approval.currentStep);
         await sendStepProgressEmail({
           to: requester.email,
           name: requester.name,
           ...meta,
-          completedStepNum:   completedStep?.step || (approval.currentStep - 1),
+          completedStepNum: completedStep?.step || (approval.currentStep - 1),
           completedStepTitle: completedStep?.title || 'Previous Step',
-          nextStepNum:        nextStep?.step || approval.currentStep,
-          nextStepTitle:      nextStep?.title || 'Next Approver',
+          nextStepNum: nextStep?.step || approval.currentStep,
+          nextStepTitle: nextStep?.title || 'Next Approver',
           totalSteps,
         }).catch(e => console.warn('[notification] sendStepProgressEmail error:', e.message));
       }
@@ -273,8 +294,8 @@ export async function sendApprovalEmails({ approval, action, newStatus, actingUs
               to: u.email,
               name: u.name,
               ...meta,
-              stepTitle:   nextStep.title || nextRoleKey,
-              stepNum:     nextStep.step,
+              stepTitle: nextStep.title || nextRoleKey,
+              stepNum: nextStep.step,
               totalSteps,
               requestedBy: approval.requestedBy || 'Finance Team',
             }).catch(e => console.warn('[notification] sendNextApproverEmail error:', e.message))

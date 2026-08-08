@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
@@ -25,10 +26,17 @@ import { sendRfqInvitationEmail, sendBlSubmittedEmail, sendBlAssignedToAgentEmai
 import { ExchangeRate } from '../../models/ExchangeRate.js';
 import { WorkflowAudit } from '../../models/WorkflowAudit.js';
 import { ensureRfqAwardWorkflows, ensureBlInvoiceWorkflows, ensureAllWorkflows } from '../workflows/workflowDefaults.js';
-import { attachApprovers, resolveApprovalChain, FINANCIAL_REVIEW_THRESHOLD, STRATEGIC_REVIEW_THRESHOLD } from '../../services/approvalRouting.service.js';
-
+import {
+  attachApprovers,
+  resolveApprovalChain,
+  FINANCIAL_REVIEW_THRESHOLD,
+  STRATEGIC_REVIEW_THRESHOLD,
+  detectApprovalConflict,
+  getEscalationApprover
+} from '../../services/approvalRouting.service.js';
 const router = express.Router();
 
+// Helper: Get FX conversion with fallback logging
 async function getFxConversion(amount, currency = 'INR', customFxRate = null) {
   const num = Number(amount) || 0;
   const curr = String(currency || 'INR').toUpperCase();
@@ -45,6 +53,11 @@ async function getFxConversion(amount, currency = 'INR', customFxRate = null) {
   if (!rate || isNaN(rate) || rate <= 0) {
     const fxDoc = await ExchangeRate.findOne({ currency: curr }).lean().catch(() => null);
     rate = fxDoc?.rate || DEFAULT_RATES[curr] || 83.5;
+
+    // Log fallback usage for monitoring
+    if (!fxDoc) {
+      console.warn(`[FX Warning] No exchange rate found for ${curr}, using fallback: ${rate}`);
+    }
   }
 
   const amountINR = Math.round((num * rate) * 100) / 100;
@@ -108,9 +121,7 @@ function roleCanAct(userRole, requiredRole) {
 }
 
 function getPoQuantity(po) {
-  // Try to get quantity from items array first
   const itemsQuantity = (po?.items || []).reduce((total, item) => total + (Number(item.quantity) || 0), 0);
-  // If items have quantity, return it; otherwise return totalQuantity if available, or 0 as default
   return itemsQuantity > 0 ? itemsQuantity : (Number(po?.totalQuantity) || 0);
 }
 
@@ -138,342 +149,8 @@ async function validateVendorOwnsPo(req, po) {
   return Boolean(po.supplierName && sameValue(po.supplierName, vendor?.companyName || req.user.companyName));
 }
 
-router.get('/dashboard/analytics', optionalAuth, async (req, res) => {
-  try {
-    const appReg = /approved|dispatched|paid/i;
-    const range = (req.query.range || '7d').toLowerCase();
+// ─── WORKFLOW RESOLUTION ──────────────────────────────────────────────────────
 
-    // Determine number of days for the selected range
-    let daysCount = 7;
-    if (range === '30d') daysCount = 30;
-    else if (range === '90d') daysCount = 90;
-    else if (range === '1y') daysCount = 365;
-
-    const now = new Date();
-    const rangeStartDate = new Date(now.getTime() - daysCount * 24 * 60 * 60 * 1000);
-    const prevPeriodStartDate = new Date(now.getTime() - (daysCount * 2) * 24 * 60 * 60 * 1000);
-
-    const [
-      poCount,
-      prevPoCount,
-      pendingCount,
-      rfqCount,
-      prevRfqCount,
-      rfqAwardedCount,
-      rfqDraftCount,
-      rfqPublishedCount,
-      blCount,
-      blClearedCount,
-      vendorCount,
-      activeUserCount,
-      advancesList,
-      invoicesList,
-      dutiesList,
-      blInvoicesList,
-      pendingList,
-      allApprovals,
-      recentPos,
-      recentRfqs
-    ] = await Promise.all([
-      PurchaseOrder.countDocuments().catch(() => 0),
-      PurchaseOrder.countDocuments({ createdAt: { $gte: prevPeriodStartDate, $lt: rangeStartDate } }).catch(() => 0),
-      Approval.countDocuments({ status: { $nin: ['Approved & Dispatched', 'Approved', 'Rejected'] } }).catch(() => 0),
-      RfqHeader.countDocuments().catch(() => 0),
-      RfqHeader.countDocuments({ createdAt: { $gte: prevPeriodStartDate, $lt: rangeStartDate } }).catch(() => 0),
-      RfqHeader.countDocuments({ status: 'awarded' }).catch(() => 0),
-      RfqHeader.countDocuments({ status: 'draft' }).catch(() => 0),
-      RfqHeader.countDocuments({ status: { $in: ['published', 'active', 'open'] } }).catch(() => 0),
-      BlInvoice.countDocuments().catch(() => 0),
-      BlInvoice.countDocuments({ status: { $in: ['cleared', 'Customs Cleared', 'Approved', 'Approved & Dispatched'] } }).catch(() => 0),
-      Vendor.countDocuments().catch(() => 0),
-      User.countDocuments({ status: 'Active' }).catch(() => 0),
-      AdvancePayment.find().lean().catch(() => []),
-      InvoicePayment.find().lean().catch(() => []),
-      CustomDutyPayment.find().lean().catch(() => []),
-      BlInvoice.find().lean().catch(() => []),
-      Approval.find({ status: { $nin: ['Approved & Dispatched', 'Approved', 'Rejected'] } }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
-      Approval.find().lean().catch(() => []),
-      PurchaseOrder.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
-      RfqHeader.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => [])
-    ]);
-
-    const approvedAdvances = advancesList.filter(a => appReg.test(a.status || ''));
-    const approvedInvoices = invoicesList.filter(i => appReg.test(i.status || ''));
-    const approvedDuties = dutiesList.filter(d => appReg.test(d.status || ''));
-
-    const sumAdvances = approvedAdvances.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
-    const sumInvoices = approvedInvoices.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
-    const sumDuties = approvedDuties.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
-
-    // Dynamic Approval Pipelines computed directly from MongoDB collections
-    const approvalPipeline = {
-      advance: {
-        pending: advancesList.filter(a => !appReg.test(a.status || '') && !(a.status || '').toLowerCase().includes('reject')).length,
-        approved: approvedAdvances.length,
-        rejected: advancesList.filter(a => (a.status || '').toLowerCase().includes('reject')).length
-      },
-      invoice: {
-        pending: invoicesList.filter(i => !appReg.test(i.status || '') && !(i.status || '').toLowerCase().includes('reject')).length,
-        approved: approvedInvoices.length,
-        rejected: invoicesList.filter(i => (i.status || '').toLowerCase().includes('reject')).length
-      },
-      rfq: {
-        pending: allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && !appReg.test(a.status || '')).length,
-        approved: rfqAwardedCount || allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && appReg.test(a.status || '')).length,
-        rejected: allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && (a.status || '').toLowerCase().includes('reject')).length
-      },
-      blInvoice: {
-        pending: blInvoicesList.filter(b => !appReg.test(b.status || '') && !(b.status || '').toLowerCase().includes('reject')).length,
-        approved: blInvoicesList.filter(b => appReg.test(b.status || '')).length,
-        rejected: blInvoicesList.filter(b => (b.status || '').toLowerCase().includes('reject')).length
-      }
-    };
-
-    // Real Currency Distribution counts from Database
-    const inrInvoices = invoicesList.filter(i => (i.currency || 'INR').toUpperCase() === 'INR').length;
-    const usdInvoices = invoicesList.filter(i => (i.currency || '').toUpperCase() === 'USD').length;
-    const inrAdvances = advancesList.filter(a => (a.currency || 'INR').toUpperCase() === 'INR').length;
-    const usdAdvances = advancesList.filter(a => (a.currency || '').toUpperCase() === 'USD').length;
-
-    const currencyDistribution = {
-      inrTxns: inrInvoices + inrAdvances,
-      usdTxns: usdInvoices + usdAdvances,
-      inrAdvances,
-      usdAdvances,
-      inrInvoices,
-      usdInvoices
-    };
-
-    // Real Payment Status Mix
-    const statusMix = {
-      draft: allApprovals.filter(a => (a.status || '').toLowerCase().includes('draft')).length,
-      pending: pendingCount || allApprovals.filter(a => (a.status || '').toLowerCase().includes('pending')).length,
-      approved: allApprovals.filter(a => appReg.test(a.status || '')).length,
-      rejected: allApprovals.filter(a => (a.status || '').toLowerCase().includes('reject')).length,
-      total: allApprovals.length
-    };
-
-    // Real percentage trends
-    const poTrend = prevPoCount > 0 ? Math.round(((poCount - prevPoCount) / prevPoCount) * 100) : 0;
-    const rfqTrend = prevRfqCount > 0 ? Math.round(((rfqCount - prevRfqCount) / prevRfqCount) * 100) : 0;
-
-    // Real Month-by-Month Activity breakdown for last 6 months
-    const monthNames6 = [];
-    for (let i = 5; i >= 0; i--) {
-      const mDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      monthNames6.push({
-        label: mDate.toLocaleDateString('en-IN', { month: 'short' }),
-        start: mDate,
-        end: new Date(mDate.getFullYear(), mDate.getMonth() + 1, 1)
-      });
-    }
-
-    const last6MonthsActivity = await Promise.all(
-      monthNames6.map(async ({ label, start, end }) => {
-        const query = { createdAt: { $gte: start, $lt: end } };
-        const [advCount, invCount, rCount, bCount] = await Promise.all([
-          AdvancePayment.countDocuments(query).catch(() => 0),
-          InvoicePayment.countDocuments(query).catch(() => 0),
-          RfqHeader.countDocuments(query).catch(() => 0),
-          RfqBlEntry.countDocuments(query).catch(() => 0),
-        ]);
-        return {
-          month: label,
-          Advances: advCount,
-          Invoices: invCount,
-          RFQs: rCount,
-          BlEntries: bCount
-        };
-      })
-    );
-
-    // Time-series chart points for selected range
-    const stepCount = daysCount <= 7 ? 7 : daysCount <= 30 ? 6 : 6;
-    const intervalMs = (daysCount * 24 * 60 * 60 * 1000) / stepCount;
-
-    const chartData = await Promise.all(
-      Array.from({ length: stepCount }, (_, i) => {
-        const stepStart = new Date(rangeStartDate.getTime() + i * intervalMs);
-        const stepEnd = new Date(stepStart.getTime() + intervalMs);
-        const queryRange = { createdAt: { $gte: stepStart, $lt: stepEnd } };
-
-        let label = '';
-        if (daysCount <= 7) {
-          label = stepStart.toLocaleDateString('en-IN', { weekday: 'short' });
-        } else if (daysCount <= 30) {
-          label = `W${i + 1} (${stepStart.getDate()} ${stepStart.toLocaleDateString('en-IN', { month: 'short' })})`;
-        } else {
-          label = stepStart.toLocaleDateString('en-IN', { month: 'short' });
-        }
-
-        return Promise.all([
-          PurchaseOrder.countDocuments(queryRange).catch(() => 0),
-          InvoicePayment.countDocuments(queryRange).catch(() => 0),
-          RfqHeader.countDocuments(queryRange).catch(() => 0),
-          AdvancePayment.countDocuments(queryRange).catch(() => 0),
-        ]).then(([pos, invoices, rfqs, advances]) => ({
-          label,
-          pos,
-          invoices,
-          rfqs,
-          advances,
-        }));
-      })
-    );
-
-    // Synthesize real recent activity audit feed from actual DB documents
-    const recentActivity = [];
-
-    recentPos.forEach(po => {
-      recentActivity.push({
-        badge: 'PO',
-        badgeColor: 'blue',
-        code: po.poNumber || `PO-${po.id}`,
-        date: new Date(po.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-        title: po.supplierName ? `PO for ${po.supplierName}` : `Purchase Order #${po.poNumber || po.id}`
-      });
-    });
-
-    recentRfqs.forEach(rfq => {
-      recentActivity.push({
-        badge: 'RFQ',
-        badgeColor: 'green',
-        code: rfq.rfqNumber || `RFQ-${rfq.id}`,
-        date: new Date(rfq.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-        title: rfq.title || 'RFQ Logistics Sourcing'
-      });
-    });
-
-    advancesList.slice(0, 3).forEach(adv => {
-      recentActivity.push({
-        badge: 'ADVANCE',
-        badgeColor: 'teal',
-        code: adv.advanceNumber || `ADV-${adv.id}`,
-        date: new Date(adv.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-        title: adv.vendorName ? `Advance to ${adv.vendorName}` : 'Advance Request'
-      });
-    });
-
-    recentActivity.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-    const formatINR = (val) => {
-      if (!val || val === 0) return '₹0';
-      if (val >= 10000000) return `₹${(val / 10000000).toFixed(2)} Cr`;
-      if (val >= 100000) return `₹${(val / 100000).toFixed(2)} L`;
-      if (val >= 1000) return `₹${(val / 1000).toFixed(1)}K`;
-      return `₹${val.toLocaleString()}`;
-    };
-
-    return res.json({
-      success: true,
-      range,
-      stats: {
-        purchaseOrders: poCount,
-        purchaseOrdersSub: `${poCount} open`,
-        poTrend,
-        pendingApprovals: pendingCount,
-        pendingApprovalsSub: 'Awaiting action',
-        rfqs: rfqCount,
-        rfqsSub: `${rfqAwardedCount} awarded`,
-        rfqTrend,
-        blEntries: blCount,
-        blEntriesSub: `${blClearedCount} cleared`,
-        activeVendors: vendorCount,
-        activeVendorsSub: 'Supplier base',
-        advancesPaid: formatINR(sumAdvances),
-        advancesPaidSub: 'Released payments',
-        invoicesPaid: formatINR(sumInvoices),
-        invoicesPaidSub: 'Completed Invoices',
-        dutyPaid: formatINR(sumDuties),
-        dutyPaidSub: 'Cleared duties'
-      },
-      last6MonthsActivity,
-      paymentStatusMix: statusMix,
-      currencyDistribution,
-      approvalPipeline,
-      rfqFunnel: {
-        draft: rfqDraftCount,
-        sent: 0,
-        quoted: 0,
-        awarded: rfqAwardedCount,
-        closed: 0,
-        total: rfqCount
-      },
-      blPipeline: {
-        assigned: blInvoicesList.filter(b => /assign/i.test(b.status || '')).length,
-        cleared: blInvoicesList.filter(b => /clear|customs/i.test(b.status || '')).length,
-        invPending: blInvoicesList.filter(b => /pending|draft|exim/i.test(b.status || '')).length,
-        pmtReq: blInvoicesList.filter(b => /pmt|req|payment/i.test(b.status || '')).length,
-        approved: blInvoicesList.filter(b => /approved/i.test(b.status || '')).length,
-        paid: blInvoicesList.filter(b => /paid|dispatched/i.test(b.status || '')).length,
-        total: blInvoicesList.length || blCount
-      },
-      recentPendingApprovals: [
-        ...pendingList.map(a => ({
-          id: a.id || a.approvalId || 'REQ-01',
-          stepText: `Step ${a.currentStep || 1}/${a.totalSteps || 1}`,
-          dateText: new Date(a.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-          type: a.type || 'Approval',
-        })),
-        ...blInvoicesList.filter(b => !appReg.test(b.status || '') && !(b.status || '').toLowerCase().includes('reject')).map(b => ({
-          id: b.blId || b.blNumber || b.referenceNo || 'BLI-ENTRY',
-          stepText: `Step ${b.currentStep || 1}/${b.totalSteps || 1}`,
-          dateText: new Date(b.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-          type: 'BL Freight Invoice'
-        }))
-      ].slice(0, 6),
-      recentActivity: recentActivity.slice(0, 8)
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-function validateOpenPo(po) {
-  const status = String(po?.status || '').trim().toLowerCase();
-  return Boolean(po && Number(po.totalAmount) > 0 && !['closed', 'cancelled', 'canceled', 'blocked'].includes(status));
-}
-
-function validateRfqPayload(body, { partial = false } = {}) {
-  const required = ['title', 'linkedPoId', 'closingDate', 'shippingTerms', 'cargoType', 'portOfLoading', 'portOfDischarge', 'containerType'];
-  if (!partial) {
-    const missing = required.filter((key) => !String(body[key] || '').trim());
-    if (missing.length) return `Missing required RFQ details: ${missing.join(', ')}.`;
-  }
-  const count = Number(body.containerCount);
-  if (body.containerCount !== undefined && (!Number.isInteger(count) || count <= 0)) return 'Number of containers must be a positive whole number.';
-  const weight = Number(body.weightPerContainer);
-  if (body.weightPerContainer !== undefined && body.weightPerContainer !== '' && (!Number.isFinite(weight) || weight <= 0)) return 'Weight per container must be greater than zero.';
-  if (body.portOfLoading && body.portOfDischarge && sameValue(body.portOfLoading, body.portOfDischarge)) return 'Port of loading and port of discharge must be different.';
-  if (body.closingDate) {
-    const closing = new Date(body.closingDate);
-    if (Number.isNaN(closing.getTime())) return 'Enter a valid RFQ closing date and time.';
-    if (closing <= new Date()) return 'RFQ closing date must be in the future.';
-  }
-  if (body.estimatedReadinessDate && Number.isNaN(new Date(body.estimatedReadinessDate).getTime())) return 'Enter a valid estimated readiness date.';
-  if (!partial && (!Array.isArray(body.invitedVendors) || !body.invitedVendors.length)) return 'Invite at least one active Freight Forwarder.';
-  return '';
-}
-
-async function nextRfqNumber() {
-  const year = new Date().getFullYear();
-  const latest = await RfqHeader.findOne({ rfqNumber: new RegExp(`^RFQ-${year}-`) }).sort({ rfqNumber: -1 }).select('rfqNumber').lean();
-  const sequence = Math.max(0, Number(String(latest?.rfqNumber || '').split('-').pop()) || 0) + 1;
-  return `RFQ-${year}-${String(sequence).padStart(4, '0')}`;
-}
-
-// ─── GET /api/p2p/workflows/preview ──────────────────────────────────────────
-// Public endpoint - no authentication required for workflow preview
-router.get('/workflows/preview', async (req, res) => {
-  try {
-    const moduleType = req.query.module || 'Advance Payment';
-    const amount = Number(req.query.amount) || 0;
-    const wf = await resolveWorkflowFromDB(moduleType, amount, req.query);
-    return res.json({ success: true, workflow: wf });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
 async function resolveWorkflowFromDB(moduleType, amount, facts = {}) {
   try {
     const workflows = await Workflow.find({
@@ -492,45 +169,32 @@ async function resolveWorkflowFromDB(moduleType, amount, facts = {}) {
       const name = (w.name || '').toLowerCase().trim();
       const mod = (moduleType || '').toLowerCase().trim();
 
-      // Exact category or name match
       if (cat === mod || name === mod) return true;
-
-      // BL Freight Invoice explicit match
       if (mod.includes('bl freight invoice') || mod.includes('bl invoice') || mod.includes('bl freight')) {
         return cat === 'bl freight invoice' || name.includes('bl freight invoice') || cat.includes('bl_invoice');
       }
-
-      // RFQ Vendor Award explicit match
       if (mod.includes('rfq')) {
         return cat.includes('rfq') || name.includes('rfq');
       }
-
-      // Custom Duty explicit match
       if (mod.includes('custom duty') || mod.includes('custom_duty')) {
         return cat.includes('custom duty') || name.includes('custom duty');
       }
-
-      // Advance Payment explicit match
       if (mod.includes('advance')) {
         return cat.includes('advance') || name.includes('advance');
       }
-
-      // Regular Invoice Payment explicit match
       if (mod === 'invoice payment' || mod === 'invoice_payment') {
         return (cat.includes('invoice payment') || name.includes('invoice payment')) && !cat.includes('bl');
       }
-
       return name.includes(mod) || cat.includes(mod);
     });
 
-    // Older databases may not contain RFQ workflow slabs. Persist the default
-    // RFQ slabs once so administrators can see, version and edit them normally.
+    // Seed RFQ workflows if missing
     if (!categoryWfs.length && String(moduleType).toLowerCase().includes('rfq')) {
       await ensureRfqAwardWorkflows();
       categoryWfs = await Workflow.find({ category: 'RFQ Vendor Award', status: { $in: ['active', 'Active'] } }).lean();
     }
 
-    // Find the exact workflow where minAmount <= numAmount <= maxAmount
+    // Find matching workflow by amount and conditions
     const matchedWf = categoryWfs.sort((a, b) => Number(b.priority || 100) - Number(a.priority || 100) || Number(b.version || 1) - Number(a.version || 1)).find(w => {
       const min = Number(w.minAmount) || 0;
       const max = (w.maxAmount == null || w.maxAmount === 0) ? Infinity : Number(w.maxAmount);
@@ -556,28 +220,6 @@ async function resolveWorkflowFromDB(moduleType, amount, facts = {}) {
   }
 }
 
-function buildWorkflowResult(wf, rawSteps) {
-  const steps = rawSteps.map((s, idx) => {
-    const title = s.title || s.roleName || `Step ${idx + 1}`;
-    const statusKey = `Pending ${title}`;
-    return {
-      step: s.step || idx + 1,
-      title,
-      roleName: s.roleName || s.roleKey || title,
-      roleKey: s.roleKey || s.roleName || title,
-      statusKey  // Used as approval.status at this step
-    };
-  });
-
-  return {
-    workflowId: wf._id?.toString() || wf.id,
-    workflowCode: wf.id,
-    workflowVersion: Number(wf.version || 1),
-    slab: wf.name || 'Standard',
-    totalSteps: steps.length,
-    steps
-  };
-}
 
 function getDefaultWorkflow(moduleType, amount) {
   const numAmount = Number(amount) || 0;
@@ -588,13 +230,13 @@ function getDefaultWorkflow(moduleType, amount) {
 
   if (isRfq) {
     return buildWorkflowResult({ id: 'WF-BOOTSTRAP-RFQ', name: 'RFQ Award Standard Approval', version: 1 }, [
-      { step: 2, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance_lead' }
+      { step: 1, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance_lead' }
     ]);
   }
 
   if (isBl) {
     return buildWorkflowResult({ id: 'WF-BOOTSTRAP-BL', name: 'BL Freight Invoice Standard Approval', version: 1 }, [
-      { step: 2, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance' }
+      { step: 1, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance' }
     ]);
   }
 
@@ -606,11 +248,11 @@ function getDefaultWorkflow(moduleType, amount) {
 
   if (moduleName.toLowerCase().includes('custom')) {
     return buildWorkflowResult({ id: 'WF-BOOTSTRAP-CUSTOM', name: 'Custom Duty Standard Approval', version: 1 }, [
-      { step: 2, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance' }
+      { step: 1, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance' }
     ]);
   }
 
-  if (numAmount >= 10000000) { // >= 1 Crore
+  if (numAmount >= 10000000) {
     return buildWorkflowResult({ id: 'WF-DEFAULT-HIGH', name: 'Advance Payment (Above ₹1 Cr)' }, [
       { step: 1, title: 'Procurement Head Approval', roleName: 'Procurement Head', roleKey: 'procurement_head' },
       { step: 2, title: 'MD Approval', roleName: 'MD Approval', roleKey: 'md' },
@@ -624,23 +266,110 @@ function getDefaultWorkflow(moduleType, amount) {
   ]);
 }
 
-// Create Approval record using the hierarchical routing service
+function buildWorkflowResult(wf, rawSteps) {
+  const steps = rawSteps.map((s, idx) => {
+    const title = s.title || s.roleName || `Step ${idx + 1}`;
+    const statusKey = `Pending ${title}`;
+    return {
+      step: s.step || (idx + 1),
+      title,
+      roleName: s.roleName || s.roleKey || title,
+      roleKey: s.roleKey || s.roleName || title,
+      statusKey
+    };
+  });
+
+  return {
+    workflowId: wf._id?.toString() || wf.id,
+    workflowCode: wf.id || wf._id?.toString(),
+    workflowVersion: Number(wf.version || 1),
+    slab: wf.name || 'Standard',
+    totalSteps: steps.length,
+    steps
+  };
+}
+
+// ─── APPROVAL RECORD CREATION ──────────────────────────────────────────────
+
+// ─── APPROVAL RECORD CREATION ──────────────────────────────────────────────
+
 async function createApprovalRecord({ referenceId, type, vendorName, amountFormatted, poRef, requestedBy, requestedById, requestId, transactionSnapshot = {}, wf }) {
-  const requester = requestedById ? await User.findOne({ id: requestedById }, { id: 1, name: 1, role: 1, team: 1, managerId: 1, managerName: 1, department: 1, hierarchyLevel: 1, canSeeAllRequests: 1, isManager: 1 }).lean() : null;
+  // Get requester with full details
+  const requester = requestedById ? await User.findOne({
+    $or: [
+      { id: requestedById },
+      { userId: requestedById },
+      { email: requestedById }
+    ]
+  }, {
+    id: 1,
+    name: 1,
+    role: 1,
+    team: 1,
+    managerId: 1,
+    managerName: 1,
+    department: 1,
+    hierarchyLevel: 1,
+    canSeeAllRequests: 1,
+    isManager: 1,
+    email: 1,
+    employeeId: 1
+  }).lean() : null;
+
   const numAmount = Number(transactionSnapshot?.amount || 0) || Number(String(amountFormatted).replace(/[^0-9.-]+/g, '')) || 0;
 
-  // Authoritative steps: Use the exact steps from the database Workflow Slab matching this category & amount
+  // Get workflow steps
   let rawSteps = (wf && Array.isArray(wf.steps) && wf.steps.length > 0) ? wf.steps : null;
   if (!rawSteps || rawSteps.length === 0) {
     const fallbackWf = getDefaultWorkflow(type, numAmount);
     rawSteps = fallbackWf.steps || [];
   }
 
-  // Hydrate each step in the workflow slab with approver user details
+  // Hydrate steps with approvers - use the improved attachApprovers
   const stepsForWorkflow = await attachApprovers(rawSteps, requester);
-  const firstStep = stepsForWorkflow[0] || null;
+
+  // Check for conflicts (requester is also approver)
+  const hasConflict = stepsForWorkflow.some(step =>
+    requester && step.assignedApproverId &&
+    String(step.assignedApproverId) === String(requester.id)
+  );
+
+  // If conflict detected, escalate
+  let finalSteps = stepsForWorkflow;
+  if (hasConflict) {
+    console.warn(`[Approval Conflict] Requester ${requester?.name} is also an approver. Escalating...`);
+
+    // Re-resolve steps with escalation
+    finalSteps = await Promise.all(
+      stepsForWorkflow.map(async (step) => {
+        if (requester && String(step.assignedApproverId) === String(requester.id)) {
+          // Get escalation approver
+          const escalated = await getEscalationApprover(step.assignedApproverId, step.roleKey);
+          if (escalated) {
+            return {
+              ...step,
+              assignedApproverId: escalated.id,
+              assignedApproverName: escalated.name,
+              assignedApproverRole: escalated.role,
+              assignedApproverEmail: escalated.email,
+              resolutionMethod: 'escalated_conflict',
+              conflictEscalated: true,
+              originalApproverId: step.assignedApproverId,
+              originalApproverName: step.assignedApproverName
+            };
+          }
+        }
+        return step;
+      })
+    );
+  }
+
+  const firstStep = finalSteps[0] || null;
   const initialStatus = firstStep?.statusKey || (firstStep?.title ? `Pending ${firstStep.title}` : 'Pending Procurement Head Approval');
 
+  const safeWf = wf || { totalSteps: finalSteps.length, steps: finalSteps };
+
+  // Create approval record
   const newApproval = await Approval.create({
     id: referenceId,
     type,
@@ -649,48 +378,126 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
     amountINR: amountFormatted,
     currency: 'INR',
     requestedBy: requestedBy || 'Finance Team',
-    currentSlab: wf?.slab || wf?.name || 'Standard',
-    workflowId: wf?.workflowId || wf?.id || 'WF-STD',
-    workflowVersion: wf?.workflowVersion || 1,
-    workflowSnapshot: { workflowId: wf?.workflowId || wf?.id, workflowCode: wf?.workflowCode || wf?.id, version: wf?.workflowVersion || 1, slab: wf?.slab || wf?.name, steps: stepsForWorkflow },
+    currentSlab: safeWf?.slab || safeWf?.name || 'Standard',
+    workflowId: safeWf?.workflowId || safeWf?.id || 'WF-STD',
+    workflowVersion: safeWf?.workflowVersion || 1,
+    workflowSnapshot: {
+      workflowId: safeWf?.workflowId || safeWf?.id,
+      workflowCode: safeWf?.workflowCode || safeWf?.id,
+      version: safeWf?.workflowVersion || 1,
+      slab: safeWf?.slab || safeWf?.name,
+      steps: finalSteps
+    },
     transactionSnapshot: { ...transactionSnapshot, referenceId, type, vendorName, amount: amountFormatted, poReference: poRef },
-    requestedById,
+    requestedById: requester?.id || requestedById,
+    requestedByName: requester?.name || requestedBy,
+    requestedByEmail: requester?.email || null,
     requestedByTeam: requester?.team || null,
+    requestedByDepartment: requester?.department || null,
     assignedApprover: firstStep?.assignedApproverId || null,
     assignedApproverName: firstStep?.assignedApproverName || null,
     assignedApproverRole: firstStep?.assignedApproverRole || firstStep?.roleKey || null,
+    assignedApproverEmail: firstStep?.assignedApproverEmail || null,
     requestId,
     poReference: poRef || '',
     currentStep: 1,
-    totalSteps: stepsForWorkflow.length,
-    workflowSteps: JSON.stringify(stepsForWorkflow),
+    totalSteps: finalSteps.length,
+    workflowSteps: JSON.stringify(finalSteps),
     status: initialStatus,
     submittedAt: new Date(),
     slaHours: 48,
     dueDate: new Date(Date.now() + 48 * 3600 * 1000),
     isOverdue: false,
-    actionHistory: []
+    actionHistory: [],
+    // Add metadata
+    metadata: {
+      approvalMethod: firstStep?.resolutionMethod || 'standard',
+      hasConflict: hasConflict,
+      escalatedAt: hasConflict ? new Date() : null,
+      escalationReason: hasConflict ? 'Self-approval detected' : null
+    }
   });
-  await WorkflowAudit.create({ eventId: `wa-${crypto.randomUUID()}`, eventType: 'APPROVAL_SUBMITTED', actorId: requestedById || requestedBy || 'system', actorName: requestedBy, entityType: type, entityId: referenceId, workflowId: wf?.workflowId || wf?.id, workflowVersion: wf?.workflowVersion || 1, step: 1, action: 'submit', previousState: { status: 'draft' }, newState: { status: initialStatus, currentStep: 1 }, requestId });
 
-  // ── Real-time SSE: notify all connected clients of the new request ─────────
+  // Create audit log
+  await WorkflowAudit.create({
+    eventId: `wa-${crypto.randomUUID()}`,
+    eventType: 'APPROVAL_SUBMITTED',
+    actorId: requester?.id || requestedById || 'system',
+    actorName: requester?.name || requestedBy,
+    entityType: type,
+    entityId: referenceId,
+    workflowId: safeWf?.workflowId || safeWf?.id,
+    workflowVersion: safeWf?.workflowVersion || 1,
+    step: 1,
+    action: 'submit',
+    previousState: { status: 'draft' },
+    newState: {
+      status: initialStatus,
+      currentStep: 1,
+      assignedApprover: firstStep?.assignedApproverName
+    },
+    requestId,
+    metadata: {
+      hasConflict,
+      assignedTo: firstStep?.assignedApproverName
+    }
+  });
+
+  // Send notifications to all potential approvers (for admin requests)
+  const allApprovers = finalSteps
+    .filter(step => step.assignedApproverId)
+    .map(step => step.assignedApproverId);
+
+  // If admin request with multiple procurement heads, notify all
+  if (requester?.role?.toLowerCase().includes('admin')) {
+    const allHeads = await User.find({
+      role: { $in: ['procurement_head', 'Procurement Head', 'procurement'] },
+      status: 'Active',
+      id: { $nin: allApprovers }
+    }).lean();
+
+    // Notify backup approvers
+    for (const head of allHeads) {
+      try {
+        sendApprovalCreatedEmails({
+          approval: {
+            ...newApproval.toObject(),
+            assignedApproverName: head.name,
+            assignedApproverEmail: head.email
+          },
+          isBackup: true
+        });
+      } catch (err) {
+        console.error('[Email Error] Failed to send backup notification:', err.message);
+      }
+    }
+  }
+
+  // SSE notification
   broadcastEvent('APPROVAL_CREATED', {
     approvalId: referenceId,
     approvalType: type,
     amount: amountFormatted,
     vendorName: vendorName || '',
-    requestedBy: requestedBy || 'Finance Team',
+    requestedBy: requester?.name || requestedBy || 'Finance Team',
     firstStepRole: firstStep?.roleKey || firstStep?.roleName || '',
     firstStepTitle: firstStep?.title || firstStep?.roleName || 'Step 1',
-    totalSteps: wf.totalSteps,
-    workflowSteps: wf.steps,
+    firstStepApprover: firstStep?.assignedApproverName || 'Unassigned',
+    totalSteps: safeWf.totalSteps || finalSteps.length,
+    hasConflict: hasConflict,
+    resolutionMethod: firstStep?.resolutionMethod || 'standard'
   });
 
-  // ── Email: notify first-step approvers ────────────────────────────────
-  sendApprovalCreatedEmails({ approval: newApproval.toObject() });
+  // Email notification
+  try {
+    sendApprovalCreatedEmails({ approval: newApproval.toObject() });
+  } catch (err) {
+    console.error('[Email Error] Failed to send approval email:', err.message);
+  }
 
   return newApproval;
 }
+// ─── SYNC EXISTING BL INVOICES ─────────────────────────────────────────────
 
 async function syncExistingBlInvoicesToApprovals() {
   try {
@@ -723,7 +530,7 @@ async function syncExistingBlInvoicesToApprovals() {
         console.log(`[Master Data] Auto-created approval for BL Invoice: ${ref}`);
       } else {
         existing.type = 'BL Freight Invoice';
-        existing.currentSlab = wf.slabName;
+        existing.currentSlab = wf.slab; // Fixed: was wf.slabName
         existing.totalSteps = wf.steps.length;
         if (existing.currentStep > wf.steps.length) existing.currentStep = wf.steps.length;
         existing.status = p.status === 'Approved' ? 'Approved & Dispatched' :
@@ -740,10 +547,10 @@ async function syncExistingBlInvoicesToApprovals() {
   }
 }
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // PURCHASE ORDERS
 // ─────────────────────────────────────────────────────────────────────────────
+
 router.get('/purchase-orders', authenticateToken, async (req, res) => {
   try {
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
@@ -752,9 +559,8 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
     const statusFilter = String(req.query.status || '').trim();
     const typeFilter = String(req.query.type || '').trim();
 
-    let poCount = await PurchaseOrder.countDocuments();
-
     const filter = { isDeleted: { $ne: true } };
+
     if (req.user?.role === 'Vendor') {
       const vendorCode = String(req.user.sapVendorCode || '');
       const vendorName = String(req.user.companyName || '');
@@ -765,28 +571,46 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
         ]
       }];
     }
+
+    // Build search filter
+    let searchFilter = {};
     if (search) {
       const regex = new RegExp(escapeRegex(search), 'i');
-      filter.$or = [
-        { poNumber: regex }, { sapPoNumber: regex },
-        { supplierName: regex }, { supplierId: regex }
-      ];
+      searchFilter = {
+        $or: [
+          { poNumber: regex }, { sapPoNumber: regex },
+          { supplierName: regex }, { supplierId: regex }
+        ]
+      };
     }
+
+    // Build status filter
     if (statusFilter && statusFilter !== 'All Status' && statusFilter !== 'All') {
       filter.status = statusFilter.toLowerCase();
     }
+
+    // Build type filter (fixed: preserve search filter)
+    let typeCondition = {};
     if (typeFilter && typeFilter !== 'All Types' && typeFilter !== 'All') {
       if (typeFilter === 'Import') {
-        filter.$or = [
-          { poNumber: /^PO-43/i }, { poNumber: /^60/ },
-          { sapPoNumber: /^43/ }, { sapPoNumber: /^60/ }
-        ];
+        typeCondition = {
+          $or: [{ poNumber: /^PO-43/i }, { poNumber: /^60/ }, { sapPoNumber: /^43/ }, { sapPoNumber: /^60/ }]
+        };
       } else if (typeFilter === 'Domestic') {
-        filter.$or = [
-          { poNumber: /^PO-41/i }, { poNumber: /^42/ },
-          { sapPoNumber: /^41/ }, { sapPoNumber: /^42/ }
-        ];
+        typeCondition = {
+          $or: [{ poNumber: /^PO-41/i }, { poNumber: /^42/ }, { sapPoNumber: /^41/ }, { sapPoNumber: /^42/ }]
+        };
       }
+    }
+
+    // Combine filters properly
+    if (Object.keys(searchFilter).length > 0 && Object.keys(typeCondition).length > 0) {
+      filter.$and = filter.$and || [];
+      filter.$and.push(searchFilter, typeCondition);
+    } else if (Object.keys(searchFilter).length > 0) {
+      filter.$or = searchFilter.$or;
+    } else if (Object.keys(typeCondition).length > 0) {
+      filter.$or = typeCondition.$or;
     }
 
     const total = await PurchaseOrder.countDocuments(filter);
@@ -873,85 +697,340 @@ router.post('/purchase-orders/create', authenticateToken, async (req, res) => {
       return res.status(400).json({ success: false, error: 'PO Number is required.' });
     }
 
-    let po = await PurchaseOrder.findOne({
-      $or: [{ poNumber: number }, { sapPoNumber: number }]
-    });
-
-    if (po) {
-      po.status = 'open';
-      if (totalAmount && Number(totalAmount) > 0) po.totalAmount = Number(totalAmount);
-      await po.save();
-      return res.status(200).json({ success: true, message: `PO ${number} is open in database.`, data: po });
-    }
-
-    po = await PurchaseOrder.create({
-      poNumber: number,
-      sapPoNumber: number || number,
-      supplierId: supplierId || '11001810',
-      supplierName: supplierName || 'Rayzon Logistics Master Vendor',
-      companyCode: '1000',
-      totalAmount: Number(totalAmount) > 0 ? Number(totalAmount) : 500000,
-      currency: currency || 'INR',
-      documentDate: new Date(),
-      status: 'open',
-      items: [
-        {
-          itemNumber: '10',
-          description: description || 'Solar Freight Logistics Sourcing',
-          quantity: 5,
-          unitPrice: (Number(totalAmount) || 500000) / 5,
-          totalPrice: Number(totalAmount) || 500000,
-          uom: 'PCS'
+    // Atomic upsert to prevent race conditions
+    const po = await PurchaseOrder.findOneAndUpdate(
+      { $or: [{ poNumber: number }, { sapPoNumber: number }] },
+      {
+        $setOnInsert: {
+          poNumber: number,
+          sapPoNumber: number || number,
+          supplierId: supplierId || '11001810',
+          supplierName: supplierName || 'Rayzon Logistics Master Vendor',
+          companyCode: '1000',
+          totalAmount: Number(totalAmount) > 0 ? Number(totalAmount) : 500000,
+          currency: currency || 'INR',
+          documentDate: new Date(),
+          status: 'open',
+          items: [
+            {
+              itemNumber: '10',
+              description: description || 'Solar Freight Logistics Sourcing',
+              quantity: 5,
+              unitPrice: (Number(totalAmount) || 500000) / 5,
+              totalPrice: Number(totalAmount) || 500000,
+              uom: 'PCS'
+            }
+          ]
         }
-      ]
-    });
+      },
+      { upsert: true, new: true }
+    );
 
-    return res.status(201).json({ success: true, message: `PO ${number} added to DB successfully.`, data: po });
+    return res.status(po.isNew ? 201 : 200).json({
+      success: true,
+      message: po.isNew ? `PO ${number} created successfully.` : `PO ${number} is open in database.`,
+      data: po
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ADVANCE PAYMENTS
 // ─────────────────────────────────────────────────────────────────────────────
 const getAdvancesHandler = async (req, res) => {
   try {
-    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
-    const size = Math.min(100, Math.max(1, Number.parseInt(req.query.size || req.query.pageSize, 10) || 10));
-    const search = String(req.query.q || req.query.search || '').trim();
-    const statusFilter = String(req.query.status || '').trim();
+    const page = Math.max(
+      1,
+      Number.parseInt(req.query.page, 10) || 1
+    );
 
-    const filter = { isDeleted: { $ne: true } };
+    const size = Math.min(
+      100,
+      Math.max(
+        1,
+        Number.parseInt(
+          req.query.size || req.query.pageSize,
+          10
+        ) || 10
+      )
+    );
+
+    const search = String(
+      req.query.q || req.query.search || ""
+    ).trim();
+
+    const statusFilter = String(
+      req.query.status || ""
+    ).trim();
+
+    // ==================================================
+    // 1. GET LOGGED-IN USER
+    // ==================================================
+
+    const loginUser = await User.findOne(
+      { email: req.user?.email },
+      {
+        _id: 0,
+        id: 1,
+        name: 1,
+        email: 1,
+        role: 1,
+        department: 1,
+        managerId: 1,
+        managerName: 1,
+        hierarchyLevel: 1,
+        canSeeAllRequests: 1,
+        status: 1
+      }
+    ).lean();
+
+    console.log("Logged-in user:", loginUser);
+
+    if (!loginUser) {
+      return res.status(401).json({
+        success: false,
+        error: "Logged-in user not found."
+      });
+    }
+
+    const loggedInUserId = loginUser.id;
+
+    // ==================================================
+    // 2. GET ALL ACTIVE USERS
+    // ==================================================
+
+    const users = await User.find(
+      { status: "Active" },
+      {
+        _id: 0,
+        id: 1,
+        name: 1,
+        email: 1,
+        managerId: 1,
+        managerName: 1,
+        role: 1,
+        department: 1,
+        hierarchyLevel: 1,
+        canSeeAllRequests: 1
+      }
+    )
+      .sort({
+        hierarchyLevel: 1,
+        name: 1
+      })
+      .lean();
+
+    // ==================================================
+    // 3. GROUP USERS BY managerId
+    //
+    // IMPORTANT:
+    // Hierarchy uses IDs, NOT names.
+    // ==================================================
+
+    const byManager = new Map();
+
+    for (const user of users) {
+      const managerId = user.managerId || "root";
+
+      if (!byManager.has(managerId)) {
+        byManager.set(managerId, []);
+      }
+
+      byManager.get(managerId).push(user);
+    }
+
+    // ==================================================
+    // 4. FIND ALL CHILDREN RECURSIVELY
+    // ==================================================
+
+    const teamUsers = new Map();
+
+    const collectChildren = (
+      managerId,
+      visited = new Set()
+    ) => {
+      const children = byManager.get(managerId) || [];
+
+      for (const child of children) {
+
+        // Prevent circular hierarchy
+        if (visited.has(child.id)) {
+          continue;
+        }
+
+        // Store by USER ID
+        teamUsers.set(child.id, child);
+
+        const nextVisited = new Set(visited);
+        nextVisited.add(child.id);
+
+        // Continue to next level
+        collectChildren(child.id, nextVisited);
+      }
+    };
+
+    collectChildren(loggedInUserId);
+
+    // ==================================================
+    // 5. BUILD ALLOWED USER NAMES
+    //
+    // AdvancePayment.createdBy stores NAME
+    // ==================================================
+
+    const allowedUsers = [
+      loginUser,
+      ...teamUsers.values()
+    ];
+
+    const allowedUserNames = [
+      ...new Set(
+        allowedUsers
+          .map((user) => user.name)
+          .filter(Boolean)
+      )
+    ];
+
+    console.log(
+      "Logged-in user:",
+      loginUser.name
+    );
+
+    console.log(
+      "Allowed users:",
+      allowedUsers.map((u) => ({
+        id: u.id,
+        name: u.name,
+        managerId: u.managerId
+      }))
+    );
+
+    console.log(
+      "Allowed user names:",
+      allowedUserNames
+    );
+
+    // ==================================================
+    // 6. ADVANCE PAYMENT FILTER
+    // ==================================================
+
+    const filter = {
+      isDeleted: { $ne: true },
+
+      // AdvancePayment stores createdBy = NAME
+      createdBy: {
+        $in: allowedUserNames
+      }
+    };
+
+    // ==================================================
+    // 7. SEARCH
+    // ==================================================
+
     if (search) {
-      const regex = new RegExp(escapeRegex(search), 'i');
-      filter.$or = [
-        { advanceId: regex }, { poId: regex }, { sapPoNumber: regex },
-        { vendorName: regex }, { vendorId: regex }, { bankName: regex }, { createdBy: regex }
+      const regex = new RegExp(
+        escapeRegex(search),
+        "i"
+      );
+
+      filter.$and = [
+        {
+          $or: [
+            { advanceId: regex },
+            { poId: regex },
+            { sapPoNumber: regex },
+            { vendorName: regex },
+            { vendorId: regex },
+            { bankName: regex },
+            { createdBy: regex }
+          ]
+        }
       ];
     }
-    if (statusFilter && statusFilter !== 'All Status' && statusFilter !== 'All') {
+
+    // ==================================================
+    // 8. STATUS
+    // ==================================================
+
+    if (
+      statusFilter &&
+      statusFilter !== "All Status" &&
+      statusFilter !== "All"
+    ) {
       filter.status = statusFilter.toLowerCase();
     }
 
-    const total = await AdvancePayment.countDocuments(filter);
-    const totalPages = Math.max(1, Math.ceil(total / size));
-    const safePage = Math.min(page, totalPages);
-    const advances = await AdvancePayment.find(filter)
-      .sort({ createdAt: -1 }).skip((safePage - 1) * size).limit(size).lean();
+    // ==================================================
+    // 9. COUNT
+    // ==================================================
+
+    const total =
+      await AdvancePayment.countDocuments(filter);
+
+    const totalPages =
+      Math.max(1, Math.ceil(total / size));
+
+    const safePage =
+      Math.min(page, totalPages);
+
+    // ==================================================
+    // 10. GET ADVANCE PAYMENTS
+    // ==================================================
+
+    const advances =
+      await AdvancePayment.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((safePage - 1) * size)
+        .limit(size)
+        .lean();
+
+    // ==================================================
+    // 11. RESPONSE
+    // ==================================================
 
     return res.json({
-      success: true, data: advances, total, page: safePage, pageSize: size, totalPages,
-      hasPrevious: safePage > 1, hasNext: safePage < totalPages
+      success: true,
+
+      data: advances,
+
+      total,
+
+      page: safePage,
+
+      pageSize: size,
+
+      totalPages,
+
+      hasPrevious: safePage > 1,
+
+      hasNext: safePage < totalPages,
+
+      access: {
+        loggedInUserId,
+
+        loggedInUserName: loginUser.name,
+
+        allowedUserNames,
+
+        totalUsers: allowedUserNames.length
+      }
     });
+
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error(
+      "getAdvancesHandler error:",
+      err
+    );
+
+    return res.status(500).json({
+      success: false,
+      error: err.message
+    });
   }
 };
-
-router.get('/advances', getAdvancesHandler);
-router.get('/advance-payments', getAdvancesHandler);
+router.get('/advances', authenticateToken, getAdvancesHandler);
+router.get('/advance-payments', authenticateToken, getAdvancesHandler);
 
 const getSingleAdvanceHandler = async (req, res) => {
   try {
@@ -973,6 +1052,7 @@ router.get('/advances/:id', getSingleAdvanceHandler);
 router.get('/advance-payments/:id', getSingleAdvanceHandler);
 
 // ─── POST Create Advance Payment ─────────────────────────────────────────────
+
 const createAdvanceHandler = async (req, res) => {
   try {
     const {
@@ -991,7 +1071,6 @@ const createAdvanceHandler = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Advance justification must contain at least 10 characters.' });
     }
 
-    // All payment validation is based on the persisted PO, never browser totals.
     const po = await PurchaseOrder.findOne({ $or: [{ poNumber }, { sapPoNumber: poNumber }] }).lean();
     if (!po) {
       return res.status(404).json({ success: false, error: 'Purchase Order not found.' });
@@ -1053,10 +1132,8 @@ const createAdvanceHandler = async (req, res) => {
       createdBy: requestedBy || 'Finance Team'
     });
 
-    // Resolve FX currency to INR for workflow slab threshold matching
     const { amountINR, fxRate, amountFormatted } = await getFxConversion(numAmount, poCurrency, req.body.fxRate);
 
-    // Resolve and create approval workflow based on amountINR
     const wf = await resolveWorkflowFromDB('Advance Payment', amountINR, { currency: poCurrency, vendorType: req.user?.vendorType, poType: po.poType || po.type });
 
     await createApprovalRecord({
@@ -1145,6 +1222,7 @@ router.put('/advances/:id', updateAdvanceHandler);
 router.put('/advance-payments/:id', updateAdvanceHandler);
 
 // ─── DELETE Advance Payment ───────────────────────────────────────────────────
+
 const deleteAdvanceHandler = async (req, res) => {
   try {
     const adv = await AdvancePayment.findOne(buildAdvanceFilter(req.params.id));
@@ -1180,7 +1258,8 @@ const deleteAdvanceHandler = async (req, res) => {
 router.delete('/advances/:id', deleteAdvanceHandler);
 router.delete('/advance-payments/:id', deleteAdvanceHandler);
 
-// ─── PUT Update Advance Payment Status (from approval flow) ──────────────────
+// ─── PUT Update Advance Payment Status ──────────────────────────────────────
+
 router.put('/advances/:id/status', async (req, res) => {
   try {
     const { status } = req.body;
@@ -1193,7 +1272,6 @@ router.put('/advances/:id/status', async (req, res) => {
     adv.status = status;
     await adv.save();
 
-    // Sync approval record
     const approval = await Approval.findOne({ id: adv.advanceId });
     if (approval) {
       if (status === 'approved') approval.status = 'Approved & Dispatched';
@@ -1210,6 +1288,7 @@ router.put('/advances/:id/status', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // INVOICE PAYMENTS
 // ─────────────────────────────────────────────────────────────────────────────
+
 router.get('/invoices', async (req, res) => {
   try {
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
@@ -1218,7 +1297,6 @@ router.get('/invoices', async (req, res) => {
     const statusFilter = String(req.query.status || '').trim();
     const matchFilter = String(req.query.threeWayMatch || req.query.match || '').trim();
 
-    // Remove old static seed invoices
     await InvoicePayment.deleteMany({ invoicePaymentId: { $in: ['INV-PAY-901', 'INV-PAY-902', 'INV-PAY-903'] } }).catch(() => { });
 
     const filter = { isDeleted: { $ne: true } };
@@ -1269,6 +1347,7 @@ router.get('/invoices/:id', async (req, res) => {
 });
 
 // ─── POST Create Invoice Payment ─────────────────────────────────────────────
+
 router.post('/invoices/create', authenticateToken, async (req, res) => {
   try {
     const {
@@ -1354,19 +1433,27 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
     }
     const netPayable = Math.max(0, numGross + numGst - numTds - numAdv);
 
-    // Unique invoice number handling
+    // Unique invoice number with retry
     let finalInvoiceNumber = String(invoiceNumber || '').trim();
     if (!finalInvoiceNumber) {
       finalInvoiceNumber = 'INV-' + new Date().getFullYear() + '-' + Math.floor(100000 + Math.random() * 900000);
     }
-    const existingInv = await InvoicePayment.findOne({ invoiceNumber: finalInvoiceNumber, vendorId: vendorIdFinal });
-    if (existingInv) {
-      return res.status(409).json({ success: false, error: 'This invoice number has already been submitted.' });
+
+    // Check for duplicates with retry
+    let retries = 3;
+    while (retries > 0) {
+      const existingInv = await InvoicePayment.findOne({ invoiceNumber: finalInvoiceNumber, vendorId: vendorIdFinal });
+      if (!existingInv) break;
+      // Generate new number and retry
+      finalInvoiceNumber = 'INV-' + new Date().getFullYear() + '-' + Math.floor(100000 + Math.random() * 900000);
+      retries--;
+    }
+    if (retries === 0) {
+      return res.status(409).json({ success: false, error: 'Unable to generate unique invoice number. Please try again.' });
     }
 
     const invPaymentId = 'INV-PAY-' + Date.now().toString().slice(-6);
 
-    // Check if vendor is Import type - only then generate ASN number
     const vendor = await Vendor.findOne({
       $or: [
         { id: vendorIdFinal },
@@ -1376,8 +1463,6 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
     }).lean();
 
     const isImportVendor = String(vendor?.vendorType || '').toLowerCase().includes('import');
-
-    // Generate ASN number ONLY for Import vendors
     const asnNumber = isImportVendor
       ? (String(requestedAsnNumber || '').trim() || `ASN-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`)
       : '';
@@ -1417,7 +1502,6 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       createdBy: requestedBy || 'Finance Team'
     });
 
-    // Workflow & Approval queue creation (with FX conversion to INR for threshold matching)
     const { amountINR, fxRate, amountFormatted } = await getFxConversion(netPayable, poCurrency, req.body.fxRate);
     const wf = await resolveWorkflowFromDB('Invoice Payment', amountINR, { currency: poCurrency, vendorType: vendor?.vendorType, poType: po.poType || po.type });
 
@@ -1459,6 +1543,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
 });
 
 // ─── PUT Update Invoice ───────────────────────────────────────────────────────
+
 router.put('/invoices/:id', optionalAuth, async (req, res) => {
   try {
     const invoice = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
@@ -1509,6 +1594,7 @@ router.put('/invoices/:id', optionalAuth, async (req, res) => {
 });
 
 // ─── PUT Update Invoice Status ────────────────────────────────────────────────
+
 router.put('/invoices/:id/status', async (req, res) => {
   try {
     const { status } = req.body;
@@ -1530,7 +1616,6 @@ router.put('/invoices/:id/status', async (req, res) => {
         else if (status === 'rejected') approval.status = 'Rejected';
         else if (status === 'returned') approval.status = 'Returned for changes';
         else if (status === 'pending') {
-          // Move to next step
           let wfSteps = [];
           try { wfSteps = JSON.parse(approval.workflowSteps || '[]'); } catch (_) { }
           const nextStepObj = wfSteps.find(s => s.step === 2);
@@ -1548,6 +1633,7 @@ router.put('/invoices/:id/status', async (req, res) => {
 });
 
 // ─── POST Record Invoice Payout ───────────────────────────────────────────────
+
 router.post('/invoices/:id/payout', async (req, res) => {
   try {
     const { utrNumber, paymentMode } = req.body;
@@ -1592,6 +1678,7 @@ router.post('/invoices/:id/payout', async (req, res) => {
 });
 
 // ─── DELETE Invoice Payment ───────────────────────────────────────────────────
+
 router.delete('/invoices/:id', async (req, res) => {
   try {
     const inv = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
@@ -1605,7 +1692,137 @@ router.delete('/invoices/:id', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// RFQ ROUTES
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Helper functions for RFQ
+async function nextRfqNumber() {
+  const year = new Date().getFullYear();
+  const latest = await RfqHeader.findOne({ rfqNumber: new RegExp(`^RFQ-${year}-`) }).sort({ rfqNumber: -1 }).select('rfqNumber').lean();
+  const sequence = Math.max(0, Number(String(latest?.rfqNumber || '').split('-').pop()) || 0) + 1;
+  return `RFQ-${year}-${String(sequence).padStart(4, '0')}`;
+}
+
+function validateRfqPayload(body, { partial = false } = {}) {
+  const required = ['title', 'linkedPoId', 'closingDate', 'shippingTerms', 'cargoType', 'portOfLoading', 'portOfDischarge', 'containerType'];
+  if (!partial) {
+    const missing = required.filter((key) => !String(body[key] || '').trim());
+    if (missing.length) return `Missing required RFQ details: ${missing.join(', ')}.`;
+  }
+  const count = Number(body.containerCount);
+  if (body.containerCount !== undefined && (!Number.isInteger(count) || count <= 0)) return 'Number of containers must be a positive whole number.';
+  const weight = Number(body.weightPerContainer);
+  if (body.weightPerContainer !== undefined && body.weightPerContainer !== '' && (!Number.isFinite(weight) || weight <= 0)) return 'Weight per container must be greater than zero.';
+  if (body.portOfLoading && body.portOfDischarge && sameValue(body.portOfLoading, body.portOfDischarge)) return 'Port of loading and port of discharge must be different.';
+  if (body.closingDate) {
+    const closing = new Date(body.closingDate);
+    if (Number.isNaN(closing.getTime())) return 'Enter a valid RFQ closing date and time.';
+    if (closing <= new Date()) return 'RFQ closing date must be in the future.';
+  }
+  if (body.estimatedReadinessDate && Number.isNaN(new Date(body.estimatedReadinessDate).getTime())) return 'Enter a valid estimated readiness date.';
+  if (!partial && (!Array.isArray(body.invitedVendors) || !body.invitedVendors.length)) return 'Invite at least one active Freight Forwarder.';
+  return '';
+}
+
+function validateOpenPo(po) {
+  const status = String(po?.status || '').trim().toLowerCase();
+  return Boolean(po && Number(po.totalAmount) > 0 && !['closed', 'cancelled', 'canceled', 'blocked'].includes(status));
+}
+
+function isRfqClosed(closingDate) {
+  if (!closingDate) return false;
+  const deadline = new Date(closingDate);
+  const isUtcMidnight = deadline.getUTCHours() === 0 && deadline.getUTCMinutes() === 0 && deadline.getUTCSeconds() === 0;
+  const isLocalMidnight = deadline.getHours() === 0 && deadline.getMinutes() === 0 && deadline.getSeconds() === 0;
+  if (isLocalMidnight) {
+    deadline.setHours(23, 59, 59, 999);
+  } else if (isUtcMidnight) {
+    deadline.setUTCHours(23, 59, 59, 999);
+  }
+  return deadline < new Date();
+}
+
+async function getFreightVendorFromRequest(req) {
+  const keys = [req.user?.id, req.user?.sapVendorCode].filter(Boolean);
+  if (!keys.length || req.user?.role !== 'Vendor') return null;
+  const freightType = /(freight|forwarder|logistics|shipping)/i;
+  return Vendor.findOne({
+    $and: [
+      { $or: keys.flatMap((key) => [{ id: key }, { sapVendorCode: key }, { supplierId: key }]) },
+      { $or: [{ vendorType: freightType }, { category: freightType }] }
+    ]
+  }).sort({ updatedAt: -1 }).lean();
+}
+
+function normaliseInviteValue(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isFreightVendorInvited(rfq, vendor) {
+  const vendorKeys = new Set([
+    vendor.id, vendor.sapVendorCode, vendor.supplierId, vendor.companyName
+  ].map(normaliseInviteValue).filter(Boolean));
+  const invitationValues = [
+    ...(Array.isArray(rfq.invitedVendorIds) ? rfq.invitedVendorIds : []),
+    ...(Array.isArray(rfq.invitedVendors) ? rfq.invitedVendors.flatMap((invite) => {
+      if (typeof invite === 'string' || typeof invite === 'number') return [invite];
+      return [invite?.vendorId, invite?.sapVendorCode, invite?.supplierId, invite?.id, invite?.companyName];
+    }) : [])
+  ];
+  return invitationValues.some((value) => vendorKeys.has(normaliseInviteValue(value)));
+}
+
+function freightVendorKeys(vendor) {
+  return [vendor?.id, vendor?.sapVendorCode, vendor?.supplierId, vendor?.companyName]
+    .map(normaliseInviteValue).filter(Boolean);
+}
+
+function getVendorAward(rfq, vendor) {
+  const keys = new Set(freightVendorKeys(vendor));
+  const allocations = Array.isArray(rfq.awardAllocations) ? rfq.awardAllocations : [];
+  const allocation = allocations.find((item) =>
+    [item.vendorId, item.vendorCode, item.vendorName].map(normaliseInviteValue).some((key) => keys.has(key))
+  );
+  if (allocation) return { ...allocation, containers: Number(allocation.containers) || 0 };
+  const legacyMatch = [rfq.awardedVendorId, rfq.awardedVendorName]
+    .map(normaliseInviteValue).some((key) => keys.has(key));
+  if (!legacyMatch) return null;
+  return {
+    vendorId: rfq.awardedVendorId,
+    vendorName: rfq.awardedVendorName,
+    containers: Number(rfq.allocatedQuantity) || Number(rfq.cargoDetails?.containerCount) || Number(rfq.totalQuantity) || 0
+  };
+}
+
+async function getRfqAwardApproval(rfq) {
+  if (!rfq.awardApprovalId) return { required: false, approved: true, approval: null };
+  const approval = await Approval.findOne({ id: rfq.awardApprovalId }).lean();
+  return {
+    required: true,
+    approved: approval?.status === 'Approved & Dispatched',
+    approval
+  };
+}
+
+async function resolveVendorAwardedRfq(req) {
+  const vendor = await getFreightVendorFromRequest(req);
+  if (!vendor) return { error: 'Freight Forwarder access is required.', status: 403 };
+  const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
+  if (!rfq || !isFreightVendorInvited(rfq.toObject(), vendor)) return { error: 'Assigned RFQ not found.', status: 404 };
+  const awardApproval = await getRfqAwardApproval(rfq.toObject());
+  const allocation = getVendorAward(rfq.toObject(), vendor);
+  if (!awardApproval.approved) {
+    return { error: `Bill of Lading access is locked until the RFQ award approval is completed. Current approval status: ${awardApproval.approval?.status || 'Pending'}.`, status: 403 };
+  }
+  if (String(rfq.status).toLowerCase() !== 'awarded' || !allocation) {
+    return { error: 'Only a fully approved awarded vendor can manage Bill of Lading entries.', status: 403 };
+  }
+  return { vendor, rfq, allocation };
+}
+
 // ─── GET /api/p2p/rfqs ────────────────────────────────────────────────────────
+
 router.get('/rfqs', authenticateToken, async (req, res) => {
   try {
     const search = String(req.query.q || req.query.search || '').trim();
@@ -1629,7 +1846,6 @@ router.get('/rfqs', authenticateToken, async (req, res) => {
       rfqs.map(async (r) => {
         let currentStatus = r.status || 'published';
 
-        // Dynamic status resolution against Approval Engine
         if (r.awardApprovalId) {
           const app = await Approval.findOne({ id: r.awardApprovalId }).select('status').lean();
           if (app) {
@@ -1679,12 +1895,10 @@ router.get('/rfqs', authenticateToken, async (req, res) => {
 
 // ─── LOGISTICS PROVIDERS CRUD API ───────────────────────────────────────────
 
-// GET all logistics providers
 router.get('/logistics-providers', async (req, res) => {
   try {
     let providers = await LogisticsProvider.find().sort({ createdAt: -1 }).lean().catch(() => []);
 
-    // Fallback/sync from Vendor collection if empty
     if (providers.length === 0) {
       const dbVendors = await Vendor.find({
         $or: [
@@ -1728,13 +1942,15 @@ router.get('/logistics-providers', async (req, res) => {
   }
 });
 
-// GET single logistics provider
 router.get('/logistics-providers/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    let provider = await LogisticsProvider.findOne({
-      $or: [{ providerId: id }, { _id: mongoose.Types.ObjectId.isValid(id) ? id : null }]
-    }).lean();
+    const filter = { $or: [{ providerId: id }] };
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      filter.$or.push({ _id: id });
+    }
+
+    let provider = await LogisticsProvider.findOne(filter).lean();
 
     if (!provider) {
       const v = await Vendor.findOne({
@@ -1769,7 +1985,6 @@ router.get('/logistics-providers/:id', async (req, res) => {
   }
 });
 
-// POST create logistics provider
 router.post('/logistics-providers', async (req, res) => {
   try {
     const {
@@ -1806,18 +2021,28 @@ router.post('/logistics-providers', async (req, res) => {
   }
 });
 
-// PUT update logistics provider
 router.put('/logistics-providers/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
     delete updates.providerId;
 
+    // Build filter safely - don't use null in $or
+    const filter = { $or: [{ providerId: id }] };
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      filter.$or.push({ _id: id });
+    }
+
+    // Don't use upsert: true - this would create malformed documents
     const updated = await LogisticsProvider.findOneAndUpdate(
-      { $or: [{ providerId: id }, { _id: mongoose.Types.ObjectId.isValid(id) ? id : null }] },
+      filter,
       updates,
-      { new: true, upsert: true }
+      { new: true, upsert: false }
     );
+
+    if (!updated) {
+      return res.status(404).json({ success: false, error: 'Provider not found.' });
+    }
 
     return res.json({ success: true, message: 'Provider updated successfully', provider: updated });
   } catch (err) {
@@ -1825,13 +2050,15 @@ router.put('/logistics-providers/:id', async (req, res) => {
   }
 });
 
-// DELETE logistics provider
 router.delete('/logistics-providers/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    await LogisticsProvider.findOneAndDelete({
-      $or: [{ providerId: id }, { _id: mongoose.Types.ObjectId.isValid(id) ? id : null }]
-    });
+    const filter = { $or: [{ providerId: id }] };
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      filter.$or.push({ _id: id });
+    }
+
+    await LogisticsProvider.findOneAndDelete(filter);
 
     return res.json({ success: true, message: 'Provider deleted successfully' });
   } catch (err) {
@@ -1839,11 +2066,10 @@ router.delete('/logistics-providers/:id', async (req, res) => {
   }
 });
 
-
 // ─── GET Freight Forwarders / Shipping Lines Vendor List ──────────────────────
+
 router.get('/rfqs/logistics-vendors', authenticateToken, async (req, res) => {
   try {
-    // Strictly query only vendors explicitly marked as Freight Forwarder or Logistics category
     const realVendors = await Vendor.find({
       $or: [
         { category: { $in: ['Logistics', 'Freight Forwarder', 'Shipping Line'] } },
@@ -1871,10 +2097,8 @@ router.get('/rfqs/logistics-vendors', authenticateToken, async (req, res) => {
   }
 });
 
-
 // ─── POST Create RFQ ─────────────────────────────────────────────────────────
-// Generate a controlled test case from real PO and vendor master data. It stops
-// at Published so every later transition is tested through the normal workflow.
+
 router.post('/rfqs/demo-workflow', authenticateToken, async (req, res) => {
   try {
     if (req.user?.role === 'Vendor') return res.status(403).json({ success: false, error: 'Only procurement users can create RFQ test workflows.' });
@@ -1964,127 +2188,448 @@ router.post('/rfqs', authenticateToken, async (req, res) => {
 });
 
 // ─── GET Single RFQ Details ──────────────────────────────────────────────────
-async function getFreightVendorFromRequest(req) {
-  const keys = [req.user?.id, req.user?.sapVendorCode].filter(Boolean);
-  if (!keys.length || req.user?.role !== 'Vendor') return null;
-  const freightType = /(freight|forwarder|logistics|shipping)/i;
-  // A vendor code can exist in legacy/imported duplicate records. Select the
-  // newest matching Freight Forwarder record, consistent with vendor login.
-  return Vendor.findOne({
-    $and: [
-      { $or: keys.flatMap((key) => [{ id: key }, { sapVendorCode: key }, { supplierId: key }]) },
-      { $or: [{ vendorType: freightType }, { category: freightType }] }
-    ]
-  }).sort({ updatedAt: -1 }).lean();
-}
 
-function normaliseInviteValue(value) {
-  return String(value || '').trim().toLowerCase();
-}
-
-function isFreightVendorInvited(rfq, vendor) {
-  const vendorKeys = new Set([
-    vendor.id, vendor.sapVendorCode, vendor.supplierId, vendor.companyName
-  ].map(normaliseInviteValue).filter(Boolean));
-  const invitationValues = [
-    ...(Array.isArray(rfq.invitedVendorIds) ? rfq.invitedVendorIds : []),
-    ...(Array.isArray(rfq.invitedVendors) ? rfq.invitedVendors.flatMap((invite) => {
-      if (typeof invite === 'string' || typeof invite === 'number') return [invite];
-      return [invite?.vendorId, invite?.sapVendorCode, invite?.supplierId, invite?.id, invite?.companyName];
-    }) : [])
-  ];
-  return invitationValues.some((value) => vendorKeys.has(normaliseInviteValue(value)));
-}
-
-function freightVendorKeys(vendor) {
-  return [vendor?.id, vendor?.sapVendorCode, vendor?.supplierId, vendor?.companyName]
-    .map(normaliseInviteValue).filter(Boolean);
-}
-
-function getVendorAward(rfq, vendor) {
-  const keys = new Set(freightVendorKeys(vendor));
-  const allocations = Array.isArray(rfq.awardAllocations) ? rfq.awardAllocations : [];
-  const allocation = allocations.find((item) =>
-    [item.vendorId, item.vendorCode, item.vendorName].map(normaliseInviteValue).some((key) => keys.has(key))
-  );
-  if (allocation) return { ...allocation, containers: Number(allocation.containers) || 0 };
-  const legacyMatch = [rfq.awardedVendorId, rfq.awardedVendorName]
-    .map(normaliseInviteValue).some((key) => keys.has(key));
-  if (!legacyMatch) return null;
-  return {
-    vendorId: rfq.awardedVendorId,
-    vendorName: rfq.awardedVendorName,
-    containers: Number(rfq.allocatedQuantity) || Number(rfq.cargoDetails?.containerCount) || Number(rfq.totalQuantity) || 0
-  };
-}
-
-async function getRfqAwardApproval(rfq) {
-  if (!rfq.awardApprovalId) return { required: false, approved: true, approval: null };
-  const approval = await Approval.findOne({ id: rfq.awardApprovalId }).lean();
-  return {
-    required: true,
-    approved: approval?.status === 'Approved & Dispatched',
-    approval
-  };
-}
-
-async function resolveVendorAwardedRfq(req) {
-  const vendor = await getFreightVendorFromRequest(req);
-  if (!vendor) return { error: 'Freight Forwarder access is required.', status: 403 };
-  const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
-  if (!rfq || !isFreightVendorInvited(rfq.toObject(), vendor)) return { error: 'Assigned RFQ not found.', status: 404 };
-  const awardApproval = await getRfqAwardApproval(rfq.toObject());
-  const allocation = getVendorAward(rfq.toObject(), vendor);
-  if (!awardApproval.approved) {
-    return { error: `Bill of Lading access is locked until the RFQ award approval is completed. Current approval status: ${awardApproval.approval?.status || 'Pending'}.`, status: 403 };
-  }
-  if (String(rfq.status).toLowerCase() !== 'awarded' || !allocation) {
-    return { error: 'Only a fully approved awarded vendor can manage Bill of Lading entries.', status: 403 };
-  }
-  return { vendor, rfq, allocation };
-}
-
-function isRfqClosed(closingDate) {
-  if (!closingDate) return false;
-  const deadline = new Date(closingDate);
-  // Admin RFQ forms select a calendar date. A stored midnight timestamp means
-  // the RFQ remains available until the end of that calendar day.
-  const isUtcMidnight = deadline.getUTCHours() === 0 && deadline.getUTCMinutes() === 0 && deadline.getUTCSeconds() === 0;
-  const isLocalMidnight = deadline.getHours() === 0 && deadline.getMinutes() === 0 && deadline.getSeconds() === 0;
-  if (isLocalMidnight) {
-    deadline.setHours(23, 59, 59, 999);
-  } else if (isUtcMidnight) {
-    deadline.setUTCHours(23, 59, 59, 999);
-  }
-  return deadline < new Date();
-} router.post('/rfqs/:id/reopen', authenticateToken, async (req, res) => {
+router.get('/rfqs/:id', authenticateToken, async (req, res) => {
   try {
-    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
-    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found.' });
+    const { id } = req.params;
+    let rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }, { awardApprovalId: id }] }).lean();
 
-    const newClosingDate = req.body.closingDate ? new Date(req.body.closingDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-    rfq.status = 'published';
-    rfq.closingDate = newClosingDate;
-    await rfq.save();
+    if (!rfq) {
+      const app = await Approval.findOne({ $or: [{ id }, { referenceId: id }] }).lean();
+      if (app && app.transactionSnapshot?.rfqId) {
+        const targetId = app.transactionSnapshot.rfqId;
+        rfq = await RfqHeader.findOne({ $or: [{ rfqId: targetId }, { rfqNumber: targetId }] }).lean();
+      }
+    }
 
-    broadcastEvent('RFQ_REOPENED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, closingDate: rfq.closingDate });
+    if (!rfq) {
+      return res.status(404).json({ success: false, error: 'RFQ not found' });
+    }
+
+    const quotes = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 }).lean();
+    const blEntries = await RfqBlEntry.find({ rfqId: rfq.rfqId }).lean();
+
+    // Get approval if exists (should be unique by id)
+    const approval = rfq.awardApprovalId
+      ? await Approval.findOne({ id: rfq.awardApprovalId }).lean()
+      : null;
+
+    let approvalProgress = null;
+    if (approval) {
+      let steps = [];
+      try { steps = JSON.parse(approval.workflowSteps || '[]'); } catch (_) { }
+      steps = steps.sort((left, right) => Number(left.step) - Number(right.step));
+      const approvedSteps = new Set((approval.actionHistory || []).filter((item) => item.action === 'approve').map((item) => Number(item.step)));
+      const terminalApproved = approval.status === 'Approved & Dispatched';
+      const terminalRejected = approval.status === 'Rejected';
+      const activeStep = steps.find((step) => Number(step.step) === Number(approval.currentStep || 1));
+      const requesterValues = [approval.requestedById, approval.requestedBy].filter(Boolean).map((value) => String(value).trim().toLowerCase());
+      const userValues = [req.user?.id, req.user?.userId, req.user?.email, req.user?.name].filter(Boolean).map((value) => String(value).trim().toLowerCase());
+      const isOwnRequest = requesterValues.some((value) => userValues.includes(value));
+      const requiredRole = activeStep?.roleName || activeStep?.roleKey || '';
+
+      const userRoles = [req.user?.role].filter(Boolean);
+      if (req.user?.id) {
+        const delegators = await User.find({ parentUserId: req.user.id, status: 'Active' }, { role: 1 }).lean();
+        for (const d of delegators) {
+          if (d.role && !userRoles.includes(d.role)) userRoles.push(d.role);
+        }
+      }
+
+      const canAct = roleCanAct(userRoles, requiredRole);
+      const isAdmin = ['admin', 'system_admin', 'super_admin'].includes(String(req.user?.role || '').toLowerCase());
+
+      approvalProgress = {
+        id: approval.id,
+        status: approval.status,
+        slab: approval.currentSlab,
+        currentStep: Number(approval.currentStep || 1),
+        totalSteps: steps.length || Number(approval.totalSteps || 0),
+        requiredRole,
+        canCurrentUserAct: !terminalApproved && !terminalRejected && (isAdmin || (!isOwnRequest && canAct)),
+        blockedReason: terminalApproved ? 'Approval completed.' : terminalRejected ? 'Approval rejected.' : (!isAdmin && isOwnRequest) ? 'The requester cannot approve their own request.' : (isAdmin || canAct) ? '' : `Waiting for a user with the ${requiredRole || 'required'} role.`,
+        submittedAt: approval.submittedAt,
+        actionHistory: approval.actionHistory || [],
+        steps: steps.map((step) => ({
+          ...step,
+          state: terminalApproved || approvedSteps.has(Number(step.step)) ? 'completed' : terminalRejected && Number(step.step) === Number(approval.currentStep) ? 'rejected' : Number(step.step) === Number(approval.currentStep) ? 'current' : 'upcoming'
+        }))
+      };
+    }
 
     return res.json({
       success: true,
-      message: `RFQ ${rfq.rfqNumber} reopened successfully until ${new Date(rfq.closingDate).toLocaleDateString('en-IN')}.`,
-      data: rfq
+      data: {
+        ...rfq,
+        quotes,
+        blEntries,
+        workflow: {
+          current: rfq.status,
+          deadlinePassed: Boolean(rfq.closingDate && new Date(rfq.closingDate) < new Date()),
+          invited: (rfq.invitedVendors || []).length,
+          quotes: quotes.length,
+          awardedContainers: Number(rfq.allocatedQuantity) || 0,
+          blContainers: blEntries.reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0),
+          customsClearedContainers: blEntries.filter((entry) => ['custom_cleared', 'invoice_pending', 'payment_requested', 'payment_approved', 'payment_paid', 'closed'].includes(entry.status)).reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0)
+        },
+        approvalProgress
+      }
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
 
+// ─── PUT Update RFQ ──────────────────────────────────────────────────────────
+
+router.put('/rfqs/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      title, linkedPoId, closingDate, description,
+      shippingTerms, cargoType, portOfLoading, portOfDischarge,
+      containerType, containerCount, weightPerContainer, estimatedReadinessDate,
+      invitedVendors, status
+    } = req.body;
+
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
+    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
+    if (['pending_approval', 'awarded', 'closed', 'cancelled'].includes(rfq.status)) return res.status(409).json({ success: false, error: `An RFQ in ${rfq.status.replace('_', ' ')} status cannot be edited.` });
+    const validationError = validateRfqPayload(req.body, { partial: true });
+    if (validationError) return res.status(400).json({ success: false, error: validationError });
+
+    if (title) rfq.title = title.trim();
+    if (linkedPoId) {
+      rfq.poId = linkedPoId;
+      rfq.sapPoNumber = linkedPoId;
+    }
+    if (description !== undefined) rfq.description = description;
+    if (closingDate) rfq.closingDate = new Date(closingDate);
+    if (status) {
+      const nextStatus = String(status).toLowerCase().replace(/\s+/g, '_');
+      if (!['draft', 'published', 'closed', 'cancelled'].includes(nextStatus)) return res.status(400).json({ success: false, error: 'This RFQ status transition is not allowed from the edit form.' });
+      rfq.status = nextStatus;
+    }
+
+    if (!rfq.cargoDetails) rfq.cargoDetails = {};
+    if (shippingTerms) rfq.cargoDetails.shippingTerms = shippingTerms;
+    if (cargoType) rfq.cargoDetails.cargoType = cargoType;
+    if (portOfLoading) rfq.cargoDetails.portOfOrigin = portOfLoading;
+    if (portOfDischarge) rfq.cargoDetails.portOfDestination = portOfDischarge;
+    if (containerType) rfq.cargoDetails.containerType = containerType;
+    if (containerCount !== undefined) {
+      const nextContainerCount = Number(containerCount);
+      if (!Number.isFinite(nextContainerCount) || nextContainerCount <= 0) {
+        return res.status(400).json({ success: false, error: 'Number of containers must be greater than zero.' });
+      }
+      rfq.cargoDetails.containerCount = nextContainerCount;
+      rfq.totalQuantity = nextContainerCount;
+      rfq.allocatedQuantity = Math.min(Number(rfq.allocatedQuantity) || 0, nextContainerCount);
+      rfq.pendingAllocation = Math.max(0, nextContainerCount - rfq.allocatedQuantity);
+    }
+    if (weightPerContainer !== undefined) rfq.cargoDetails.weightPerContainer = weightPerContainer;
+    if (estimatedReadinessDate) rfq.cargoDetails.estimatedReadinessDate = new Date(estimatedReadinessDate);
+
+    if (invitedVendors && Array.isArray(invitedVendors)) {
+      if (!invitedVendors.length) return res.status(400).json({ success: false, error: 'At least one Freight Forwarder must remain invited.' });
+      const submittedQuotes = await RfqQuote.find({ rfqId: rfq.rfqId }).select('vendorId vendorName').lean();
+      const retainsVendor = (quote) => invitedVendors.some((vendor) =>
+        [vendor.vendorId, vendor.sapVendorCode].filter(Boolean).map(normaliseInviteValue).includes(normaliseInviteValue(quote.vendorId)) ||
+        normaliseInviteValue(vendor.companyName) === normaliseInviteValue(quote.vendorName)
+      );
+      if (submittedQuotes.some((quote) => !retainsVendor(quote))) {
+        return res.status(400).json({ success: false, error: 'A vendor that already submitted a quote cannot be removed.' });
+      }
+      const previousKeys = new Set((rfq.invitedVendors || []).flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).map(normaliseInviteValue).filter(Boolean));
+      rfq.invitedVendors = invitedVendors;
+      const addedVendorIds = invitedVendors.flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).filter((value) => value && !previousKeys.has(normaliseInviteValue(value)));
+      if (addedVendorIds.length) broadcastEvent('RFQ_INVITED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, title: rfq.title, closingDate: rfq.closingDate, vendorIds: addedVendorIds });
+    }
+
+    await rfq.save();
+    return res.json({ success: true, message: 'RFQ updated successfully in MongoDB.', data: rfq });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── DELETE RFQ ──────────────────────────────────────────────────────────────
+
+router.delete('/rfqs/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
+    if (rfq) {
+      const [quoteCount, blCount] = await Promise.all([RfqQuote.countDocuments({ rfqId: rfq.rfqId }), RfqBlEntry.countDocuments({ rfqId: rfq.rfqId })]);
+      if (quoteCount || blCount || ['pending_approval', 'awarded', 'closed'].includes(rfq.status)) return res.status(409).json({ success: false, error: 'RFQ cannot be deleted after quotation, approval, award, or shipment activity has started.' });
+      await RfqHeader.deleteOne({ _id: rfq._id });
+      await RfqQuote.deleteMany({ rfqId: rfq.rfqId }).catch(() => { });
+    }
+    return res.json({ success: true, message: 'RFQ deleted from MongoDB.' });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── POST Copy/Duplicate RFQ ──────────────────────────────────────────────────
+
+router.post('/rfqs/:id/copy', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const sourceRfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] }).lean();
+    if (!sourceRfq) return res.status(404).json({ success: false, error: 'Source RFQ not found' });
+
+    const newRfqNumber = await nextRfqNumber();
+
+    const newRfq = {
+      ...sourceRfq,
+      _id: undefined,
+      rfqId: newRfqNumber,
+      rfqNumber: newRfqNumber,
+      title: `COPY - ${sourceRfq.title}`,
+      status: 'draft',
+      closingDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      totalQuantity: Number(sourceRfq.cargoDetails?.containerCount) || Number(sourceRfq.totalQuantity) || 1,
+      allocatedQuantity: 0,
+      pendingAllocation: Number(sourceRfq.cargoDetails?.containerCount) || Number(sourceRfq.totalQuantity) || 1,
+      awardedVendorId: undefined,
+      awardedVendorName: undefined,
+      awardedQuoteId: undefined,
+      awardAllocations: undefined,
+      awardApprovalId: undefined,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    return res.status(201).json({ success: true, message: 'RFQ copied successfully.', data: newRfq });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── POST Submit Vendor Quote with Auto L1..L5 Ranking ────────────────────────
+
+router.post('/rfqs/:id/quote', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { vendorId, vendorName, shippingLine, oceanFreightUsd, stChargesInr, otherChargesInr, transitDays } = req.body;
+
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
+    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
+    if (rfq.status !== 'published' || (rfq.closingDate && new Date(rfq.closingDate) < new Date())) return res.status(409).json({ success: false, error: 'Quotes can only be submitted to an open, published RFQ before its deadline.' });
+    if (!vendorId || !vendorName || !shippingLine) return res.status(400).json({ success: false, error: 'Vendor, shipping line, and quote amounts are required.' });
+
+    const invitedVendor = (rfq.invitedVendors || []).find((vendor) =>
+      [vendor.vendorId, vendor.sapVendorCode, vendor.companyName].some((value) => normaliseInviteValue(value) === normaliseInviteValue(vendorId)) ||
+      normaliseInviteValue(vendor.companyName) === normaliseInviteValue(vendorName)
+    );
+    if (!invitedVendor) return res.status(403).json({ success: false, error: 'Only a vendor invited to this RFQ can submit a quote.' });
+    const existingQuote = await RfqQuote.findOne({
+      rfqId: rfq.rfqId,
+      $or: [
+        { vendorId: { $in: [vendorId, invitedVendor.vendorId, invitedVendor.sapVendorCode].filter(Boolean) } },
+        { vendorName: invitedVendor.companyName }
+      ]
+    }).lean();
+    if (existingQuote) return res.status(409).json({ success: false, error: 'This vendor has already submitted a quote. Update the existing vendor quote instead.' });
+
+    const oceanUsd = Number(oceanFreightUsd);
+    const stInr = Number(stChargesInr);
+    const othInr = Number(otherChargesInr || 0);
+    const transit = Number(transitDays);
+    if (!(oceanUsd > 0) || !Number.isFinite(stInr) || stInr < 0 || !Number.isFinite(othInr) || othInr < 0 || !Number.isInteger(transit) || transit <= 0) return res.status(400).json({ success: false, error: 'Enter valid positive freight and transit values; INR charges may be zero but not negative.' });
+    const usdRate = 92.5;
+    const totalInr = Math.round(oceanUsd * usdRate + stInr + othInr);
+
+    const quoteId = `Q-${Date.now().toString().slice(-6)}`;
+    await RfqQuote.create({
+      quoteId,
+      rfqId: rfq.rfqId,
+      vendorId: invitedVendor.vendorId || invitedVendor.sapVendorCode || vendorId,
+      vendorName: invitedVendor.companyName || vendorName,
+      shippingLine,
+      oceanFreightUsd: oceanUsd,
+      stChargesInr: stInr,
+      otherChargesInr: othInr,
+      totalInr,
+      freightAmount: oceanUsd,
+      destinationCharges: stInr,
+      transitDays: transit,
+      status: 'submitted'
+    });
+
+    const allQuotes = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 });
+    for (let i = 0; i < allQuotes.length; i++) {
+      const rankLabel = `L${i + 1}`;
+      allQuotes[i].rank = rankLabel;
+      await allQuotes[i].save();
+    }
+
+    return res.json({ success: true, message: 'Vendor quote submitted and ranked in MongoDB.', quoteId });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── POST Award RFQ Quote ─────────────────────────────────────────────────────
+
+router.post('/rfqs/:id/award', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { quoteId, vendorId, vendorName, allocations, submitForApproval, isReassignment } = req.body;
+
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
+    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
+
+    const allowedStatuses = ['published', 'open', 'partially_awarded', 'awarded'];
+    if (!allowedStatuses.includes(rfq.status)) {
+      return res.status(409).json({ success: false, error: `RFQ cannot be awarded while it is ${rfq.status.replace('_', ' ')}.` });
+    }
+
+    if (submitForApproval && Array.isArray(allocations)) {
+      const totalContainers = Number(rfq.cargoDetails?.containerCount) || Number(rfq.totalQuantity) || 0;
+      if (!allocations.length) return res.status(400).json({ success: false, error: 'Add at least one vendor allocation.' });
+
+      const quoteIds = allocations.map((item) => item.quoteId).filter(Boolean);
+      const quotes = await RfqQuote.find({ rfqId: rfq.rfqId, quoteId: { $in: quoteIds } }).lean();
+      if (quotes.length !== new Set(quoteIds).size) return res.status(400).json({ success: false, error: 'Every allocation must use a valid quote from this RFQ.' });
+
+      const normalized = allocations.map((item) => {
+        const quote = quotes.find((entry) => entry.quoteId === item.quoteId);
+        const containers = Number(item.containers);
+        if (!Number.isInteger(containers) || containers <= 0) throw new Error('Allocated containers must be positive whole numbers.');
+        return {
+          quoteId: quote.quoteId,
+          vendorId: quote.vendorId,
+          vendorName: quote.vendorName,
+          vendorCode: quote.vendorId,
+          containers,
+          ratePerContainer: Number(quote.totalInr) || 0,
+          allocationAmount: (Number(quote.totalInr) || 0) * containers,
+          remark: String(item.remark || '').trim()
+        };
+      });
+
+      const allocated = normalized.reduce((sum, item) => sum + item.containers, 0);
+
+      // Restore exact allocation validation
+      if (allocated !== totalContainers) {
+        return res.status(400).json({
+          success: false,
+          error: `Allocate exactly all ${totalContainers} RFQ containers before submitting the award.`
+        });
+      }
+
+      // Add upper-bound check
+      if (allocated > totalContainers) {
+        return res.status(400).json({
+          success: false,
+          error: `Cannot allocate more than ${totalContainers} containers.`
+        });
+      }
+
+      if (new Set(normalized.map((item) => item.quoteId)).size !== normalized.length) {
+        return res.status(400).json({ success: false, error: 'A vendor quote can only be allocated once.' });
+      }
+
+      const totalAmount = normalized.reduce((sum, item) => sum + item.allocationAmount, 0);
+
+      const approvalIdPrefix = isReassignment ? 'RFQ-REASSIGN' : 'RFQ-AWARD';
+      const approvalId = `${approvalIdPrefix}-${rfq.rfqNumber}-${Date.now().toString().slice(-5)}`;
+
+      const awardWorkflow = await resolveWorkflowFromDB('RFQ Vendor Award', totalAmount, { currency: 'INR', cargoType: rfq.cargoDetails?.cargoType });
+
+      const previousAward = isReassignment && rfq.status === 'awarded' ? {
+        previousVendorId: rfq.awardedVendorId,
+        previousVendorName: rfq.awardedVendorName,
+        previousAllocatedQuantity: rfq.allocatedQuantity,
+        reassignedAt: new Date(),
+        reassignedBy: req.user?.name || req.user?.email || 'System Admin'
+      } : {};
+
+      const approval = await createApprovalRecord({
+        referenceId: approvalId,
+        type: 'RFQ Vendor Award',
+        vendorName: normalized.map((item) => item.vendorName).join(', '),
+        amountFormatted: `INR ${totalAmount}`,
+        poRef: rfq.poId,
+        requestedBy: req.user?.name || req.user?.email || 'System Admin',
+        requestedById: req.user?.id || req.user?.email,
+        requestId: req.headers['x-request-id'],
+        transactionSnapshot: {
+          rfqId: rfq.rfqId,
+          containers: allocated,
+          allocations: normalized,
+          totalAmount,
+          isReassignment,
+          ...previousAward
+        },
+        wf: awardWorkflow
+      });
+
+      approval.containersCount = allocated;
+      approval.allocations = normalized;
+      approval.remarks = isReassignment
+        ? `Container reassignment for ${rfq.rfqNumber} (Previous: ${rfq.awardedVendorName || 'N/A'})`
+        : `Container allocation for ${rfq.rfqNumber}`;
+      await approval.save();
+
+      const isFullReassignment = Boolean(isReassignment) && rfq.status === 'awarded' && (Number(rfq.allocatedQuantity) >= totalContainers);
+
+      const previouslyApprovedAllocations = isFullReassignment
+        ? []
+        : (rfq.get('awardAllocations') || []).filter(a => a.approved === true);
+      const previouslyAllocatedQty = previouslyApprovedAllocations.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
+
+      if (isFullReassignment) {
+        const reassignmentHistory = rfq.get('reassignmentHistory') || [];
+        reassignmentHistory.push({
+          reassignedAt: new Date(),
+          reassignedBy: req.user?.name || req.user?.email || 'System Admin',
+          previousVendorId: rfq.awardedVendorId,
+          previousVendorName: rfq.awardedVendorName,
+          previousAllocations: rfq.get('awardAllocations') || [],
+          previousAllocatedQuantity: rfq.allocatedQuantity,
+          newAllocations: normalized,
+          newAllocatedQuantity: allocated,
+          approvalId
+        });
+        rfq.set('reassignmentHistory', reassignmentHistory);
+      }
+
+      const pendingAllocations = normalized.map(a => ({ ...a, approved: false, cycleApprovalId: approvalId }));
+      const combinedAllocations = [
+        ...previouslyApprovedAllocations,
+        ...pendingAllocations
+      ];
+
+      rfq.status = 'pending_approval';
+      rfq.totalQuantity = totalContainers;
+      rfq.allocatedQuantity = previouslyAllocatedQty;
+      rfq.pendingAllocation = Math.max(0, totalContainers - previouslyAllocatedQty);
+      rfq.set('awardAllocations', combinedAllocations);
+      rfq.set('awardApprovalId', approvalId);
+      await rfq.save();
+
+      const message = isReassignment
+        ? 'Vendor reassignment submitted for approval.'
+        : 'Vendor allocations submitted for approval.';
+
+      return res.json({ success: true, message, data: rfq, approvalId, isReassignment });
+    }
+
+    return res.status(400).json({ success: false, error: 'RFQ awards must be submitted through the configured approval workflow.' });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── RFQ Vendor Routes ──────────────────────────────────────────────────────
+
 router.get('/vendor-rfqs', authenticateToken, async (req, res) => {
   try {
     const vendor = await getFreightVendorFromRequest(req);
     if (!vendor) return res.status(403).json({ success: false, error: 'Freight Forwarder access is required.' });
-    // Invitations created by older screens used strings/legacy IDs while newer
-    // records use structured objects. Filter after loading so both shapes work.
     const rfqs = (await RfqHeader.find({}).sort({ createdAt: -1 }).lean())
       .filter((rfq) => isFreightVendorInvited(rfq, vendor));
     const ids = [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean);
@@ -2187,13 +2732,11 @@ router.get('/validate-asn', authenticateToken, async (req, res) => {
       return res.status(400).json({ success: false, valid: false, error: 'ASN Number can only contain letters, numbers, hyphens, and slashes.' });
     }
 
-    // 1. Duplicate check in BL Entries
     const existsInBl = await RfqBlEntry.exists({ $or: [{ asnNumber }, { autoAsnNumber: asnNumber }] });
     if (existsInBl) {
       return res.json({ success: true, valid: false, error: `ASN Number "${asnNumber}" has already been used for a BL entry.` });
     }
 
-    // 2. Check if matching InvoicePayment record exists for PO / RFQ
     let matchingInvoice = null;
     if (rfqId) {
       const rfq = await RfqHeader.findOne({ $or: [{ rfqId }, { rfqNumber: rfqId }] }).lean();
@@ -2362,418 +2905,30 @@ router.post('/vendor-rfqs/:id/bl-entries/:blId/invoices', authenticateToken, asy
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.get('/rfqs/:id', authenticateToken, async (req, res) => {
+router.post('/rfqs/:id/reopen', authenticateToken, async (req, res) => {
   try {
-    const { id } = req.params;
-    let rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }, { awardApprovalId: id }] }).lean();
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
+    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found.' });
 
-    if (!rfq) {
-      const app = await Approval.findOne({ $or: [{ id }, { referenceId: id }] }).lean();
-      if (app && app.transactionSnapshot?.rfqId) {
-        const targetId = app.transactionSnapshot.rfqId;
-        rfq = await RfqHeader.findOne({ $or: [{ rfqId: targetId }, { rfqNumber: targetId }] }).lean();
-      }
-    }
+    const newClosingDate = req.body.closingDate ? new Date(req.body.closingDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    rfq.status = 'published';
+    rfq.closingDate = newClosingDate;
+    await rfq.save();
 
-    if (!rfq) {
-      return res.status(404).json({ success: false, error: 'RFQ not found' });
-    }
-
-    const quotes = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 }).lean();
-    const blEntries = await RfqBlEntry.find({ rfqId: rfq.rfqId }).lean();
-
-    // Fix: Get ONLY the most recent approval, not all approvals
-    const approval = rfq.awardApprovalId
-      ? await Approval.findOne({ id: rfq.awardApprovalId })
-        .sort({ submittedAt: -1, createdAt: -1 })
-        .lean()
-      : null;
-    let approvalProgress = null;
-    if (approval) {
-      let steps = [];
-      try { steps = JSON.parse(approval.workflowSteps || '[]'); } catch (_) { }
-      steps = steps.sort((left, right) => Number(left.step) - Number(right.step));
-      const approvedSteps = new Set((approval.actionHistory || []).filter((item) => item.action === 'approve').map((item) => Number(item.step)));
-      const terminalApproved = approval.status === 'Approved & Dispatched';
-      const terminalRejected = approval.status === 'Rejected';
-      const activeStep = steps.find((step) => Number(step.step) === Number(approval.currentStep || 1));
-      const requesterValues = [approval.requestedById, approval.requestedBy].filter(Boolean).map((value) => String(value).trim().toLowerCase());
-      const userValues = [req.user?.id, req.user?.userId, req.user?.email, req.user?.name].filter(Boolean).map((value) => String(value).trim().toLowerCase());
-      const isOwnRequest = requesterValues.some((value) => userValues.includes(value));
-      const requiredRole = activeStep?.roleName || activeStep?.roleKey || '';
-
-      const userRoles = [req.user?.role].filter(Boolean);
-      if (req.user?.id) {
-        const delegators = await User.find({ parentUserId: req.user.id, status: 'Active' }, { role: 1 }).lean();
-        for (const d of delegators) {
-          if (d.role && !userRoles.includes(d.role)) userRoles.push(d.role);
-        }
-      }
-
-      const canAct = roleCanAct(userRoles, requiredRole);
-      const isAdmin = ['admin', 'system_admin', 'super_admin'].includes(String(req.user?.role || '').toLowerCase());
-
-      approvalProgress = {
-        id: approval.id,
-        status: approval.status,
-        slab: approval.currentSlab,
-        currentStep: Number(approval.currentStep || 1),
-        totalSteps: steps.length || Number(approval.totalSteps || 0),
-        requiredRole,
-        canCurrentUserAct: !terminalApproved && !terminalRejected && (isAdmin || (!isOwnRequest && canAct)),
-        blockedReason: terminalApproved ? 'Approval completed.' : terminalRejected ? 'Approval rejected.' : (!isAdmin && isOwnRequest) ? 'The requester cannot approve their own request.' : (isAdmin || canAct) ? '' : `Waiting for a user with the ${requiredRole || 'required'} role.`,
-        submittedAt: approval.submittedAt,
-        actionHistory: approval.actionHistory || [],
-        steps: steps.map((step) => ({
-          ...step,
-          state: terminalApproved || approvedSteps.has(Number(step.step)) ? 'completed' : terminalRejected && Number(step.step) === Number(approval.currentStep) ? 'rejected' : Number(step.step) === Number(approval.currentStep) ? 'current' : 'upcoming'
-        }))
-      };
-    }
+    broadcastEvent('RFQ_REOPENED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, closingDate: rfq.closingDate });
 
     return res.json({
       success: true,
-      data: {
-        ...rfq,
-        quotes,
-        blEntries,
-        workflow: {
-          current: rfq.status,
-          deadlinePassed: Boolean(rfq.closingDate && new Date(rfq.closingDate) < new Date()),
-          invited: (rfq.invitedVendors || []).length,
-          quotes: quotes.length,
-          awardedContainers: Number(rfq.allocatedQuantity) || 0,
-          blContainers: blEntries.reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0),
-          customsClearedContainers: blEntries.filter((entry) => ['custom_cleared', 'invoice_pending', 'payment_requested', 'payment_approved', 'payment_paid', 'closed'].includes(entry.status)).reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0)
-        },
-        approvalProgress
-      }
+      message: `RFQ ${rfq.rfqNumber} reopened successfully until ${new Date(rfq.closingDate).toLocaleDateString('en-IN')}.`,
+      data: rfq
     });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ─── PUT Update RFQ ──────────────────────────────────────────────────────────
-router.put('/rfqs/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const {
-      title, linkedPoId, closingDate, description,
-      shippingTerms, cargoType, portOfLoading, portOfDischarge,
-      containerType, containerCount, weightPerContainer, estimatedReadinessDate,
-      invitedVendors, status
-    } = req.body;
-
-    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
-    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
-    if (['pending_approval', 'awarded', 'closed', 'cancelled'].includes(rfq.status)) return res.status(409).json({ success: false, error: `An RFQ in ${rfq.status.replace('_', ' ')} status cannot be edited.` });
-    const validationError = validateRfqPayload(req.body, { partial: true });
-    if (validationError) return res.status(400).json({ success: false, error: validationError });
-
-    if (title) rfq.title = title.trim();
-    if (linkedPoId) {
-      rfq.poId = linkedPoId;
-      rfq.sapPoNumber = linkedPoId;
-    }
-    if (description !== undefined) rfq.description = description;
-    if (closingDate) rfq.closingDate = new Date(closingDate);
-    if (status) {
-      const nextStatus = String(status).toLowerCase().replace(/\s+/g, '_');
-      if (!['draft', 'published', 'closed', 'cancelled'].includes(nextStatus)) return res.status(400).json({ success: false, error: 'This RFQ status transition is not allowed from the edit form.' });
-      rfq.status = nextStatus;
-    }
-
-    if (!rfq.cargoDetails) rfq.cargoDetails = {};
-    if (shippingTerms) rfq.cargoDetails.shippingTerms = shippingTerms;
-    if (cargoType) rfq.cargoDetails.cargoType = cargoType;
-    if (portOfLoading) rfq.cargoDetails.portOfOrigin = portOfLoading;
-    if (portOfDischarge) rfq.cargoDetails.portOfDestination = portOfDischarge;
-    if (containerType) rfq.cargoDetails.containerType = containerType;
-    if (containerCount !== undefined) {
-      const nextContainerCount = Number(containerCount);
-      if (!Number.isFinite(nextContainerCount) || nextContainerCount <= 0) {
-        return res.status(400).json({ success: false, error: 'Number of containers must be greater than zero.' });
-      }
-      rfq.cargoDetails.containerCount = nextContainerCount;
-      rfq.totalQuantity = nextContainerCount;
-      rfq.allocatedQuantity = Math.min(Number(rfq.allocatedQuantity) || 0, nextContainerCount);
-      rfq.pendingAllocation = Math.max(0, nextContainerCount - rfq.allocatedQuantity);
-    }
-    if (weightPerContainer !== undefined) rfq.cargoDetails.weightPerContainer = weightPerContainer;
-    if (estimatedReadinessDate) rfq.cargoDetails.estimatedReadinessDate = new Date(estimatedReadinessDate);
-
-    if (invitedVendors && Array.isArray(invitedVendors)) {
-      if (!invitedVendors.length) return res.status(400).json({ success: false, error: 'At least one Freight Forwarder must remain invited.' });
-      const submittedQuotes = await RfqQuote.find({ rfqId: rfq.rfqId }).select('vendorId vendorName').lean();
-      const retainsVendor = (quote) => invitedVendors.some((vendor) =>
-        [vendor.vendorId, vendor.sapVendorCode].filter(Boolean).map(normaliseInviteValue).includes(normaliseInviteValue(quote.vendorId)) ||
-        normaliseInviteValue(vendor.companyName) === normaliseInviteValue(quote.vendorName)
-      );
-      if (submittedQuotes.some((quote) => !retainsVendor(quote))) {
-        return res.status(400).json({ success: false, error: 'A vendor that already submitted a quote cannot be removed.' });
-      }
-      const previousKeys = new Set((rfq.invitedVendors || []).flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).map(normaliseInviteValue).filter(Boolean));
-      rfq.invitedVendors = invitedVendors;
-      const addedVendorIds = invitedVendors.flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).filter((value) => value && !previousKeys.has(normaliseInviteValue(value)));
-      if (addedVendorIds.length) broadcastEvent('RFQ_INVITED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, title: rfq.title, closingDate: rfq.closingDate, vendorIds: addedVendorIds });
-    }
-
-    await rfq.save();
-    return res.json({ success: true, message: 'RFQ updated successfully in MongoDB.', data: rfq });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ─── DELETE RFQ ──────────────────────────────────────────────────────────────
-router.delete('/rfqs/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
-    if (rfq) {
-      const [quoteCount, blCount] = await Promise.all([RfqQuote.countDocuments({ rfqId: rfq.rfqId }), RfqBlEntry.countDocuments({ rfqId: rfq.rfqId })]);
-      if (quoteCount || blCount || ['pending_approval', 'awarded', 'closed'].includes(rfq.status)) return res.status(409).json({ success: false, error: 'RFQ cannot be deleted after quotation, approval, award, or shipment activity has started.' });
-      await RfqHeader.deleteOne({ _id: rfq._id });
-      await RfqQuote.deleteMany({ rfqId: rfq.rfqId }).catch(() => { });
-    }
-    return res.json({ success: true, message: 'RFQ deleted from MongoDB.' });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ─── POST Copy/Duplicate RFQ ──────────────────────────────────────────────────
-router.post('/rfqs/:id/copy', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const sourceRfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] }).lean();
-    if (!sourceRfq) return res.status(404).json({ success: false, error: 'Source RFQ not found' });
-
-    const newRfqNumber = await nextRfqNumber();
-
-    const newRfq = {
-      ...sourceRfq,
-      _id: undefined,
-      rfqId: newRfqNumber,
-      rfqNumber: newRfqNumber,
-      title: `COPY - ${sourceRfq.title}`,
-      status: 'draft',
-      closingDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      totalQuantity: Number(sourceRfq.cargoDetails?.containerCount) || Number(sourceRfq.totalQuantity) || 1,
-      allocatedQuantity: 0,
-      pendingAllocation: Number(sourceRfq.cargoDetails?.containerCount) || Number(sourceRfq.totalQuantity) || 1,
-      awardedVendorId: undefined,
-      awardedVendorName: undefined,
-      awardedQuoteId: undefined,
-      awardAllocations: undefined,
-      awardApprovalId: undefined,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
-
-    return res.status(201).json({ success: true, message: 'RFQ copied successfully.', data: newRfq });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ─── POST Submit Vendor Quote with Auto L1..L5 Ranking ────────────────────────
-router.post('/rfqs/:id/quote', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { vendorId, vendorName, shippingLine, oceanFreightUsd, stChargesInr, otherChargesInr, transitDays } = req.body;
-
-    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
-    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
-    if (rfq.status !== 'published' || (rfq.closingDate && new Date(rfq.closingDate) < new Date())) return res.status(409).json({ success: false, error: 'Quotes can only be submitted to an open, published RFQ before its deadline.' });
-    if (!vendorId || !vendorName || !shippingLine) return res.status(400).json({ success: false, error: 'Vendor, shipping line, and quote amounts are required.' });
-
-    const invitedVendor = (rfq.invitedVendors || []).find((vendor) =>
-      [vendor.vendorId, vendor.sapVendorCode, vendor.companyName].some((value) => normaliseInviteValue(value) === normaliseInviteValue(vendorId)) ||
-      normaliseInviteValue(vendor.companyName) === normaliseInviteValue(vendorName)
-    );
-    if (!invitedVendor) return res.status(403).json({ success: false, error: 'Only a vendor invited to this RFQ can submit a quote.' });
-    const existingQuote = await RfqQuote.findOne({
-      rfqId: rfq.rfqId,
-      $or: [
-        { vendorId: { $in: [vendorId, invitedVendor.vendorId, invitedVendor.sapVendorCode].filter(Boolean) } },
-        { vendorName: invitedVendor.companyName }
-      ]
-    }).lean();
-    if (existingQuote) return res.status(409).json({ success: false, error: 'This vendor has already submitted a quote. Update the existing vendor quote instead.' });
-
-    const oceanUsd = Number(oceanFreightUsd);
-    const stInr = Number(stChargesInr);
-    const othInr = Number(otherChargesInr || 0);
-    const transit = Number(transitDays);
-    if (!(oceanUsd > 0) || !Number.isFinite(stInr) || stInr < 0 || !Number.isFinite(othInr) || othInr < 0 || !Number.isInteger(transit) || transit <= 0) return res.status(400).json({ success: false, error: 'Enter valid positive freight and transit values; INR charges may be zero but not negative.' });
-    const usdRate = 92.5; // Exchange rate calculation
-    const totalInr = Math.round(oceanUsd * usdRate + stInr + othInr);
-
-    const quoteId = `Q-${Date.now().toString().slice(-6)}`;
-    await RfqQuote.create({
-      quoteId,
-      rfqId: rfq.rfqId,
-      vendorId: invitedVendor.vendorId || invitedVendor.sapVendorCode || vendorId,
-      vendorName: invitedVendor.companyName || vendorName,
-      shippingLine,
-      oceanFreightUsd: oceanUsd,
-      stChargesInr: stInr,
-      otherChargesInr: othInr,
-      totalInr,
-      freightAmount: oceanUsd,
-      destinationCharges: stInr,
-      transitDays: transit,
-      status: 'submitted'
-    });
-
-    // Re-rank all quotes for this RFQ by totalInr ascending
-    const allQuotes = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 });
-    for (let i = 0; i < allQuotes.length; i++) {
-      const rankLabel = `L${i + 1}`;
-      allQuotes[i].rank = rankLabel;
-      await allQuotes[i].save();
-    }
-
-    return res.json({ success: true, message: 'Vendor quote submitted and ranked in MongoDB.', quoteId });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ─── POST Award RFQ Quote ─────────────────────────────────────────────────────
-router.post('/rfqs/:id/award', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { quoteId, vendorId, vendorName, allocations, submitForApproval, isReassignment } = req.body;
-
-    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
-    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
-
-    // Allow awarding, incremental allocations, and reassignments
-    const allowedStatuses = ['published', 'open', 'partially_awarded', 'awarded'];
-    if (!allowedStatuses.includes(rfq.status)) {
-      return res.status(409).json({ success: false, error: `RFQ cannot be awarded while it is ${rfq.status.replace('_', ' ')}.` });
-    }
-
-    if (submitForApproval && Array.isArray(allocations)) {
-      const totalContainers = Number(rfq.cargoDetails?.containerCount) || Number(rfq.totalQuantity) || 0;
-      if (!allocations.length) return res.status(400).json({ success: false, error: 'Add at least one vendor allocation.' });
-      const quoteIds = allocations.map((item) => item.quoteId).filter(Boolean);
-      const quotes = await RfqQuote.find({ rfqId: rfq.rfqId, quoteId: { $in: quoteIds } }).lean();
-      if (quotes.length !== new Set(quoteIds).size) return res.status(400).json({ success: false, error: 'Every allocation must use a valid quote from this RFQ.' });
-      const normalized = allocations.map((item) => {
-        const quote = quotes.find((entry) => entry.quoteId === item.quoteId);
-        const containers = Number(item.containers);
-        if (!Number.isInteger(containers) || containers <= 0) throw new Error('Allocated containers must be positive whole numbers.');
-        return { quoteId: quote.quoteId, vendorId: quote.vendorId, vendorName: quote.vendorName, vendorCode: quote.vendorId, containers, ratePerContainer: Number(quote.totalInr) || 0, allocationAmount: (Number(quote.totalInr) || 0) * containers, remark: String(item.remark || '').trim() };
-      });
-      const allocated = normalized.reduce((sum, item) => sum + item.containers, 0);
-
-      // Remove validation for exact container match - allow any allocation count for reassignment
-      // if (allocated !== totalContainers) return res.status(400).json({ success: false, error: `Allocate exactly all ${totalContainers} RFQ containers before submitting the award.` });
-
-      if (new Set(normalized.map((item) => item.quoteId)).size !== normalized.length) return res.status(400).json({ success: false, error: 'A vendor quote can only be allocated once.' });
-      const totalAmount = normalized.reduce((sum, item) => sum + item.allocationAmount, 0);
-
-      // Generate approval ID with reassignment indicator if applicable
-      const approvalIdPrefix = isReassignment ? 'RFQ-REASSIGN' : 'RFQ-AWARD';
-      const approvalId = `${approvalIdPrefix}-${rfq.rfqNumber}-${Date.now().toString().slice(-5)}`;
-
-      const awardWorkflow = await resolveWorkflowFromDB('RFQ Vendor Award', totalAmount, { currency: 'INR', cargoType: rfq.cargoDetails?.cargoType });
-
-      // Store previous award information for reassignment tracking
-      const previousAward = isReassignment && rfq.status === 'awarded' ? {
-        previousVendorId: rfq.awardedVendorId,
-        previousVendorName: rfq.awardedVendorName,
-        previousAllocatedQuantity: rfq.allocatedQuantity,
-        reassignedAt: new Date(),
-        reassignedBy: req.user?.name || req.user?.email || 'System Admin'
-      } : {};
-
-      const approval = await createApprovalRecord({
-        referenceId: approvalId,
-        type: 'RFQ Vendor Award',
-        vendorName: normalized.map((item) => item.vendorName).join(', '),
-        amountFormatted: `INR ${totalAmount}`,
-        poRef: rfq.poId,
-        requestedBy: req.user?.name || req.user?.email || 'System Admin',
-        requestedById: req.user?.id || req.user?.email,
-        requestId: req.headers['x-request-id'],
-        transactionSnapshot: {
-          rfqId: rfq.rfqId,
-          containers: allocated,
-          allocations: normalized,
-          totalAmount,
-          isReassignment,
-          ...previousAward
-        },
-        wf: awardWorkflow
-      });
-
-      approval.containersCount = allocated;
-      approval.allocations = normalized;
-      approval.remarks = isReassignment
-        ? `Container reassignment for ${rfq.rfqNumber} (Previous: ${rfq.awardedVendorName || 'N/A'})`
-        : `Container allocation for ${rfq.rfqNumber}`;
-      await approval.save();
-
-      const isFullReassignment = Boolean(isReassignment) && rfq.status === 'awarded' && (Number(rfq.allocatedQuantity) >= totalContainers);
-
-      // Preserve any previously-approved allocations from earlier cycles (unless this is a full reassignment after 100% completion)
-      const previouslyApprovedAllocations = isFullReassignment
-        ? []
-        : (rfq.get('awardAllocations') || []).filter(a => a.approved === true);
-      const previouslyAllocatedQty = previouslyApprovedAllocations.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
-
-      // Store reassignment history if this is a full reassignment
-      if (isFullReassignment) {
-        const reassignmentHistory = rfq.get('reassignmentHistory') || [];
-        reassignmentHistory.push({
-          reassignedAt: new Date(),
-          reassignedBy: req.user?.name || req.user?.email || 'System Admin',
-          previousVendorId: rfq.awardedVendorId,
-          previousVendorName: rfq.awardedVendorName,
-          previousAllocations: rfq.get('awardAllocations') || [],
-          previousAllocatedQuantity: rfq.allocatedQuantity,
-          newAllocations: normalized,
-          newAllocatedQuantity: allocated,
-          approvalId
-        });
-        rfq.set('reassignmentHistory', reassignmentHistory);
-      }
-
-      // New cycle: mark new allocations as pending, preserve previously-approved ones
-      const pendingAllocations = normalized.map(a => ({ ...a, approved: false, cycleApprovalId: approvalId }));
-      const combinedAllocations = [
-        ...previouslyApprovedAllocations,
-        ...pendingAllocations
-      ];
-
-      rfq.status = 'pending_approval';
-      rfq.totalQuantity = totalContainers;
-      // Preserve already-approved container count; pendingAllocation = only what's going for approval now
-      rfq.allocatedQuantity = previouslyAllocatedQty;
-      rfq.pendingAllocation = totalContainers - previouslyAllocatedQty;
-      rfq.set('awardAllocations', combinedAllocations);
-      rfq.set('awardApprovalId', approvalId);
-      await rfq.save();
-
-      const message = isReassignment
-        ? 'Vendor reassignment submitted for approval.'
-        : 'Vendor allocations submitted for approval.';
-
-      return res.json({ success: true, message, data: rfq, approvalId, isReassignment });
-    }
-
-    return res.status(400).json({ success: false, error: 'RFQ awards must be submitted through the configured approval workflow.' });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
 
 // ─── CUSTOMS BROKER & BL ASSIGNMENT ROUTES ──────────────────────────────────
+
 router.get('/custom-agents/bl-entries', optionalAuth, async (req, res) => {
   try {
     const entries = await RfqBlEntry.find().sort({ createdAt: -1 }).lean();
@@ -2963,9 +3118,6 @@ router.post('/customs-agent/clear', authenticateToken, async (req, res) => {
     if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
     const boeDocument = bl.documents.find((doc) => doc.docType === 'Customs Bill of Entry');
     if (!boeDocument) return res.status(400).json({ success: false, error: 'Upload the Bill of Entry document before marking customs cleared.' });
-    // Older/imported BL records stored the BOE document without a separate
-    // number. The document is sufficient for clearance, while new BOE uploads
-    // continue to require and persist the real BOE number.
     if (!bl.boeNumber) bl.boeReference = `DOCUMENT:${boeDocument.fileUrl}`;
 
     bl.status = 'custom_cleared';
@@ -3052,7 +3204,8 @@ router.post('/customs-agent/invoices', authenticateToken, async (req, res) => {
   }
 });
 
-// Dedicated Logistics Payments Endpoints - Returns ONLY Logistics Payments (LOG-), excluding BL Invoices
+// ─── LOGISTICS PAYMENTS ROUTES ──────────────────────────────────────────────
+
 router.get('/logistics-payments', optionalAuth, async (req, res) => {
   try {
     let items = await LogisticsPayment.find().sort({ createdAt: -1 }).lean();
@@ -3073,7 +3226,6 @@ router.get('/logistics-payments', optionalAuth, async (req, res) => {
 
       const app = await Approval.findOne({ $or: [{ id: ref }, { referenceNumber: ref }] }).lean();
 
-      // Logistics Payments (LOG) are directly approved without EXIM approval workflow
       let rawStatus = app?.status || item.status || 'Approved';
       let status = isLOG ? (rawStatus.toLowerCase().includes('pending') ? 'Approved' : rawStatus) : rawStatus;
       let currentStep = isLOG ? 1 : (app?.currentStep || item.currentStep || 1);
@@ -3102,7 +3254,6 @@ router.get('/logistics-payments', optionalAuth, async (req, res) => {
       };
     }));
 
-    // Filter out BLI records completely unless explicitly requested
     if (!includeBli) {
       filtered = filtered.filter(i => i.recordType === 'LOG');
     }
@@ -3144,7 +3295,6 @@ router.post('/logistics-payments', authenticateToken, async (req, res) => {
     const numAmount = Number(amount);
     const ref = `LOG-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // Direct Approval for Logistics Payments (no EXIM workflow required)
     const approval = await createApprovalRecord({
       referenceId: ref,
       type: 'Logistics Payment',
@@ -3158,7 +3308,6 @@ router.post('/logistics-payments', authenticateToken, async (req, res) => {
       wf: { status: 'Approved', currentStep: 1, totalSteps: 1, steps: [] }
     });
 
-    // Ensure approval record is created directly as Approved
     if (approval) {
       approval.status = 'Approved';
       approval.currentStep = 1;
@@ -3198,7 +3347,6 @@ router.post('/logistics-payments', authenticateToken, async (req, res) => {
   }
 });
 
-// Bulk Delete All BLI Data
 router.delete('/logistics-payments/clear-bli', authenticateToken, async (req, res) => {
   try {
     const bliQuery = {
@@ -3229,7 +3377,6 @@ router.delete('/logistics-payments/clear-bli', authenticateToken, async (req, re
   }
 });
 
-// Single Record Delete
 router.delete('/logistics-payments/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -3253,131 +3400,13 @@ router.delete('/logistics-payments/:id', authenticateToken, async (req, res) => 
   }
 });
 
-const uploadMiddleware = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
-
-// POST /api/p2p/upload-file - Uploads physical binary file to AWS S3 or server storage
-router.post('/upload-file', optionalAuth, uploadMiddleware.single('file'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded.' });
-
-    const folder = req.body.folder || 'documents';
-    const storageResult = await uploadToS3(
-      req.file.buffer,
-      req.file.originalname,
-      req.file.mimetype,
-      folder
-    );
-
-    return res.status(200).json({
-      success: true,
-      message: 'File uploaded successfully to storage.',
-      fileUrl: storageResult.url,
-      fileName: storageResult.key || req.file.originalname,
-      originalName: req.file.originalname,
-      size: storageResult.size,
-      storage: storageResult.storage
-    });
-  } catch (err) {
-    console.error('[Upload API] File upload error:', err);
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// GET /api/p2p/download-file - Streams original uploaded file from AWS S3 or server storage
-router.get('/download-file', optionalAuth, async (req, res) => {
-  try {
-    const rawTarget = req.query.fileUrl || req.query.url || req.query.name;
-    if (!rawTarget) return res.status(400).json({ success: false, error: 'File path or name required.' });
-
-    const cleanTarget = String(rawTarget).trim();
-    const filename = path.basename(cleanTarget);
-
-    // 1) Check AWS S3 storage presigned URL (only if key actually exists in S3)
-    try {
-      if (typeof fileExistsInS3 === 'function' && typeof getDownloadUrl === 'function') {
-        const existsInS3 = await fileExistsInS3(cleanTarget);
-        if (existsInS3) {
-          const s3Url = await getDownloadUrl(cleanTarget, 3600);
-          if (s3Url) return res.redirect(s3Url);
-        }
-      }
-    } catch (_) { }
-
-    // 2) Check local disk storage inside server/uploads
-    let localPath = toLocalPath(cleanTarget);
-    if (!localPath || !fs.existsSync(localPath)) {
-      const findFile = (dir) => {
-        if (!fs.existsSync(dir)) return null;
-        const entries = fs.readdirSync(dir, { withFileTypes: true });
-        for (const entry of entries) {
-          const fullPath = path.join(dir, entry.name);
-          if (entry.isDirectory()) {
-            const found = findFile(fullPath);
-            if (found) return found;
-          } else if (entry.name.toLowerCase() === filename.toLowerCase() || entry.name.toLowerCase().includes(filename.toLowerCase())) {
-            return fullPath;
-          }
-        }
-        return null;
-      };
-      localPath = findFile(UPLOAD_DIR);
-    }
-
-    if (localPath && fs.existsSync(localPath)) {
-      return res.download(localPath, filename);
-    }
-
-    // 3) Fallback Binary Stream Generator (Valid DOCX, XLSX, Image, PDF buffers for legacy or sample document entries)
-    const lowerName = filename.toLowerCase();
-
-    if (lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) {
-      const docxBuffer = Buffer.from(
-        'PK\x03\x04\x14\x00\x06\x00\x08\x00\x00\x00!\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00[Content_Types].xml',
-        'binary'
-      );
-      res.setHeader('Content-Type', lowerName.endsWith('.docx')
-        ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        : 'application/msword');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      return res.send(docxBuffer);
-    }
-
-    if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')) {
-      const xlsxBuffer = Buffer.from('PK\x03\x04\x14\x00\x06\x00\x08\x00\x00\x00', 'binary');
-      res.setHeader('Content-Type', lowerName.endsWith('.xlsx')
-        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        : 'application/vnd.ms-excel');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      return res.send(xlsxBuffer);
-    }
-
-    if (lowerName.endsWith('.png') || lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) {
-      const pngBuffer = Buffer.from(
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-        'base64'
-      );
-      res.setHeader('Content-Type', lowerName.endsWith('.png') ? 'image/png' : 'image/jpeg');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      return res.send(pngBuffer);
-    } else {
-      const pdfBuffer = Buffer.from(
-        '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<<>>>>endobj\nxref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n0000000052 00000 n\n0000000101 00000 n\ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n178\n%%EOF\n'
-      );
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename.endsWith('.pdf') ? filename : filename + '.pdf'}"`);
-      return res.send(pdfBuffer);
-    }
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
+// ─── BL INVOICES ROUTES ──────────────────────────────────────────────────────
 
 router.get('/bl-invoices', optionalAuth, async (req, res) => {
   try {
     let itemsFromBlColl = await BlInvoice.find().sort({ createdAt: -1 }).lean();
     let legacyBlItems = await LogisticsPayment.find({ $or: [{ referenceNumber: /^BLI-/ }, { logisticsPaymentId: /^BLI-/ }] }).sort({ createdAt: -1 }).lean();
 
-    // Merge and deduplicate by reference number
     const seenRefs = new Set();
     let items = [];
     for (const item of [...itemsFromBlColl, ...legacyBlItems]) {
@@ -3404,7 +3433,6 @@ router.get('/bl-invoices', optionalAuth, async (req, res) => {
       const amount = item.totalAmount || item.amount || 0;
       const currency = item.currency || 'INR';
 
-      // Dynamic lookup of Approval engine document in MongoDB
       const app = await Approval.findOne({ $or: [{ id: item.referenceNumber }, { id: item.logisticsPaymentId }] }).lean();
 
       let status = app?.status || item.status || 'Pending EXIM Approval';
@@ -3575,7 +3603,6 @@ router.post('/bl-invoices/:id/action', authenticateToken, async (req, res) => {
 
     await invoice.save();
 
-    // Sync Approval Engine record
     try {
       const appRecord = await Approval.findOne({ referenceNumber: invoice.referenceNumber });
       if (appRecord) {
@@ -3585,7 +3612,6 @@ router.post('/bl-invoices/:id/action', authenticateToken, async (req, res) => {
       }
     } catch (_) { }
 
-    // Record Workflow Audit
     try {
       await WorkflowAudit.create({
         entityType: 'LogisticsPayment',
@@ -3607,130 +3633,8 @@ router.post('/bl-invoices/:id/action', authenticateToken, async (req, res) => {
   }
 });
 
-// ── GET Audit Trail for any record ID ─────────────────────────────────────
-router.get('/audit/:entityId', optionalAuth, async (req, res) => {
-  try {
-    const { entityId } = req.params;
-    const matcher = new RegExp(escapeRegex(entityId), 'i');
+// ─── CUSTOM DUTIES CRUD ROUTES ─────────────────────────────────────────────
 
-    // 1. Resolve related document identifiers
-    const [invDoc, advDoc, rfqDoc, poDoc, appDoc] = await Promise.all([
-      InvoicePayment.findOne({ $or: [{ invoicePaymentId: entityId }, { invoiceNumber: entityId }, { invoicePaymentId: matcher }, { invoiceNumber: matcher }] }).lean().catch(() => null),
-      AdvancePayment.findOne({ $or: [{ advanceId: entityId }, { advanceId: matcher }] }).lean().catch(() => null),
-      RfqHeader.findOne({ $or: [{ rfqId: entityId }, { rfqNumber: entityId }, { rfqId: matcher }, { rfqNumber: matcher }] }).lean().catch(() => null),
-      PurchaseOrder.findOne({ $or: [{ poNumber: entityId }, { sapPoNumber: entityId }, { poNumber: matcher }, { sapPoNumber: matcher }] }).lean().catch(() => null),
-      Approval.findOne({ $or: [{ id: entityId }, { id: matcher }, { referenceNumber: entityId }, { poReference: entityId }] }).lean().catch(() => null)
-    ]);
-
-    const idSet = new Set([
-      entityId,
-      invDoc?.invoicePaymentId, invDoc?.invoiceNumber, invDoc?.poId, invDoc?.sapPoNumber,
-      advDoc?.advanceId, advDoc?.poId, advDoc?.sapPoNumber,
-      rfqDoc?.rfqId, rfqDoc?.rfqNumber, rfqDoc?.linkedPoId,
-      poDoc?.poNumber, poDoc?.sapPoNumber, poDoc?.id,
-      appDoc?.id, appDoc?.referenceNumber, appDoc?.poReference
-    ].filter(Boolean).map(String));
-
-    const idList = Array.from(idSet);
-    const regexList = idList.map((val) => new RegExp(escapeRegex(val), 'i'));
-
-    const [rawAudits, approvalDocs] = await Promise.all([
-      WorkflowAudit.find({
-        $or: [
-          { entityId: { $in: idList } },
-          { referenceNumber: { $in: idList } },
-          { workflowId: { $in: idList } },
-          { entityId: { $in: regexList } },
-          { referenceNumber: { $in: regexList } }
-        ]
-      }).sort({ createdAt: -1, occurredAt: -1 }).lean(),
-      Approval.find({
-        $or: [
-          { id: { $in: idList } },
-          { referenceNumber: { $in: idList } },
-          { poReference: { $in: idList } },
-          { id: { $in: regexList } }
-        ]
-      }).lean()
-    ]);
-
-    const approvalActionLogs = approvalDocs.flatMap((doc) =>
-      (doc.actionHistory || []).map((act, idx) => ({
-        _id: `act-${doc.id}-${idx}`,
-        eventId: `act-${doc.id}-${idx}`,
-        eventType: (act.action || 'APPROVAL_STEP').toUpperCase(),
-        action: act.action || 'Approval Action',
-        actorName: act.performedBy || act.actorName || 'Approver',
-        actorRole: act.role || act.actorRole || 'Approver',
-        remarks: act.remarks || act.reason || `Action "${act.action}" taken on step ${act.step || idx + 1}`,
-        createdAt: act.timestamp || act.occurredAt || doc.updatedAt || Date.now(),
-        occurredAt: act.timestamp || act.occurredAt || doc.updatedAt || Date.now()
-      }))
-    );
-
-    // Build creation/submission record if no explicit audit exists
-    const fallbackEvents = [];
-    if (invDoc && !rawAudits.some(a => (a.action || '').toLowerCase().includes('submit') || (a.action || '').toLowerCase().includes('create'))) {
-      fallbackEvents.push({
-        _id: `sys-create-${invDoc.invoicePaymentId}`,
-        eventType: 'INVOICE_SUBMITTED',
-        action: 'submit',
-        actorName: invDoc.createdBy || 'Finance Team',
-        actorRole: 'Requester',
-        remarks: `Invoice Payment request "${invDoc.invoicePaymentId}" (${invDoc.invoiceNumber}) submitted.`,
-        createdAt: invDoc.createdAt || Date.now()
-      });
-    }
-
-    if (advDoc && !rawAudits.some(a => (a.action || '').toLowerCase().includes('submit') || (a.action || '').toLowerCase().includes('create'))) {
-      fallbackEvents.push({
-        _id: `sys-create-${advDoc.advanceId}`,
-        eventType: 'ADVANCE_SUBMITTED',
-        action: 'submit',
-        actorName: advDoc.createdBy || 'Finance Team',
-        actorRole: 'Requester',
-        remarks: `Advance Payment request "${advDoc.advanceId}" submitted.`,
-        createdAt: advDoc.createdAt || Date.now()
-      });
-    }
-
-    if (rfqDoc && !rawAudits.some(a => (a.action || '').toLowerCase().includes('create') || (a.action || '').toLowerCase().includes('publish'))) {
-      fallbackEvents.push({
-        _id: `sys-create-${rfqDoc.rfqId}`,
-        eventType: 'RFQ_CREATED',
-        action: 'create',
-        actorName: rfqDoc.createdBy || 'System Admin',
-        actorRole: 'Procurement Head',
-        remarks: `Freight RFQ "${rfqDoc.rfqNumber}" (${rfqDoc.title}) published.`,
-        createdAt: rfqDoc.createdAt || Date.now()
-      });
-    }
-
-    // Deduplicate and sort chronologically
-    const seen = new Set();
-    const combined = [];
-    for (const log of [...rawAudits, ...approvalActionLogs, ...fallbackEvents]) {
-      const key = `${log.action || log.eventType}-${log.createdAt || log.occurredAt}-${log.actorName}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        combined.push(log);
-      }
-    }
-
-    combined.sort((a, b) => new Date(b.createdAt || b.occurredAt || 0).getTime() - new Date(a.createdAt || a.occurredAt || 0).getTime());
-
-    return res.json({
-      success: true,
-      entityId,
-      count: combined.length,
-      auditLogs: combined
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// CUSTOM DUTIES CRUD ROUTES
 router.get('/custom-duties', optionalAuth, async (req, res) => {
   try {
     const duties = await CustomDutyPayment.find().sort({ createdAt: -1 }).lean();
@@ -3792,6 +3696,541 @@ router.delete('/custom-duties/:id', authenticateToken, async (req, res) => {
     const duty = await CustomDutyPayment.findOneAndDelete({ $or: [{ dutyId: req.params.id }, { _id: req.params.id }] });
     if (!duty) return res.status(404).json({ success: false, error: 'Custom Duty record not found.' });
     return res.json({ success: true, message: 'Custom Duty record deleted successfully.' });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── FILE UPLOAD/DOWNLOAD ROUTES ────────────────────────────────────────────
+
+const uploadMiddleware = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+
+router.post('/upload-file', optionalAuth, uploadMiddleware.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded.' });
+
+    const folder = req.body.folder || 'documents';
+    const storageResult = await uploadToS3(
+      req.file.buffer,
+      req.file.originalname,
+      req.file.mimetype,
+      folder
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'File uploaded successfully to storage.',
+      fileUrl: storageResult.url,
+      fileName: storageResult.key || req.file.originalname,
+      originalName: req.file.originalname,
+      size: storageResult.size,
+      storage: storageResult.storage
+    });
+  } catch (err) {
+    console.error('[Upload API] File upload error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/download-file', optionalAuth, async (req, res) => {
+  try {
+    const rawTarget = req.query.fileUrl || req.query.url || req.query.name;
+    if (!rawTarget) return res.status(400).json({ success: false, error: 'File path or name required.' });
+
+    const cleanTarget = String(rawTarget).trim();
+    const filename = path.basename(cleanTarget);
+
+    try {
+      if (typeof fileExistsInS3 === 'function' && typeof getDownloadUrl === 'function') {
+        const existsInS3 = await fileExistsInS3(cleanTarget);
+        if (existsInS3) {
+          const s3Url = await getDownloadUrl(cleanTarget, 3600);
+          if (s3Url) return res.redirect(s3Url);
+        }
+      }
+    } catch (_) { }
+
+    let localPath = toLocalPath(cleanTarget);
+    if (!localPath || !fs.existsSync(localPath)) {
+      const findFile = (dir) => {
+        if (!fs.existsSync(dir)) return null;
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            const found = findFile(fullPath);
+            if (found) return found;
+          } else if (entry.name.toLowerCase() === filename.toLowerCase() || entry.name.toLowerCase().includes(filename.toLowerCase())) {
+            return fullPath;
+          }
+        }
+        return null;
+      };
+      localPath = findFile(UPLOAD_DIR);
+    }
+
+    if (localPath && fs.existsSync(localPath)) {
+      return res.download(localPath, filename);
+    }
+
+    const lowerName = filename.toLowerCase();
+
+    if (lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) {
+      const docxBuffer = Buffer.from(
+        'PK\x03\x04\x14\x00\x06\x00\x08\x00\x00\x00!\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00[Content_Types].xml',
+        'binary'
+      );
+      res.setHeader('Content-Type', lowerName.endsWith('.docx')
+        ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        : 'application/msword');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(docxBuffer);
+    }
+
+    if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')) {
+      const xlsxBuffer = Buffer.from('PK\x03\x04\x14\x00\x06\x00\x08\x00\x00\x00', 'binary');
+      res.setHeader('Content-Type', lowerName.endsWith('.xlsx')
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'application/vnd.ms-excel');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(xlsxBuffer);
+    }
+
+    if (lowerName.endsWith('.png') || lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) {
+      const pngBuffer = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64'
+      );
+      res.setHeader('Content-Type', lowerName.endsWith('.png') ? 'image/png' : 'image/jpeg');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(pngBuffer);
+    } else {
+      const pdfBuffer = Buffer.from(
+        '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<<>>>>endobj\nxref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n0000000052 00000 n\n0000000101 00000 n\ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n178\n%%EOF\n'
+      );
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename.endsWith('.pdf') ? filename : filename + '.pdf'}"`);
+      return res.send(pdfBuffer);
+    }
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── AUDIT TRAIL ─────────────────────────────────────────────────────────────
+
+router.get('/audit/:entityId', optionalAuth, async (req, res) => {
+  try {
+    const { entityId } = req.params;
+    const matcher = new RegExp(escapeRegex(entityId), 'i');
+
+    const [invDoc, advDoc, rfqDoc, poDoc, appDoc] = await Promise.all([
+      InvoicePayment.findOne({ $or: [{ invoicePaymentId: entityId }, { invoiceNumber: entityId }, { invoicePaymentId: matcher }, { invoiceNumber: matcher }] }).lean().catch(() => null),
+      AdvancePayment.findOne({ $or: [{ advanceId: entityId }, { advanceId: matcher }] }).lean().catch(() => null),
+      RfqHeader.findOne({ $or: [{ rfqId: entityId }, { rfqNumber: entityId }, { rfqId: matcher }, { rfqNumber: matcher }] }).lean().catch(() => null),
+      PurchaseOrder.findOne({ $or: [{ poNumber: entityId }, { sapPoNumber: entityId }, { poNumber: matcher }, { sapPoNumber: matcher }] }).lean().catch(() => null),
+      Approval.findOne({ $or: [{ id: entityId }, { id: matcher }, { referenceNumber: entityId }, { poReference: entityId }] }).lean().catch(() => null)
+    ]);
+
+    const idSet = new Set([
+      entityId,
+      invDoc?.invoicePaymentId, invDoc?.invoiceNumber, invDoc?.poId, invDoc?.sapPoNumber,
+      advDoc?.advanceId, advDoc?.poId, advDoc?.sapPoNumber,
+      rfqDoc?.rfqId, rfqDoc?.rfqNumber, rfqDoc?.linkedPoId,
+      poDoc?.poNumber, poDoc?.sapPoNumber, poDoc?.id,
+      appDoc?.id, appDoc?.referenceNumber, appDoc?.poReference
+    ].filter(Boolean).map(String));
+
+    const idList = Array.from(idSet);
+    const regexList = idList.map((val) => new RegExp(escapeRegex(val), 'i'));
+
+    const [rawAudits, approvalDocs] = await Promise.all([
+      WorkflowAudit.find({
+        $or: [
+          { entityId: { $in: idList } },
+          { referenceNumber: { $in: idList } },
+          { workflowId: { $in: idList } },
+          { entityId: { $in: regexList } },
+          { referenceNumber: { $in: regexList } }
+        ]
+      }).sort({ createdAt: -1, occurredAt: -1 }).lean(),
+      Approval.find({
+        $or: [
+          { id: { $in: idList } },
+          { referenceNumber: { $in: idList } },
+          { poReference: { $in: idList } },
+          { id: { $in: regexList } }
+        ]
+      }).lean()
+    ]);
+
+    const approvalActionLogs = approvalDocs.flatMap((doc) =>
+      (doc.actionHistory || []).map((act, idx) => ({
+        _id: `act-${doc.id}-${idx}`,
+        eventId: `act-${doc.id}-${idx}`,
+        eventType: (act.action || 'APPROVAL_STEP').toUpperCase(),
+        action: act.action || 'Approval Action',
+        actorName: act.performedBy || act.actorName || 'Approver',
+        actorRole: act.role || act.actorRole || 'Approver',
+        remarks: act.remarks || act.reason || `Action "${act.action}" taken on step ${act.step || idx + 1}`,
+        createdAt: act.timestamp || act.occurredAt || doc.updatedAt || Date.now(),
+        occurredAt: act.timestamp || act.occurredAt || doc.updatedAt || Date.now()
+      }))
+    );
+
+    const fallbackEvents = [];
+    if (invDoc && !rawAudits.some(a => (a.action || '').toLowerCase().includes('submit') || (a.action || '').toLowerCase().includes('create'))) {
+      fallbackEvents.push({
+        _id: `sys-create-${invDoc.invoicePaymentId}`,
+        eventType: 'INVOICE_SUBMITTED',
+        action: 'submit',
+        actorName: invDoc.createdBy || 'Finance Team',
+        actorRole: 'Requester',
+        remarks: `Invoice Payment request "${invDoc.invoicePaymentId}" (${invDoc.invoiceNumber}) submitted.`,
+        createdAt: invDoc.createdAt || Date.now()
+      });
+    }
+
+    if (advDoc && !rawAudits.some(a => (a.action || '').toLowerCase().includes('submit') || (a.action || '').toLowerCase().includes('create'))) {
+      fallbackEvents.push({
+        _id: `sys-create-${advDoc.advanceId}`,
+        eventType: 'ADVANCE_SUBMITTED',
+        action: 'submit',
+        actorName: advDoc.createdBy || 'Finance Team',
+        actorRole: 'Requester',
+        remarks: `Advance Payment request "${advDoc.advanceId}" submitted.`,
+        createdAt: advDoc.createdAt || Date.now()
+      });
+    }
+
+    if (rfqDoc && !rawAudits.some(a => (a.action || '').toLowerCase().includes('create') || (a.action || '').toLowerCase().includes('publish'))) {
+      fallbackEvents.push({
+        _id: `sys-create-${rfqDoc.rfqId}`,
+        eventType: 'RFQ_CREATED',
+        action: 'create',
+        actorName: rfqDoc.createdBy || 'System Admin',
+        actorRole: 'Procurement Head',
+        remarks: `Freight RFQ "${rfqDoc.rfqNumber}" (${rfqDoc.title}) published.`,
+        createdAt: rfqDoc.createdAt || Date.now()
+      });
+    }
+
+    const seen = new Set();
+    const combined = [];
+    for (const log of [...rawAudits, ...approvalActionLogs, ...fallbackEvents]) {
+      const key = `${log.action || log.eventType}-${log.createdAt || log.occurredAt}-${log.actorName}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        combined.push(log);
+      }
+    }
+
+    combined.sort((a, b) => new Date(b.createdAt || b.occurredAt || 0).getTime() - new Date(a.createdAt || a.occurredAt || 0).getTime());
+
+    return res.json({
+      success: true,
+      entityId,
+      count: combined.length,
+      auditLogs: combined
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── DASHBOARD ANALYTICS ─────────────────────────────────────────────────────
+
+router.get('/dashboard/analytics', optionalAuth, async (req, res) => {
+  try {
+    const appReg = /approved|dispatched|paid/i;
+    const range = (req.query.range || '7d').toLowerCase();
+
+    let daysCount = 7;
+    if (range === '30d') daysCount = 30;
+    else if (range === '90d') daysCount = 90;
+    else if (range === '1y') daysCount = 365;
+
+    const now = new Date();
+    const rangeStartDate = new Date(now.getTime() - daysCount * 24 * 60 * 60 * 1000);
+    const prevPeriodStartDate = new Date(now.getTime() - (daysCount * 2) * 24 * 60 * 60 * 1000);
+
+    const [
+      poCount,
+      prevPoCount,
+      pendingCount,
+      rfqCount,
+      prevRfqCount,
+      rfqAwardedCount,
+      rfqDraftCount,
+      rfqPublishedCount,
+      blCount,
+      blClearedCount,
+      vendorCount,
+      activeUserCount,
+      advancesList,
+      invoicesList,
+      dutiesList,
+      blInvoicesList,
+      pendingList,
+      allApprovals,
+      recentPos,
+      recentRfqs
+    ] = await Promise.all([
+      PurchaseOrder.countDocuments().catch(() => 0),
+      PurchaseOrder.countDocuments({ createdAt: { $gte: prevPeriodStartDate, $lt: rangeStartDate } }).catch(() => 0),
+      Approval.countDocuments({ status: { $nin: ['Approved & Dispatched', 'Approved', 'Rejected'] } }).catch(() => 0),
+      RfqHeader.countDocuments().catch(() => 0),
+      RfqHeader.countDocuments({ createdAt: { $gte: prevPeriodStartDate, $lt: rangeStartDate } }).catch(() => 0),
+      RfqHeader.countDocuments({ status: 'awarded' }).catch(() => 0),
+      RfqHeader.countDocuments({ status: 'draft' }).catch(() => 0),
+      RfqHeader.countDocuments({ status: { $in: ['published', 'active', 'open'] } }).catch(() => 0),
+      BlInvoice.countDocuments().catch(() => 0),
+      BlInvoice.countDocuments({ status: { $in: ['cleared', 'Customs Cleared', 'Approved', 'Approved & Dispatched'] } }).catch(() => 0),
+      Vendor.countDocuments().catch(() => 0),
+      User.countDocuments({ status: 'Active' }).catch(() => 0),
+      AdvancePayment.find().lean().catch(() => []),
+      InvoicePayment.find().lean().catch(() => []),
+      CustomDutyPayment.find().lean().catch(() => []),
+      BlInvoice.find().lean().catch(() => []),
+      Approval.find({ status: { $nin: ['Approved & Dispatched', 'Approved', 'Rejected'] } }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
+      Approval.find().lean().catch(() => []),
+      PurchaseOrder.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
+      RfqHeader.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => [])
+    ]);
+
+    const approvedAdvances = advancesList.filter(a => appReg.test(a.status || ''));
+    const approvedInvoices = invoicesList.filter(i => appReg.test(i.status || ''));
+    const approvedDuties = dutiesList.filter(d => appReg.test(d.status || ''));
+
+    const sumAdvances = approvedAdvances.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
+    const sumInvoices = approvedInvoices.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
+    const sumDuties = approvedDuties.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
+
+    const approvalPipeline = {
+      advance: {
+        pending: advancesList.filter(a => !appReg.test(a.status || '') && !(a.status || '').toLowerCase().includes('reject')).length,
+        approved: approvedAdvances.length,
+        rejected: advancesList.filter(a => (a.status || '').toLowerCase().includes('reject')).length
+      },
+      invoice: {
+        pending: invoicesList.filter(i => !appReg.test(i.status || '') && !(i.status || '').toLowerCase().includes('reject')).length,
+        approved: approvedInvoices.length,
+        rejected: invoicesList.filter(i => (i.status || '').toLowerCase().includes('reject')).length
+      },
+      rfq: {
+        pending: allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && !appReg.test(a.status || '')).length,
+        approved: rfqAwardedCount || allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && appReg.test(a.status || '')).length,
+        rejected: allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && (a.status || '').toLowerCase().includes('reject')).length
+      },
+      blInvoice: {
+        pending: blInvoicesList.filter(b => !appReg.test(b.status || '') && !(b.status || '').toLowerCase().includes('reject')).length,
+        approved: blInvoicesList.filter(b => appReg.test(b.status || '')).length,
+        rejected: blInvoicesList.filter(b => (b.status || '').toLowerCase().includes('reject')).length
+      }
+    };
+
+    const inrInvoices = invoicesList.filter(i => (i.currency || 'INR').toUpperCase() === 'INR').length;
+    const usdInvoices = invoicesList.filter(i => (i.currency || '').toUpperCase() === 'USD').length;
+    const inrAdvances = advancesList.filter(a => (a.currency || 'INR').toUpperCase() === 'INR').length;
+    const usdAdvances = advancesList.filter(a => (a.currency || '').toUpperCase() === 'USD').length;
+
+    const currencyDistribution = {
+      inrTxns: inrInvoices + inrAdvances,
+      usdTxns: usdInvoices + usdAdvances,
+      inrAdvances,
+      usdAdvances,
+      inrInvoices,
+      usdInvoices
+    };
+
+    const statusMix = {
+      draft: allApprovals.filter(a => (a.status || '').toLowerCase().includes('draft')).length,
+      pending: pendingCount || allApprovals.filter(a => (a.status || '').toLowerCase().includes('pending')).length,
+      approved: allApprovals.filter(a => appReg.test(a.status || '')).length,
+      rejected: allApprovals.filter(a => (a.status || '').toLowerCase().includes('reject')).length,
+      total: allApprovals.length
+    };
+
+    const poTrend = prevPoCount > 0 ? Math.round(((poCount - prevPoCount) / prevPoCount) * 100) : 0;
+    const rfqTrend = prevRfqCount > 0 ? Math.round(((rfqCount - prevRfqCount) / prevRfqCount) * 100) : 0;
+
+    const monthNames6 = [];
+    for (let i = 5; i >= 0; i--) {
+      const mDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      monthNames6.push({
+        label: mDate.toLocaleDateString('en-IN', { month: 'short' }),
+        start: mDate,
+        end: new Date(mDate.getFullYear(), mDate.getMonth() + 1, 1)
+      });
+    }
+
+    const last6MonthsActivity = await Promise.all(
+      monthNames6.map(async ({ label, start, end }) => {
+        const query = { createdAt: { $gte: start, $lt: end } };
+        const [advCount, invCount, rCount, bCount] = await Promise.all([
+          AdvancePayment.countDocuments(query).catch(() => 0),
+          InvoicePayment.countDocuments(query).catch(() => 0),
+          RfqHeader.countDocuments(query).catch(() => 0),
+          RfqBlEntry.countDocuments(query).catch(() => 0),
+        ]);
+        return {
+          month: label,
+          Advances: advCount,
+          Invoices: invCount,
+          RFQs: rCount,
+          BlEntries: bCount
+        };
+      })
+    );
+
+    const stepCount = daysCount <= 7 ? 7 : daysCount <= 30 ? 6 : 6;
+    const intervalMs = (daysCount * 24 * 60 * 60 * 1000) / stepCount;
+
+    const chartData = await Promise.all(
+      Array.from({ length: stepCount }, (_, i) => {
+        const stepStart = new Date(rangeStartDate.getTime() + i * intervalMs);
+        const stepEnd = new Date(stepStart.getTime() + intervalMs);
+        const queryRange = { createdAt: { $gte: stepStart, $lt: stepEnd } };
+
+        let label = '';
+        if (daysCount <= 7) {
+          label = stepStart.toLocaleDateString('en-IN', { weekday: 'short' });
+        } else if (daysCount <= 30) {
+          label = `W${i + 1} (${stepStart.getDate()} ${stepStart.toLocaleDateString('en-IN', { month: 'short' })})`;
+        } else {
+          label = stepStart.toLocaleDateString('en-IN', { month: 'short' });
+        }
+
+        return Promise.all([
+          PurchaseOrder.countDocuments(queryRange).catch(() => 0),
+          InvoicePayment.countDocuments(queryRange).catch(() => 0),
+          RfqHeader.countDocuments(queryRange).catch(() => 0),
+          AdvancePayment.countDocuments(queryRange).catch(() => 0),
+        ]).then(([pos, invoices, rfqs, advances]) => ({
+          label,
+          pos,
+          invoices,
+          rfqs,
+          advances,
+        }));
+      })
+    );
+
+    const recentActivity = [];
+
+    recentPos.forEach(po => {
+      recentActivity.push({
+        badge: 'PO',
+        badgeColor: 'blue',
+        code: po.poNumber || `PO-${po.id}`,
+        date: new Date(po.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+        title: po.supplierName ? `PO for ${po.supplierName}` : `Purchase Order #${po.poNumber || po.id}`
+      });
+    });
+
+    recentRfqs.forEach(rfq => {
+      recentActivity.push({
+        badge: 'RFQ',
+        badgeColor: 'green',
+        code: rfq.rfqNumber || `RFQ-${rfq.id}`,
+        date: new Date(rfq.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+        title: rfq.title || 'RFQ Logistics Sourcing'
+      });
+    });
+
+    advancesList.slice(0, 3).forEach(adv => {
+      recentActivity.push({
+        badge: 'ADVANCE',
+        badgeColor: 'teal',
+        code: adv.advanceNumber || `ADV-${adv.id}`,
+        date: new Date(adv.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+        title: adv.vendorName ? `Advance to ${adv.vendorName}` : 'Advance Request'
+      });
+    });
+
+    recentActivity.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    const formatINR = (val) => {
+      if (!val || val === 0) return '₹0';
+      if (val >= 10000000) return `₹${(val / 10000000).toFixed(2)} Cr`;
+      if (val >= 100000) return `₹${(val / 100000).toFixed(2)} L`;
+      if (val >= 1000) return `₹${(val / 1000).toFixed(1)}K`;
+      return `₹${val.toLocaleString()}`;
+    };
+
+    return res.json({
+      success: true,
+      range,
+      stats: {
+        purchaseOrders: poCount,
+        purchaseOrdersSub: `${poCount} open`,
+        poTrend,
+        pendingApprovals: pendingCount,
+        pendingApprovalsSub: 'Awaiting action',
+        rfqs: rfqCount,
+        rfqsSub: `${rfqAwardedCount} awarded`,
+        rfqTrend,
+        blEntries: blCount,
+        blEntriesSub: `${blClearedCount} cleared`,
+        activeVendors: vendorCount,
+        activeVendorsSub: 'Supplier base',
+        advancesPaid: formatINR(sumAdvances),
+        advancesPaidSub: 'Released payments',
+        invoicesPaid: formatINR(sumInvoices),
+        invoicesPaidSub: 'Completed Invoices',
+        dutyPaid: formatINR(sumDuties),
+        dutyPaidSub: 'Cleared duties'
+      },
+      last6MonthsActivity,
+      paymentStatusMix: statusMix,
+      currencyDistribution,
+      approvalPipeline,
+      rfqFunnel: {
+        draft: rfqDraftCount,
+        sent: 0,
+        quoted: 0,
+        awarded: rfqAwardedCount,
+        closed: 0,
+        total: rfqCount
+      },
+      blPipeline: {
+        assigned: blInvoicesList.filter(b => /assign/i.test(b.status || '')).length,
+        cleared: blInvoicesList.filter(b => /clear|customs/i.test(b.status || '')).length,
+        invPending: blInvoicesList.filter(b => /pending|draft|exim/i.test(b.status || '')).length,
+        pmtReq: blInvoicesList.filter(b => /pmt|req|payment/i.test(b.status || '')).length,
+        approved: blInvoicesList.filter(b => /approved/i.test(b.status || '')).length,
+        paid: blInvoicesList.filter(b => /paid|dispatched/i.test(b.status || '')).length,
+        total: blInvoicesList.length || blCount
+      },
+      recentPendingApprovals: [
+        ...pendingList.map(a => ({
+          id: a.id || a.approvalId || 'REQ-01',
+          stepText: `Step ${a.currentStep || 1}/${a.totalSteps || 1}`,
+          dateText: new Date(a.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+          type: a.type || 'Approval',
+        })),
+        ...blInvoicesList.filter(b => !appReg.test(b.status || '') && !(b.status || '').toLowerCase().includes('reject')).map(b => ({
+          id: b.blId || b.blNumber || b.referenceNo || 'BLI-ENTRY',
+          stepText: `Step ${b.currentStep || 1}/${b.totalSteps || 1}`,
+          dateText: new Date(b.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+          type: 'BL Freight Invoice'
+        }))
+      ].slice(0, 6),
+      recentActivity: recentActivity.slice(0, 8)
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── WORKFLOW PREVIEW ────────────────────────────────────────────────────────
+
+router.get('/workflows/preview', async (req, res) => {
+  try {
+    const moduleType = req.query.module || 'Advance Payment';
+    const amount = Number(req.query.amount) || 0;
+    const wf = await resolveWorkflowFromDB(moduleType, amount, req.query);
+    return res.json({ success: true, workflow: wf });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
