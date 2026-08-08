@@ -874,10 +874,10 @@ const getAdvancesHandler = async (req, res) => {
     collectChildren(loggedInUserId);
 
     // ==================================================
-    // 5. BUILD ALLOWED USER NAMES
-    //
-    // AdvancePayment.createdBy stores NAME
+    // 5. BUILD ALLOWED USER NAMES & IDS
     // ==================================================
+
+    const scope = String(req.query.scope || 'team').toLowerCase().trim();
 
     const allowedUsers = [
       loginUser,
@@ -892,37 +892,38 @@ const getAdvancesHandler = async (req, res) => {
       )
     ];
 
-    console.log(
-      "Logged-in user:",
-      loginUser.name
-    );
-
-    console.log(
-      "Allowed users:",
-      allowedUsers.map((u) => ({
-        id: u.id,
-        name: u.name,
-        managerId: u.managerId
-      }))
-    );
-
-    console.log(
-      "Allowed user names:",
-      allowedUserNames
-    );
+    const allowedUserIds = [
+      ...new Set(
+        allowedUsers
+          .map((user) => user.id)
+          .filter(Boolean)
+      )
+    ];
 
     // ==================================================
-    // 6. ADVANCE PAYMENT FILTER
+    // 6. ADVANCE PAYMENT SCOPE FILTER
     // ==================================================
 
     const filter = {
-      isDeleted: { $ne: true },
-
-      // AdvancePayment stores createdBy = NAME
-      createdBy: {
-        $in: allowedUserNames
-      }
+      isDeleted: { $ne: true }
     };
+
+    if (scope === 'my') {
+      filter.$or = [
+        { createdBy: loginUser.name },
+        { createdById: loggedInUserId },
+        { requestedById: loggedInUserId },
+        { userId: loggedInUserId }
+      ];
+    } else if (scope === 'team') {
+      filter.$or = [
+        { createdBy: { $in: allowedUserNames } },
+        { createdById: { $in: allowedUserIds } },
+        { requestedById: { $in: allowedUserIds } },
+        { userId: { $in: allowedUserIds } }
+      ];
+    }
+    // If scope === 'all', no createdBy restriction (shows all records)
 
     // ==================================================
     // 7. SEARCH
@@ -1557,24 +1558,79 @@ router.put('/advances/:id/status', async (req, res) => {
 // INVOICE PAYMENTS
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.get('/invoices', async (req, res) => {
+router.get('/invoices', optionalAuth, async (req, res) => {
   try {
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
     const size = Math.min(100, Math.max(1, Number.parseInt(req.query.size || req.query.pageSize, 10) || 10));
     const search = String(req.query.q || req.query.search || '').trim();
     const statusFilter = String(req.query.status || '').trim();
     const matchFilter = String(req.query.threeWayMatch || req.query.match || '').trim();
+    const scope = String(req.query.scope || 'team').toLowerCase().trim();
 
     await InvoicePayment.deleteMany({ invoicePaymentId: { $in: ['INV-PAY-901', 'INV-PAY-902', 'INV-PAY-903'] } }).catch(() => { });
 
     const filter = { isDeleted: { $ne: true } };
+
+    // Scope filtering for My / Team / All records
+    if (req.user?.email && scope !== 'all') {
+      const loginUser = await User.findOne({ email: req.user.email }).lean();
+      if (loginUser) {
+        const users = await User.find({ status: 'Active' }).lean();
+        const byManager = new Map();
+        for (const u of users) {
+          const mId = u.managerId || 'root';
+          if (!byManager.has(mId)) byManager.set(mId, []);
+          byManager.get(mId).push(u);
+        }
+        const teamUsers = new Map();
+        const collectChildren = (mId, visited = new Set()) => {
+          const children = byManager.get(mId) || [];
+          for (const child of children) {
+            if (visited.has(child.id)) continue;
+            teamUsers.set(child.id, child);
+            const nextVisited = new Set(visited);
+            nextVisited.add(child.id);
+            collectChildren(child.id, nextVisited);
+          }
+        };
+        collectChildren(loginUser.id);
+
+        const allowedUsers = [loginUser, ...teamUsers.values()];
+        const allowedUserNames = [...new Set(allowedUsers.map(u => u.name).filter(Boolean))];
+        const allowedUserIds = [...new Set(allowedUsers.map(u => u.id).filter(Boolean))];
+
+        if (scope === 'my') {
+          filter.$or = [
+            { createdBy: loginUser.name },
+            { requestedBy: loginUser.name },
+            { requestedById: loginUser.id },
+            { userId: loginUser.id }
+          ];
+        } else if (scope === 'team') {
+          filter.$or = [
+            { createdBy: { $in: allowedUserNames } },
+            { requestedBy: { $in: allowedUserNames } },
+            { requestedById: { $in: allowedUserIds } },
+            { userId: { $in: allowedUserIds } }
+          ];
+        }
+      }
+    }
+
     if (search) {
       const regex = new RegExp(escapeRegex(search), 'i');
-      filter.$or = [
+      const searchConditions = [
         { invoiceNumber: regex }, { invoicePaymentId: regex },
         { poId: regex }, { sapPoNumber: regex },
-        { vendorName: regex }, { vendorId: regex }
+        { vendorName: regex }, { vendorId: regex },
+        { createdBy: regex }, { requestedBy: regex }
       ];
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, { $or: searchConditions }];
+        delete filter.$or;
+      } else {
+        filter.$or = searchConditions;
+      }
     }
     if (statusFilter && statusFilter !== 'All Status' && statusFilter !== 'All') {
       filter.status = statusFilter.toLowerCase();

@@ -32,6 +32,7 @@ export default function AdvancePaymentsView() {
   const currentPage = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
   const searchTerm = searchParams.get('q') || '';
   const statusFilter = searchParams.get('status') || 'All Status';
+  const scopeFilter = searchParams.get('scope') || 'team';
   const pageSizeParam = parseInt(searchParams.get('pageSize') || '10', 10);
 
   const [advances, setAdvances] = useState([]);
@@ -51,7 +52,7 @@ export default function AdvancePaymentsView() {
 
   useEffect(() => {
     fetchAdvances();
-  }, [currentPage, searchTerm, statusFilter, pageSize]);
+  }, [currentPage, searchTerm, statusFilter, scopeFilter, pageSize]);
 
   const updateUrlParams = (newParams) => {
     const params = new URLSearchParams(searchParams);
@@ -72,7 +73,8 @@ export default function AdvancePaymentsView() {
         page: currentPage,
         size: pageSize,
         q: searchTerm,
-        status: statusFilter
+        status: statusFilter,
+        scope: scopeFilter
       });
 
       const res = await apiFetch(`/api/p2p/advances?${queryParams.toString()}`);
@@ -153,6 +155,52 @@ export default function AdvancePaymentsView() {
 
   return (
     <div className="space-y-3 font-sans text-left pb-10 flex flex-col min-h-0">
+      {/* Scope Selector Bar (My Records / My Team Records / All Records) */}
+      <div className="flex items-center justify-between gap-3 shrink-0 flex-wrap">
+        <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200">
+          <button
+            type="button"
+            onClick={() => updateUrlParams({ scope: 'my', page: '1' })}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+              scopeFilter === 'my'
+                ? 'bg-white text-[#0d7676] shadow-2xs border border-slate-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            My Records
+          </button>
+          <button
+            type="button"
+            onClick={() => updateUrlParams({ scope: 'team', page: '1' })}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+              scopeFilter === 'team'
+                ? 'bg-white text-[#0d7676] shadow-2xs border border-slate-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            My Team Records
+          </button>
+          <button
+            type="button"
+            onClick={() => updateUrlParams({ scope: 'all', page: '1' })}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+              scopeFilter === 'all'
+                ? 'bg-white text-[#0d7676] shadow-2xs border border-slate-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            All Records
+          </button>
+        </div>
+
+        <Link
+          to="/p2p/advance-payments/create"
+          className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-lg shadow-2xs transition-colors shrink-0"
+        >
+          <Plus className="w-4 h-4" /> New Advance Payment
+        </Link>
+      </div>
+
       {/* Metric Summary Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 shrink-0">
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between">
@@ -244,13 +292,6 @@ export default function AdvancePaymentsView() {
             />
           </div>
         </div>
-
-        <Link
-          to="/p2p/advance-payments/create"
-          className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-lg shadow-2xs transition-colors shrink-0"
-        >
-          <Plus className="w-4 h-4" /> New Advance Payment
-        </Link>
       </div>
 
       {/* Table Container with Max Height & Sticky Header */}
