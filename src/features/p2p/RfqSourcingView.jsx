@@ -42,6 +42,9 @@ export default function RfqSourcingView() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [currentPage, setCurrentPage] = useState(1);
+  const [totalRfqs, setTotalRfqs] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const pageSize = 10;
 
   // Helper function
@@ -53,26 +56,35 @@ export default function RfqSourcingView() {
     try {
       setLoading(true);
       const params = new URLSearchParams({
-        search: search,
-        status: statusFilter === 'All' ? '' : statusFilter
+        search: debouncedSearch,
+        status: statusFilter === 'All' ? '' : statusFilter,
+        page: String(currentPage),
+        pageSize: String(pageSize)
       });
       const res = await apiFetch(`/api/p2p/rfqs?${params.toString()}`);
       const json = await res.json();
       if (res.ok && json.data) {
         setRfqs(json.data);
+        setTotalRfqs(Number(json.total) || 0);
+        setTotalPages(Math.max(1, Number(json.totalPages) || 1));
+        if (json.page && Number(json.page) !== currentPage) setCurrentPage(Number(json.page));
       } else throw new Error(json.error || 'Unable to load RFQs.');
     } catch (e) {
       showToast({ title: 'RFQ Load Failed', description: e.message, type: 'error' });
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { fetchRfqs(); }, [search, statusFilter]);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setCurrentPage(1);
+      setDebouncedSearch(search.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+  useEffect(() => { fetchRfqs(); }, [debouncedSearch, statusFilter, currentPage]);
 
-  const totalPages = Math.ceil(rfqs.length / pageSize);
   const startIndex = (currentPage - 1) * pageSize;
-  const displayedRfqs = rfqs.slice(startIndex, startIndex + pageSize);
-
-  useEffect(() => { setCurrentPage(1); }, [search, statusFilter]);
+  const displayedRfqs = rfqs;
 
   // --- Helpers ---
   const formatDate = (dateStr) => {
@@ -113,8 +125,9 @@ export default function RfqSourcingView() {
     try {
       const res = await apiFetch(`/api/p2p/rfqs/${targetId}`, { method: 'DELETE' });
       if (res.ok) {
-        setRfqs(prev => prev.filter(r => r._id !== rfq?._id && r.rfqId !== rfq?.rfqId));
         showToast({ title: 'Success', description: 'RFQ deleted.', type: 'success' });
+        if (rfqs.length === 1 && currentPage > 1) setCurrentPage((page) => page - 1);
+        else fetchRfqs();
       } else {
         const json = await res.json();
         throw new Error(json.error || 'Unable to delete RFQ.');
@@ -208,7 +221,7 @@ export default function RfqSourcingView() {
         <div className="w-44">
           <SearchableSelect
             options={[{ label: 'All Status', value: 'All' }, { label: 'Published', value: 'Published' }, { label: 'Pending Approval', value: 'Pending Approval' }, { label: 'Awarded', value: 'Awarded' }, { label: 'Expired', value: 'Expired' }]}
-            value={statusFilter} onChange={(val) => setStatusFilter(val)} size="sm" searchable={false}
+            value={statusFilter} onChange={(val) => { setCurrentPage(1); setStatusFilter(val); }} size="sm" searchable={false}
           />
         </div>
       </div>
@@ -338,9 +351,9 @@ export default function RfqSourcingView() {
                 })}
               </tbody>
             </table>
-            {rfqs.length > pageSize && (
+            {totalRfqs > 0 && (
               <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200 bg-slate-50/50">
-                <span className="text-[11px] text-slate-500 font-medium">Showing {startIndex + 1} to {Math.min(startIndex + pageSize, rfqs.length)} of {rfqs.length} RFQs</span>
+                <span className="text-[11px] text-slate-500 font-medium">Showing {startIndex + 1} to {Math.min(startIndex + rfqs.length, totalRfqs)} of {totalRfqs} RFQs</span>
                 <div className="flex items-center gap-2">
                   <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="p-1.5 rounded border border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 transition"><ChevronLeft className="w-4 h-4 text-slate-600" /></button>
                   <span className="text-[11px] font-bold text-slate-700 px-1">{currentPage} / {totalPages}</span>

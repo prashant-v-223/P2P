@@ -42,7 +42,7 @@ const getMongoConfig = () => {
   };
 };
 
-export const connectDB = async ({ seed = process.env.AUTO_SEED === 'true' } = {}) => {
+export const connectDB = async ({ seed = process.env.AUTO_SEED === 'true', ensureWorkflows = false } = {}) => {
   try {
     const { uri, databaseName } = getMongoConfig();
     if (uri.includes('mongodb+srv://')) {
@@ -60,7 +60,7 @@ export const connectDB = async ({ seed = process.env.AUTO_SEED === 'true' } = {}
 
     mongoose.set('bufferCommands', true);
     console.log(`[DB] Connected to "${mongoose.connection.name}" on ${mongoose.connection.host}`);
-    await ensureAllWorkflows().catch((err) => console.warn('[DB WORKFLOW SEED WARN]', err.message));
+    if (ensureWorkflows) await ensureAllWorkflows().catch((err) => console.warn('[DB WORKFLOW SEED WARN]', err.message));
     if (seed) await seedDatabase();
     return true;
   } catch (error) {

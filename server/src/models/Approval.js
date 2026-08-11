@@ -58,7 +58,9 @@ const approvalSchema = new mongoose.Schema({
   }],
   actionedBy:    { type: String },
   actionedAt:    { type: Date },
-  actionHistory: [actionRecordSchema]                              // Audit log storing ALL approvals, rejections, returns
+  actionHistory: [actionRecordSchema],                             // Audit log storing ALL approvals, rejections, returns
+  legacyMysqlId: { type: Number, index: true, sparse: true },
+  legacyImportedAt: Date
 }, { timestamps: true });
 
 approvalSchema.index({ workflowId: 1, status: 1 });

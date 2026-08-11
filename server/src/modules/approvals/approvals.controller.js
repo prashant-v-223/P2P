@@ -85,6 +85,11 @@ function isApprovalForRole(approval, roleFilter, userId = null) {
     return ['admin', 'superadmin', 'system_admin', 'systemadmin'].includes(u);
   });
 
+  // Self-approval prevention: Requester cannot approve their own request (unless superadmin)
+  if (userId && (String(approval.requestedById) === String(userId) || String(approval.requestedBy) === String(userId)) && !isSuperUser) {
+    return false;
+  }
+
   // 2. Active Step check (from workflowSteps JSON)
   const currentStepNum = approval.currentStep || 1;
   let activeStepObj = null;

@@ -112,7 +112,9 @@ export default function OverviewDashboard() {
   const { pendingQueue = [], pendingCount = 0 } = useSelector((state) => state.approvals || {});
 
   // Actionable pending count & queue for the user's role (matching sidebar count)
-  const displayPendingCount = pendingCount > 0 ? pendingCount : (data?.recentPendingApprovals ? data.recentPendingApprovals.length : 0);
+  const displayPendingCount = pendingCount > 0
+    ? pendingCount
+    : Number(data?.stats?.pendingApprovals ?? data?.recentPendingApprovals?.length ?? 0);
 
   const displayPendingList = (pendingQueue && pendingQueue.length > 0)
     ? pendingQueue.map(a => ({

@@ -60,14 +60,18 @@ export default function CustomAgentsView() {
 
   const handleTogglePortal = async (agent) => {
     try {
+      const currentlyEnabled = agent.portalAccessEnabled !== false;
       const res = await apiFetch(`/api/custom-agents/${agent._id || agent.id}/portal-access`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: !agent.portalEnabled })
+        body: JSON.stringify({ enabled: !currentlyEnabled })
       });
       if (res.ok) {
-        showToast({ title: 'Portal access updated', description: `Portal login is now ${!agent.portalEnabled ? 'enabled' : 'disabled'}`, type: 'success' });
+        showToast({ title: 'Portal access updated', description: `Portal login is now ${!currentlyEnabled ? 'enabled' : 'disabled'}`, type: 'success' });
         fetchAgents();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showToast({ type: 'error', title: 'Portal access was not updated', description: data.error || 'Please try again.' });
       }
     } catch (err) {
       showToast({ type: 'error', title: 'Error toggling portal access' });

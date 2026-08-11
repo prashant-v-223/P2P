@@ -44,6 +44,8 @@ const rfqHeaderSchema = new mongoose.Schema({
     approvalId: String
   }]
 }, { timestamps: true, strict: false });
+rfqHeaderSchema.index({ status: 1, createdAt: -1 });
+rfqHeaderSchema.index({ closingDate: 1 });
 
 // RFQ Quotes submitted by Vendors (with auto L1..L5 ranking)
 const rfqQuoteSchema = new mongoose.Schema({
@@ -59,7 +61,9 @@ const rfqQuoteSchema = new mongoose.Schema({
   freightAmount: { type: Number, required: true },
   destinationCharges: { type: Number, default: 0 },
   transitDays: { type: Number, default: 18 },
-  rank: { type: String, enum: ['L1', 'L2', 'L3', 'L4', 'L5', 'N/A'], default: 'L1' },
+  // Large RFQs can receive more than five quotations. Legacy production data
+  // contains L6+ positions, so do not truncate a valid commercial ranking.
+  rank: { type: String, enum: [...Array.from({ length: 50 }, (_, index) => `L${index + 1}`), 'N/A'], default: 'L1' },
   status: { type: String, enum: ['submitted', 'awarded', 'rejected'], default: 'submitted' }
 }, { timestamps: true, strict: false });
 

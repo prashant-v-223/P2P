@@ -265,59 +265,70 @@ export default function CreateAdvancePaymentWizard() {
     }`;
 
   const Sidebar = () => (
-    <aside className="hidden xl:flex flex-col gap-4 w-[380px] shrink-0">
+    <aside className="hidden lg:flex flex-col gap-3.5 w-[320px] xl:w-[360px] shrink-0 sticky top-4">
       {/* Summary Card */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 bg-gradient-to-r from-slate-50/80 to-white flex items-center gap-2">
-          <Receipt className="w-4 h-4 text-teal-600" />
-          <span className="font-bold text-slate-700 text-xs uppercase tracking-wider">Summary</span>
+      <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 bg-gradient-to-r from-teal-50/50 to-white flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Receipt className="w-4 h-4 text-[#0d7676]" />
+            <span className="font-bold text-slate-800 text-xs uppercase tracking-wider">Payment Summary</span>
+          </div>
+          {selectedPo && (
+            <span className="text-[10px] font-extrabold bg-teal-100 text-[#0d7676] px-2 py-0.5 rounded-full font-mono">
+              {selectedPo.currency || 'INR'}
+            </span>
+          )}
         </div>
-        <div className="p-4 space-y-3.5">
+        <div className="p-4 space-y-3">
           {selectedPo ? (
             <>
-              <div className="space-y-0.5">
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Purchase Order</p>
-                <p className="font-mono font-bold text-slate-900 text-base">{selectedPo.poNumber}</p>
-                <p className="text-sm text-slate-500 font-medium">{selectedPo.supplierName}</p>
+              <div className="space-y-0.5 pb-1 border-b border-slate-100">
+                <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Target PO & Vendor</p>
+                <p className="font-mono font-extrabold text-slate-900 text-sm flex items-center justify-between">
+                  <span>{selectedPo.poNumber}</span>
+                  <span className="text-xs text-sky-600 font-bold font-sans">Open</span>
+                </p>
+                <p className="text-xs text-slate-600 font-semibold truncate">{selectedPo.supplierName}</p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-slate-50/80 rounded-xl p-3 border border-slate-100">
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">PO Value</p>
-                  <p className="font-mono font-bold text-slate-700 text-base mt-0.5">₹{fmt(poValue)}</p>
+              <div className="grid grid-cols-2 gap-2.5">
+                <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-200">
+                  <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">PO Total</p>
+                  <p className="font-mono font-extrabold text-slate-800 text-sm mt-0.5">₹{fmt(poValue)}</p>
                 </div>
-                <div className="bg-teal-50/80 rounded-xl p-3 border border-teal-100">
-                  <p className="text-[10px] text-teal-600 font-bold uppercase tracking-wider">Available</p>
-                  <p className="font-mono font-bold text-teal-700 text-base mt-0.5">₹{fmt(availableBalance)}</p>
+                <div className="bg-teal-50/70 rounded-xl p-2.5 border border-teal-200">
+                  <p className="text-[10px] text-[#0d7676] font-extrabold uppercase tracking-wider">Available</p>
+                  <p className="font-mono font-extrabold text-[#0d7676] text-sm mt-0.5">₹{fmt(availableBalance)}</p>
                 </div>
               </div>
             </>
           ) : (
-            <div className="py-6 text-center text-slate-400">
-              <Building2 className="w-8 h-8 mx-auto mb-2 opacity-30" />
-              <p className="text-sm font-medium">No PO selected</p>
+            <div className="py-5 text-center text-slate-400">
+              <Building2 className="w-7 h-7 mx-auto mb-1.5 opacity-30 text-teal-600" />
+              <p className="text-xs font-semibold text-slate-500">No Purchase Order selected</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">Select a PO in Step 1 to calculate advance</p>
             </div>
           )}
 
           {calculatedAmount > 0 && (
-            <div className="border-t border-slate-100 pt-3.5 space-y-2">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-slate-600 font-medium">Advance Amount</span>
-                <span className="font-mono font-bold text-teal-700 text-sm">₹{fmt(calculatedAmount)}</span>
+            <div className="border-t border-slate-100 pt-3 space-y-2">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-600 font-medium">Advance Amount</span>
+                <span className="font-mono font-extrabold text-teal-700">₹{fmt(calculatedAmount)}</span>
               </div>
               {totalGstAmount > 0 && (
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-slate-600 font-medium">GST</span>
-                  <span className="font-mono font-bold text-amber-600 text-sm">+₹{fmt(totalGstAmount)}</span>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-600 font-medium">GST Breakdown</span>
+                  <span className="font-mono font-extrabold text-amber-600">+₹{fmt(totalGstAmount)}</span>
                 </div>
               )}
-              <div className="flex justify-between items-center bg-teal-50/70 px-3 py-2.5 rounded-xl border border-teal-100">
-                <span className="text-sm font-bold text-teal-800">Total</span>
-                <span className="font-mono font-bold text-teal-700 text-base">₹{fmt(grandTotal)}</span>
+              <div className="flex justify-between items-center bg-[#0d7676]/10 px-3 py-2 rounded-xl border border-teal-200">
+                <span className="text-xs font-extrabold text-[#0d7676]">Grand Total</span>
+                <span className="font-mono font-extrabold text-[#0d7676] text-sm">₹{fmt(grandTotal)}</span>
               </div>
-              <div className="flex justify-between items-center pt-1">
-                <span className="text-sm text-slate-600 font-medium">Remaining Balance</span>
-                <span className={`font-mono font-bold text-sm ${remainingAfter < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+              <div className="flex justify-between items-center text-xs pt-0.5">
+                <span className="text-slate-500 font-medium">Remaining Balance</span>
+                <span className={`font-mono font-extrabold ${remainingAfter < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
                   ₹{fmt(remainingAfter)}
                 </span>
               </div>
@@ -325,10 +336,10 @@ export default function CreateAdvancePaymentWizard() {
           )}
 
           {documents.length > 0 && (
-            <div className="border-t border-slate-100 pt-3">
-              <div className="flex items-center gap-2 text-sm text-slate-600">
-                <FileText className="w-4 h-4 text-teal-500" />
-                <span className="font-medium">{documents.length} document{documents.length > 1 ? 's' : ''} attached</span>
+            <div className="border-t border-slate-100 pt-2.5">
+              <div className="flex items-center gap-2 text-xs text-slate-600 font-medium">
+                <FileText className="w-3.5 h-3.5 text-[#0d7676]" />
+                <span>{documents.length} document{documents.length > 1 ? 's' : ''} attached</span>
               </div>
             </div>
           )}
@@ -336,83 +347,82 @@ export default function CreateAdvancePaymentWizard() {
       </div>
 
       {/* Approval Flow Card */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 bg-gradient-to-r from-slate-50/80 to-white flex items-center justify-between">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-teal-600" />
-            <span className="font-bold text-slate-700 text-xs uppercase tracking-wider">Approval Flow</span>
+            <TrendingUp className="w-4 h-4 text-[#0d7676]" />
+            <span className="font-bold text-slate-800 text-xs uppercase tracking-wider">Approval Workflow</span>
           </div>
           {dynamicWorkflow?.slab && (
-            <span className="text-[10px] font-bold text-teal-700 bg-teal-50 px-2.5 py-1 rounded-full border border-teal-100">
+            <span className="text-[10px] font-extrabold text-[#0d7676] bg-teal-50 px-2 py-0.5 rounded-full border border-teal-200">
               {dynamicWorkflow.slab}
             </span>
           )}
         </div>
-        <div className="p-4 space-y-2.5">
+        <div className="p-3.5 space-y-2">
           {(dynamicWorkflow?.steps || [
             { step: 1, title: 'Purchase Manager Review', roleName: 'Purchase Manager' },
             { step: 2, title: 'Purchase Head Approval', roleName: 'Purchase Head' },
             { step: 3, title: 'CFO Approval', roleName: 'CFO' }
           ]).map((st, i) => (
-            <div key={st.step || i} className="flex items-center gap-3">
-              <div className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-[11px] font-bold flex items-center justify-center shrink-0 border border-slate-200">
+            <div key={st.step || i} className="flex items-center gap-2.5">
+              <div className="w-5 h-5 rounded-full bg-teal-50 text-[#0d7676] text-[10px] font-extrabold flex items-center justify-center shrink-0 border border-teal-200">
                 {st.step || i + 1}
               </div>
-              <span className="text-sm font-semibold text-slate-700">
+              <span className="text-xs font-semibold text-slate-700">
                 {st.roleName || st.title}
               </span>
             </div>
           ))}
-          <div className="flex items-center gap-3 pt-2 border-t border-slate-100">
-            <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
-            <span className="text-sm font-semibold text-emerald-700">Payment released</span>
+          <div className="flex items-center gap-2.5 pt-2 border-t border-slate-100">
+            <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+            <span className="text-xs font-bold text-emerald-700">Payment Dispatched</span>
           </div>
         </div>
       </div>
 
-      {/* Info Card */}
-      <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4 flex gap-3">
-        <Info className="w-4 h-4 shrink-0 mt-0.5 text-blue-500" />
-        <p className="text-xs text-blue-700 leading-relaxed font-medium">
-          Advance cannot exceed PO value. GST is applicable based on vendor location.
+      {/* Info Notice Card */}
+      <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3 flex gap-2.5">
+        <Info className="w-4 h-4 shrink-0 text-sky-600 mt-0.5" />
+        <p className="text-[11px] text-sky-800 leading-snug font-semibold">
+          Advance payment is capped at the PO value. Submissions trigger automated hierarchy approval routing.
         </p>
       </div>
     </aside>
   );
 
   return (
-    <div className="min-h-screen bg-slate-50/80 font-sans text-slate-800 pb-8">
-      {/* ── Main Content ── */}
-      <div className=" mx-auto">
+    <div className="min-h-screen bg-slate-50/90 font-sans text-slate-800 pb-8 text-left">
+      {/* ── Main Container Optimized for Laptop Use ── */}
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4">
 
-        {/* Header with Breadcrumb */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <div className="flex items-center gap-2 text-sm text-slate-500 font-medium mb-1">
-              <Link to="/p2p/advances" className="hover:text-slate-700 transition-colors flex items-center gap-1.5">
-                <ArrowLeft className="w-4 h-4" />
-                Advance Payments
-              </Link>
-              <ChevronRight className="w-4 h-4 text-slate-300" />
-              <span className="text-slate-700 font-semibold">New Request</span>
-            </div>
+        {/* Top Action Bar */}
+        <div className="flex items-center justify-between mb-4 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+          <div className="flex items-center gap-2 text-xs text-slate-500 font-semibold">
+            <Link to="/p2p/advances" className="hover:text-[#0d7676] transition-colors flex items-center gap-1">
+              <ArrowLeft className="w-4 h-4" />
+              Advance Payments
+            </Link>
+            <ChevronRight className="w-3.5 h-3.5 text-slate-300" />
+            <span className="text-slate-900 font-extrabold">New Advance Payment Request</span>
           </div>
+
           <button
             onClick={() => navigate('/p2p/advances')}
-            className="h-10 px-4 rounded-xl border border-slate-200 bg-white text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-all flex items-center gap-2 shadow-sm"
+            className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 font-bold text-xs transition-colors flex items-center gap-1.5"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3.5 h-3.5" />
             Cancel
           </button>
         </div>
 
-        {/* Stepper */}
-        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm px-6 py-4 mb-6">
+        {/* Compact Stepper */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-2xs px-6 py-3.5 mb-4">
           <div className="flex items-center justify-between relative">
-            <div className="absolute inset-x-10 top-5 h-0.5 bg-slate-100" />
+            <div className="absolute inset-x-12 top-4 h-0.5 bg-slate-100" />
             <div
-              className="absolute left-10 top-5 h-0.5 bg-teal-500 transition-all duration-500"
-              style={{ width: `calc(${((currentStep - 1) / (STEPS.length - 1)) * 100}% - 80px / ${STEPS.length})` }}
+              className="absolute left-12 top-4 h-0.5 bg-[#0d7676] transition-all duration-500"
+              style={{ width: `calc(${((currentStep - 1) / (STEPS.length - 1)) * 100}% - 90px / ${STEPS.length})` }}
             />
             {STEPS.map((step) => {
               const done = currentStep > step.id;
@@ -421,18 +431,19 @@ export default function CreateAdvancePaymentWizard() {
               return (
                 <button
                   key={step.id}
+                  type="button"
                   onClick={() => { if (step.id < currentStep) { setErrors({}); setCurrentStep(step.id); } }}
-                  className={`relative flex flex-col items-center gap-1.5 z-10 ${step.id < currentStep ? 'cursor-pointer' : 'cursor-default'}`}
+                  className={`relative flex flex-col items-center gap-1 z-10 ${step.id < currentStep ? 'cursor-pointer' : 'cursor-default'}`}
                 >
                   <div className={`
-                    w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all text-sm font-bold
-                    ${done ? 'bg-teal-600 border-teal-600 text-white shadow-sm shadow-teal-200' :
-                      active ? 'bg-white border-teal-600 text-teal-600 shadow-sm' :
+                    w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all text-xs font-bold
+                    ${done ? 'bg-[#0d7676] border-[#0d7676] text-white shadow-2xs' :
+                      active ? 'bg-white border-[#0d7676] text-[#0d7676] shadow-2xs' :
                         'bg-white border-slate-200 text-slate-400'}
                   `}>
-                    {done ? <Check className="w-4 h-4" /> : <Icon className="w-4 h-4" />}
+                    {done ? <Check className="w-3.5 h-3.5" /> : <Icon className="w-3.5 h-3.5" />}
                   </div>
-                  <span className={`text-xs font-bold whitespace-nowrap ${done || active ? 'text-teal-700' : 'text-slate-400'}`}>
+                  <span className={`text-[11px] font-extrabold whitespace-nowrap ${done || active ? 'text-[#0d7676]' : 'text-slate-400'}`}>
                     {step.label}
                   </span>
                 </button>

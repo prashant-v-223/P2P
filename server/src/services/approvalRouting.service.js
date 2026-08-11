@@ -79,29 +79,60 @@ export async function attachApprovers(steps, requester) {
       const stepNumber = step.step || (index + 1);
 
       let approver = null;
+      let isPoolApproval = false;
+      let approverPool = [];
 
-      // 1. Try finding in requester's reporting manager hierarchy
-      if (requesterUser.managerId) {
+      const isRequesterManagerInRole = isRoleMatchingStep(requesterUser.role, roleKey);
+      const isChildUser = Boolean(requesterUser.managerId) && !isRequesterManagerInRole;
+
+      if (isChildUser) {
+        // 1. Child user created request: Route ONLY to direct parent line manager
         approver = await findParentManager(requesterUser, roleKey);
+        isPoolApproval = false;
+      } else {
+        // 2. Parent / Manager user created request: Route to BOTH / ALL managers in role tier
+        const allRoleManagers = await User.find({
+          status: 'Active'
+        }).lean().then(users => users.filter(u => isRoleMatchingStep(u.role, roleKey)));
+
+        if (allRoleManagers && allRoleManagers.length > 0) {
+          isPoolApproval = true;
+          approverPool = allRoleManagers.map(u => ({
+            id: u.id,
+            name: u.name,
+            role: u.role,
+            email: u.email
+          }));
+          approver = {
+            id: null,
+            name: allRoleManagers.map(u => u.name).join(', '),
+            role: roleKey,
+            email: null,
+            resolutionMethod: 'manager_peer_pool'
+          };
+        } else if (requesterUser.managerId) {
+          approver = await findParentManager(requesterUser, roleKey);
+        }
       }
 
-      // 2. If requester is self-role or no parent manager matched, check department/team/role
-      if (!approver) {
+      // 3. Fallback check by role or active user if still unresolved
+      if (!approver && !isPoolApproval) {
         approver = await findApproverByRole(requesterUser, roleKey);
       }
 
-      // 3. Fallback to any active user with roleKey
-      if (!approver) {
+      if (!approver && !isPoolApproval) {
         approver = await findAnyUserWithRole(roleKey);
       }
 
       return {
         ...step,
         step: stepNumber,
-        assignedApproverId: approver?.id || null,
+        assignedApproverId: isPoolApproval ? null : (approver?.id || null),
         assignedApproverName: approver?.name || null,
         assignedApproverRole: approver?.role || roleKey,
         assignedApproverEmail: approver?.email || null,
+        isPoolApproval,
+        approverPool: isPoolApproval ? approverPool : [],
         statusKey: step.statusKey || `Pending ${step.title || 'Approval'}`,
         resolutionMethod: approver?.resolutionMethod || 'role_based',
         resolvedAt: new Date()
@@ -113,49 +144,13 @@ export async function attachApprovers(steps, requester) {
 }
 
 /**
- * Find the best Procurement Head based on various factors
- */
-async function findBestProcurementHead(requester) {
-  const allHeads = await User.find({
-    role: { $in: ['procurement_head', 'Procurement Head', 'purchase_head', 'procurement'] },
-    status: 'Active'
-  }).lean();
-
-  if (!allHeads || allHeads.length === 0) {
-    return null;
-  }
-
-  if (allHeads.length === 1) {
-    return { ...allHeads[0], resolutionMethod: 'single_head' };
-  }
-
-  const withPendingCount = await Promise.all(
-    allHeads.map(async (head) => {
-      const pendingCount = await Approval.countDocuments({
-        $or: [
-          { assignedApprover: head.id },
-          { assignedApproverId: head.id },
-          { assignedApproverName: head.name }
-        ],
-        status: { 
-          $nin: ['Approved & Dispatched', 'Approved', 'Rejected', 'Completed'] 
-        }
-      });
-      return { ...head, pendingCount };
-    })
-  );
-
-  const sorted = withPendingCount.sort((a, b) => a.pendingCount - b.pendingCount);
-  return { ...sorted[0], resolutionMethod: 'load_balanced' };
-}
-
-/**
  * Find parent manager walking up the managerId hierarchy
  */
 async function findParentManager(requester, roleKey) {
   if (!requester.managerId) return null;
 
   let current = requester;
+  let firstLineManager = null;
   const visited = new Set([requester.id]);
 
   while (current && current.managerId && !visited.has(current.managerId)) {
@@ -170,12 +165,18 @@ async function findParentManager(requester, roleKey) {
     }).lean();
 
     if (!manager) break;
+    if (!firstLineManager) firstLineManager = manager;
 
     if (isRoleMatchingStep(manager.role, roleKey)) {
       return { ...manager, resolutionMethod: 'parent_manager' };
     }
 
     current = manager;
+  }
+
+  // If no specific role matched higher up, return direct parent line manager
+  if (firstLineManager) {
+    return { ...firstLineManager, resolutionMethod: 'direct_line_manager' };
   }
 
   return null;

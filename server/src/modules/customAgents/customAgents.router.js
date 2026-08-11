@@ -7,6 +7,8 @@ import {
   customAgentLogin,
   createCustomAgent,
   updateCustomAgent,
+  updateCustomAgentPortalAccess,
+  generateCustomAgentPassword,
   customAgentChangePassword,
   deleteCustomAgent
 } from './customAgents.controller.js';
@@ -23,6 +25,8 @@ router.get('/:id', authenticateToken, getCustomAgentById);
 // Mutation routes - allow with optionalAuth
 router.post('/', authenticateToken, authorizePermission('custom-agents', 'manage'), createCustomAgent);
 router.put('/:id', authenticateToken, authorizePermission('custom-agents', 'manage'), updateCustomAgent);
+router.post('/:id/portal-access', authenticateToken, authorizePermission('custom-agents', 'manage'), updateCustomAgentPortalAccess);
+router.post('/:id/generate-password', authenticateToken, authorizePermission('custom-agents', 'manage'), generateCustomAgentPassword);
 router.post('/change-password', authenticateToken, customAgentChangePassword);
 router.delete('/:id', authenticateToken, authorizePermission('custom-agents', 'manage'), deleteCustomAgent);
 

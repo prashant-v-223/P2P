@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
+import crypto from 'node:crypto';
 import { config } from '../../config/index.js';
 import { CustomAgent } from '../../models/CustomAgent.js';
 import { RfqBlEntry } from '../../models/RfqLogistics.js';
@@ -72,7 +73,6 @@ export const seedDefaultCustomAgents = async () => {
 // GET all custom agents
 export const getCustomAgents = async (req, res) => {
   try {
-    await seedDefaultCustomAgents();
     const agents = await CustomAgent.find().sort({ createdAt: -1 }).lean();
     return res.json({ success: true, count: agents.length, agents });
   } catch (err) {
@@ -118,8 +118,6 @@ export const customAgentLogin = async (req, res) => {
         error: 'Email and password are required.' 
       });
     }
-
-    await seedDefaultCustomAgents();
 
     const agent = await CustomAgent.findOne({ 
       email: email.trim().toLowerCase() 
@@ -282,6 +280,60 @@ export const updateCustomAgent = async (req, res) => {
       success: true,
       message: 'Custom agent updated successfully',
       agent
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// POST - Enable or disable customs-agent portal login
+export const updateCustomAgentPortalAccess = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ success: false, error: 'The enabled field must be true or false.' });
+    }
+
+    const agent = await CustomAgent.findOneAndUpdate(
+      buildAgentQuery(id),
+      { $set: { portalAccessEnabled: enabled } },
+      { new: true, runValidators: true }
+    );
+    if (!agent) return res.status(404).json({ success: false, error: 'Custom agent not found.' });
+
+    return res.json({
+      success: true,
+      message: `Portal access ${enabled ? 'enabled' : 'disabled'} successfully.`,
+      agent
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// POST - Generate a one-time temporary password for an agent
+export const generateCustomAgentPassword = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const temporaryPassword = `RyznCHA@${crypto.randomInt(100000, 1000000)}`;
+    const passwordHash = await CustomAgent.hashPassword(temporaryPassword);
+    const agent = await CustomAgent.findOneAndUpdate(
+      buildAgentQuery(id),
+      { $set: { passwordHash } },
+      { new: true, runValidators: true }
+    ).select('+passwordHash');
+
+    if (!agent) return res.status(404).json({ success: false, error: 'Custom agent not found. Password was not changed.' });
+    if (!await agent.verifyPassword(temporaryPassword)) {
+      return res.status(500).json({ success: false, error: 'Password could not be saved. Please try again.' });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Temporary password generated. It will only be displayed once.',
+      temporaryPassword,
+      agent: { agentId: agent.agentId, email: agent.email }
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });

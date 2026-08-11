@@ -17,7 +17,14 @@ export const fetchPendingApprovals = createAsyncThunk(
         return rejectWithValue(data.error || 'Failed to fetch approvals');
       }
       
-      return data;
+      // The paginated approvals endpoint returns `approvals` and `total`.
+      // Normalize it here so the shared sidebar/dashboard state never mistakes
+      // the current page size (normally 10) for the full pending total.
+      return {
+        ...data,
+        requests: data.requests || data.approvals || [],
+        count: Number(data.total ?? data.count ?? 0)
+      };
     } catch (err) {
       return rejectWithValue(err.message);
     }

@@ -224,6 +224,11 @@ async function canViewPayment(req, payment) {
   }
   const visibility = await getPaymentVisibility(req);
   if (!visibility) return false;
+  // Keep detail authorization consistent with list authorization. System
+  // administrators, MDs, and users explicitly granted organisation-wide
+  // visibility must be able to open every record returned by the list API,
+  // including legacy/vendor-created payments without an internal owner ID.
+  if (visibility.seesAll) return true;
   const visibleValues = new Set([...visibility.ids, ...visibility.names].filter(Boolean).map((value) => String(value).toLowerCase()));
   return [payment.requestedById, payment.userId, payment.requestedBy, payment.createdBy]
     .filter(Boolean)
@@ -988,7 +993,8 @@ const getAdvancesHandler = async (req, res) => {
     };
 
     const globalRoles = ['admin', 'superadmin', 'system_admin', 'systemadmin', 'md'];
-    if (loginUser.canSeeAllRequests || globalRoles.includes(String(loginUser.role || '').toLowerCase())) {
+    const canSeeAllAdvances = loginUser.canSeeAllRequests || globalRoles.includes(String(loginUser.role || '').toLowerCase());
+    if (canSeeAllAdvances) {
       users.forEach((user) => teamUsers.set(user.id, user));
     } else {
       collectChildren(loggedInUserId);
@@ -1021,13 +1027,12 @@ const getAdvancesHandler = async (req, res) => {
 
     const filter = {
       isDeleted: { $ne: true },
-
-      $or: [
+      ...(!canSeeAllAdvances ? { $or: [
         { requestedById: { $in: allowedUserIds } },
         { userId: { $in: allowedUserIds } },
         { createdBy: { $in: [...allowedUserIds, ...allowedUserNames] } },
         { requestedBy: { $in: [...allowedUserIds, ...allowedUserNames] } }
-      ]
+      ] } : {})
     };
 
     // ==================================================
@@ -1664,9 +1669,9 @@ const createAdvanceHandler = async (req, res) => {
       createdBy: req.user?.name || req.user?.email || 'System User',
       requestedById: req.user?.id || req.user?.email || 'system',
       userId: req.user?.id || req.user?.email || 'system',
-      requestedBy: req.user?.name || requestedBy || 'Finance Team',
-      createdByType: req.user?.role === 'Vendor' ? 'vendor' : 'user',
-      createdByVendorId: req.user?.role === 'Vendor' ? vendorIdFinal : ''
+      requestedBy: req.user?.name || requestedBy || 'Finance Team'
+      ,createdByType: req.user?.role === 'Vendor' ? 'vendor' : 'user'
+      ,createdByVendorId: req.user?.role === 'Vendor' ? vendorIdFinal : ''
     });
 
     const { amountINR, fxRate, amountFormatted } = await getFxConversion(numAmount, poCurrency, req.body.fxRate);
@@ -2065,9 +2070,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       createdBy: req.user?.name || req.user?.email || 'System User',
       requestedById: req.user?.id || req.user?.email || 'system',
       userId: req.user?.id || req.user?.email || 'system',
-      requestedBy: req.user?.name || requestedBy || 'Finance Team',
-      createdByType: req.user?.role === 'Vendor' ? 'vendor' : 'user',
-      createdByVendorId: req.user?.role === 'Vendor' ? vendorIdFinal : ''
+      requestedBy: req.user?.name || requestedBy || 'Finance Team'
     });
 
     const { amountINR, fxRate, amountFormatted } = await getFxConversion(netPayable, poCurrency, req.body.fxRate);
@@ -2408,6 +2411,8 @@ router.get('/rfqs', authenticateToken, async (req, res) => {
   try {
     const search = String(req.query.q || req.query.search || '').trim();
     const statusFilter = String(req.query.status || '').trim();
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number.parseInt(req.query.pageSize || req.query.size, 10) || 10));
 
     const filter = { isDeleted: { $ne: true } };
     if (search) {
@@ -2421,41 +2426,48 @@ router.get('/rfqs', authenticateToken, async (req, res) => {
       } else filter.status = statusFilter.toLowerCase().replace(/\s+/g, '_');
     }
 
-    const rfqs = await RfqHeader.find(filter).sort({ createdAt: -1 }).lean();
+    const total = await RfqHeader.countDocuments(filter);
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(page, totalPages);
+    const rfqs = await RfqHeader.find(filter)
+      .sort({ createdAt: -1, _id: -1 })
+      .skip((safePage - 1) * pageSize)
+      .limit(pageSize)
+      .lean();
 
-    const enriched = await Promise.all(
-      rfqs.map(async (r) => {
+    const rfqIds = rfqs.map((rfq) => rfq.rfqId).filter(Boolean);
+    const approvalIds = rfqs.map((rfq) => rfq.awardApprovalId).filter(Boolean);
+    const [quoteCounts, approvals] = await Promise.all([
+      RfqQuote.aggregate([
+        { $match: { rfqId: { $in: rfqIds } } },
+        { $group: { _id: '$rfqId', count: { $sum: 1 } } }
+      ]),
+      Approval.find({
+        $or: [
+          { id: { $in: [...approvalIds, ...rfqIds] } },
+          { referenceId: { $in: rfqIds } },
+          { 'transactionSnapshot.rfqId': { $in: rfqIds } }
+        ]
+      }).sort({ createdAt: -1 }).lean()
+    ]);
+    const quoteCountByRfq = new Map(quoteCounts.map((entry) => [entry._id, entry.count]));
+    const approvalByKey = new Map();
+    approvals.forEach((approval) => {
+      [approval.id, approval.referenceId, approval.transactionSnapshot?.rfqId].filter(Boolean)
+        .forEach((key) => { if (!approvalByKey.has(String(key))) approvalByKey.set(String(key), approval); });
+    });
+    const statusRepairs = [];
+    const enriched = rfqs.map((r) => {
         let currentStatus = r.status || 'published';
-
-        if (r.awardApprovalId) {
-          const app = await Approval.findOne({ id: r.awardApprovalId }).select('status').lean();
-          if (app) {
-            if (app.status === 'Approved & Dispatched') {
-              currentStatus = 'awarded';
-              if (r.status !== 'awarded') {
-                await RfqHeader.updateOne({ _id: r._id }, { status: 'awarded' });
-              }
-            } else if (app.status === 'Rejected') {
-              currentStatus = 'published';
-              if (r.status !== 'published') {
-                await RfqHeader.updateOne({ _id: r._id }, { status: 'published' });
-              }
-            }
-          }
-        } else if (r.status === 'pending_approval') {
-          const app = await Approval.findOne({ 'transactionSnapshot.rfqId': r.rfqId }).sort({ createdAt: -1 }).lean();
-          if (app) {
-            if (app.status === 'Approved & Dispatched') {
-              currentStatus = 'awarded';
-              await RfqHeader.updateOne({ _id: r._id }, { status: 'awarded', awardApprovalId: app.id });
-            } else if (app.status === 'Rejected') {
-              currentStatus = 'published';
-              await RfqHeader.updateOne({ _id: r._id }, { status: 'published' });
-            }
-          }
+        const app = approvalByKey.get(String(r.awardApprovalId || r.rfqId));
+        if (app?.status === 'Approved & Dispatched') currentStatus = 'awarded';
+        else if (app?.status === 'Rejected' && r.status === 'pending_approval') currentStatus = 'published';
+        if (currentStatus !== r.status || (!r.awardApprovalId && app?.id)) {
+          statusRepairs.push({ updateOne: {
+            filter: { _id: r._id },
+            update: { $set: { status: currentStatus, ...(app?.id ? { awardApprovalId: app.id } : {}) } }
+          } });
         }
-
-        const quoteCount = await RfqQuote.countDocuments({ rfqId: r.rfqId });
         const invitedCount = (r.invitedVendors && Array.isArray(r.invitedVendors)) ? r.invitedVendors.length : 0;
         return {
           ...r,
@@ -2463,12 +2475,15 @@ router.get('/rfqs', authenticateToken, async (req, res) => {
           closingDateFormatted: r.closingDate ? new Date(r.closingDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Not set',
           deadlinePassed: Boolean(r.closingDate && new Date(r.closingDate) < new Date()),
           invitedVendorsCount: invitedCount,
-          quotesCount: quoteCount
+          quotesCount: quoteCountByRfq.get(r.rfqId) || 0
         };
-      })
-    );
+      });
+    if (statusRepairs.length) await RfqHeader.bulkWrite(statusRepairs, { ordered: false });
 
-    return res.json({ success: true, data: enriched });
+    return res.json({
+      success: true, data: enriched, total, page: safePage, pageSize, totalPages,
+      hasPrevious: safePage > 1, hasNext: safePage < totalPages
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -2787,13 +2802,25 @@ router.get('/rfqs/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ success: false, error: 'RFQ not found' });
     }
 
-    const quotes = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 }).lean();
+    // Imported timestamps are kept separately because Mongoose timestamps make
+    // createdAt immutable on an existing document. Present the source date to
+    // users while retaining Mongo's audit timestamp internally.
+    if (rfq.sourceCreatedAt) rfq.createdAt = rfq.sourceCreatedAt;
+    if (rfq.sourceUpdatedAt) rfq.updatedAt = rfq.sourceUpdatedAt;
+
+    const quotes = (await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 }).lean())
+      .map((quote, index) => ({ ...quote, rank: `L${index + 1}` }));
     const blEntries = await RfqBlEntry.find({ rfqId: rfq.rfqId }).lean();
 
     // Get approval if exists (should be unique by id)
-    const approval = rfq.awardApprovalId
-      ? await Approval.findOne({ id: rfq.awardApprovalId }).lean()
-      : null;
+    const approval = await Approval.findOne({
+      $or: [
+        ...(rfq.awardApprovalId ? [{ id: rfq.awardApprovalId }] : []),
+        { id: rfq.rfqNumber },
+        { referenceId: rfq.rfqNumber }
+      ]
+    }).lean();
+    if (approval && !rfq.awardApprovalId) rfq.awardApprovalId = approval.id;
 
     let approvalProgress = null;
     if (approval) {
@@ -4561,7 +4588,9 @@ router.get('/audit/:entityId', authenticateToken, async (req, res) => {
 
 router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
   try {
-    const appReg = /approved|dispatched|paid/i;
+    const approvedReg = /approved|dispatched|paid/i;
+    const paidReg = /(^|\s)paid($|\s)|payment[_\s-]?paid/i;
+    const terminalApprovalStatuses = ['Approved & Dispatched', 'Approved', 'Rejected', 'Cancelled'];
     const range = (req.query.range || '7d').toLowerCase();
 
     let daysCount = 7;
@@ -4590,6 +4619,7 @@ router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
       invoicesList,
       dutiesList,
       blInvoicesList,
+      blEntriesList,
       pendingList,
       allApprovals,
       recentPos,
@@ -4597,53 +4627,57 @@ router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
     ] = await Promise.all([
       PurchaseOrder.countDocuments().catch(() => 0),
       PurchaseOrder.countDocuments({ createdAt: { $gte: prevPeriodStartDate, $lt: rangeStartDate } }).catch(() => 0),
-      Approval.countDocuments({ status: { $nin: ['Approved & Dispatched', 'Approved', 'Rejected'] } }).catch(() => 0),
+      Approval.countDocuments({ status: { $nin: terminalApprovalStatuses } }).catch(() => 0),
       RfqHeader.countDocuments().catch(() => 0),
       RfqHeader.countDocuments({ createdAt: { $gte: prevPeriodStartDate, $lt: rangeStartDate } }).catch(() => 0),
       RfqHeader.countDocuments({ status: 'awarded' }).catch(() => 0),
       RfqHeader.countDocuments({ status: 'draft' }).catch(() => 0),
       RfqHeader.countDocuments({ status: { $in: ['published', 'active', 'open'] } }).catch(() => 0),
-      BlInvoice.countDocuments().catch(() => 0),
-      BlInvoice.countDocuments({ status: { $in: ['cleared', 'Customs Cleared', 'Approved', 'Approved & Dispatched'] } }).catch(() => 0),
+      RfqBlEntry.countDocuments().catch(() => 0),
+      RfqBlEntry.countDocuments({ status: { $in: ['custom_cleared', 'invoice_pending', 'payment_requested', 'payment_approved', 'payment_paid', 'closed'] } }).catch(() => 0),
       Vendor.countDocuments().catch(() => 0),
       User.countDocuments({ status: 'Active' }).catch(() => 0),
       AdvancePayment.find().lean().catch(() => []),
       InvoicePayment.find().lean().catch(() => []),
       CustomDutyPayment.find().lean().catch(() => []),
       BlInvoice.find().lean().catch(() => []),
-      Approval.find({ status: { $nin: ['Approved & Dispatched', 'Approved', 'Rejected'] } }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
+      RfqBlEntry.find().lean().catch(() => []),
+      Approval.find({ status: { $nin: terminalApprovalStatuses } }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
       Approval.find().lean().catch(() => []),
       PurchaseOrder.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
       RfqHeader.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => [])
     ]);
 
-    const approvedAdvances = advancesList.filter(a => appReg.test(a.status || ''));
-    const approvedInvoices = invoicesList.filter(i => appReg.test(i.status || ''));
-    const approvedDuties = dutiesList.filter(d => appReg.test(d.status || ''));
+    const approvedAdvances = advancesList.filter(a => approvedReg.test(a.status || ''));
+    const approvedInvoices = invoicesList.filter(i => approvedReg.test(i.status || ''));
+    const approvedDuties = dutiesList.filter(d => approvedReg.test(d.status || ''));
+    const paidAdvances = advancesList.filter(a => paidReg.test(a.status || ''));
+    const paidInvoices = invoicesList.filter(i => paidReg.test(i.status || ''));
+    const paidDuties = dutiesList.filter(d => paidReg.test(d.status || ''));
 
-    const sumAdvances = approvedAdvances.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
-    const sumInvoices = approvedInvoices.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
-    const sumDuties = approvedDuties.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
+    const sumAdvances = paidAdvances.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
+    const sumInvoices = paidInvoices.reduce((acc, curr) => acc + (Number(curr.netPayable || curr.amount || curr.amountINR || 0)), 0);
+    const sumDuties = paidDuties.reduce((acc, curr) => acc + (Number(curr.dutyAmount || curr.amount || curr.amountINR || 0)), 0);
 
     const approvalPipeline = {
       advance: {
-        pending: advancesList.filter(a => !appReg.test(a.status || '') && !(a.status || '').toLowerCase().includes('reject')).length,
+        pending: advancesList.filter(a => !approvedReg.test(a.status || '') && !(a.status || '').toLowerCase().includes('reject')).length,
         approved: approvedAdvances.length,
         rejected: advancesList.filter(a => (a.status || '').toLowerCase().includes('reject')).length
       },
       invoice: {
-        pending: invoicesList.filter(i => !appReg.test(i.status || '') && !(i.status || '').toLowerCase().includes('reject')).length,
+        pending: invoicesList.filter(i => !approvedReg.test(i.status || '') && !(i.status || '').toLowerCase().includes('reject')).length,
         approved: approvedInvoices.length,
         rejected: invoicesList.filter(i => (i.status || '').toLowerCase().includes('reject')).length
       },
       rfq: {
-        pending: allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && !appReg.test(a.status || '')).length,
-        approved: rfqAwardedCount || allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && appReg.test(a.status || '')).length,
+        pending: allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && !approvedReg.test(a.status || '')).length,
+        approved: rfqAwardedCount || allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && approvedReg.test(a.status || '')).length,
         rejected: allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && (a.status || '').toLowerCase().includes('reject')).length
       },
       blInvoice: {
-        pending: blInvoicesList.filter(b => !appReg.test(b.status || '') && !(b.status || '').toLowerCase().includes('reject')).length,
-        approved: blInvoicesList.filter(b => appReg.test(b.status || '')).length,
+        pending: blInvoicesList.filter(b => !approvedReg.test(b.status || '') && !(b.status || '').toLowerCase().includes('reject')).length,
+        approved: blInvoicesList.filter(b => approvedReg.test(b.status || '')).length,
         rejected: blInvoicesList.filter(b => (b.status || '').toLowerCase().includes('reject')).length
       }
     };
@@ -4662,12 +4696,16 @@ router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
       usdInvoices
     };
 
+    const paymentTransactions = [...advancesList, ...invoicesList];
+    const isRejected = (item) => String(item.status || '').toLowerCase().includes('reject');
+    const isDraft = (item) => String(item.status || '').toLowerCase().includes('draft');
+    const isFinalized = (item) => approvedReg.test(item.status || '');
     const statusMix = {
-      draft: allApprovals.filter(a => (a.status || '').toLowerCase().includes('draft')).length,
-      pending: pendingCount || allApprovals.filter(a => (a.status || '').toLowerCase().includes('pending')).length,
-      approved: allApprovals.filter(a => appReg.test(a.status || '')).length,
-      rejected: allApprovals.filter(a => (a.status || '').toLowerCase().includes('reject')).length,
-      total: allApprovals.length
+      draft: paymentTransactions.filter(isDraft).length,
+      pending: paymentTransactions.filter(item => !isDraft(item) && !isRejected(item) && !isFinalized(item)).length,
+      approved: paymentTransactions.filter(isFinalized).length,
+      rejected: paymentTransactions.filter(isRejected).length,
+      total: paymentTransactions.filter(item => !isFinalized(item)).length
     };
 
     const poTrend = prevPoCount > 0 ? Math.round(((poCount - prevPoCount) / prevPoCount) * 100) : 0;
@@ -4813,13 +4851,13 @@ router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
         total: rfqCount
       },
       blPipeline: {
-        assigned: blInvoicesList.filter(b => /assign/i.test(b.status || '')).length,
-        cleared: blInvoicesList.filter(b => /clear|customs/i.test(b.status || '')).length,
-        invPending: blInvoicesList.filter(b => /pending|draft|exim/i.test(b.status || '')).length,
-        pmtReq: blInvoicesList.filter(b => /pmt|req|payment/i.test(b.status || '')).length,
-        approved: blInvoicesList.filter(b => /approved/i.test(b.status || '')).length,
-        paid: blInvoicesList.filter(b => /paid|dispatched/i.test(b.status || '')).length,
-        total: blInvoicesList.length || blCount
+        assigned: blEntriesList.filter(b => b.status === 'assigned_to_agent').length,
+        cleared: blEntriesList.filter(b => b.status === 'custom_cleared').length,
+        invPending: blEntriesList.filter(b => b.status === 'invoice_pending').length,
+        pmtReq: blEntriesList.filter(b => b.status === 'payment_requested').length,
+        approved: blEntriesList.filter(b => b.status === 'payment_approved').length,
+        paid: blEntriesList.filter(b => ['payment_paid', 'closed'].includes(b.status)).length,
+        total: blEntriesList.length
       },
       recentPendingApprovals: [
         ...pendingList.map(a => ({
@@ -4828,7 +4866,7 @@ router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
           dateText: new Date(a.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
           type: a.type || 'Approval',
         })),
-        ...blInvoicesList.filter(b => !appReg.test(b.status || '') && !(b.status || '').toLowerCase().includes('reject')).map(b => ({
+        ...blInvoicesList.filter(b => !approvedReg.test(b.status || '') && !(b.status || '').toLowerCase().includes('reject')).map(b => ({
           id: b.blId || b.blNumber || b.referenceNo || 'BLI-ENTRY',
           stepText: `Step ${b.currentStep || 1}/${b.totalSteps || 1}`,
           dateText: new Date(b.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),

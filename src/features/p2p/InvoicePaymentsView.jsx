@@ -35,6 +35,7 @@ export default function InvoicePaymentsView() {
   const searchTerm = searchParams.get('q') || '';
   const statusFilter = searchParams.get('status') || 'All Status';
   const matchFilter = searchParams.get('threeWayMatch') || 'All Match';
+  const scopeFilter = searchParams.get('scope') || 'team';
 
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -66,7 +67,7 @@ export default function InvoicePaymentsView() {
 
   useEffect(() => {
     fetchInvoices();
-  }, [currentPage, searchTerm, statusFilter, matchFilter]);
+  }, [currentPage, searchTerm, statusFilter, matchFilter, scopeFilter]);
 
   useEffect(() => {
     fetchAvailablePOs();
@@ -104,7 +105,8 @@ export default function InvoicePaymentsView() {
         size: pageSize,
         q: searchTerm,
         status: statusFilter,
-        threeWayMatch: matchFilter
+        threeWayMatch: matchFilter,
+        scope: scopeFilter
       });
 
       const res = await apiFetch(`/api/p2p/invoices?${params.toString()}`);
@@ -228,7 +230,53 @@ const getInitials = (name) => {
 
   return (
     <div className="w-full space-y-3 font-sans text-slate-800 pb-10">
-      {/* SINGLE UNIFIED CONTROL BAR (Search + 3-Way Match + Status + Page Size + Primary Action Button) EXACTLY LIKE USER DIRECTORY */}
+      {/* Scope Selector Bar (My Records / My Team Records / All Records) */}
+      <div className="flex items-center justify-between gap-3 shrink-0 flex-wrap">
+        <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200">
+          <button
+            type="button"
+            onClick={() => updateUrlParams({ scope: 'my', page: '1' })}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+              scopeFilter === 'my'
+                ? 'bg-white text-[#0d7676] shadow-2xs border border-slate-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            My Records
+          </button>
+          <button
+            type="button"
+            onClick={() => updateUrlParams({ scope: 'team', page: '1' })}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+              scopeFilter === 'team'
+                ? 'bg-white text-[#0d7676] shadow-2xs border border-slate-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            My Team Records
+          </button>
+          <button
+            type="button"
+            onClick={() => updateUrlParams({ scope: 'all', page: '1' })}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+              scopeFilter === 'all'
+                ? 'bg-white text-[#0d7676] shadow-2xs border border-slate-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            All Records
+          </button>
+        </div>
+
+        <button
+          onClick={() => navigate('/admin/invoice-payments/create')}
+          className="flex items-center gap-1.5 bg-[#0d7676] hover:bg-[#0f766e] text-white px-4 py-2 rounded-lg font-bold text-xs shadow-2xs transition-colors shrink-0"
+        >
+          <Plus className="w-4 h-4" /> New Invoice Payment
+        </button>
+      </div>
+
+      {/* SINGLE UNIFIED CONTROL BAR (Search + 3-Way Match + Status + Page Size) */}
       <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]">
           <div className="min-w-[240px] flex-1">
@@ -290,13 +338,6 @@ const getInitials = (name) => {
             />
           </div>
         </div>
-
-        <button
-          onClick={() => navigate('/admin/invoice-payments/create')}
-          className="flex items-center gap-1.5 bg-[#0d7676] hover:bg-[#0f766e] text-white px-4 py-2 rounded-lg font-bold text-xs shadow-2xs transition-colors shrink-0"
-        >
-          <Plus className="w-4 h-4" /> New Invoice Payment
-        </button>
       </div>
 
       {/* Invoice Table Container with Max Height & Sticky Header */}

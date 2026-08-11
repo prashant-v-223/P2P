@@ -24,6 +24,7 @@ const userSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
   passwordHash: { type: String, required: true, select: false },
+  passwordResetRequired: { type: Boolean, default: false },
   role: { type: String, default: 'procurement_head', trim: true },
   department: { type: String, default: 'Procurement', trim: true },
   status: { type: String, enum: ['Active', 'Inactive', 'Suspended'], default: 'Active' },
@@ -44,7 +45,9 @@ const userSchema = new mongoose.Schema({
   team: { type: String, default: null, trim: true, index: true },
   hierarchyLevel: { type: Number, min: 0, max: 10, default: 3, index: true },
   canSeeAllRequests: { type: Boolean, default: false },
-  isManager: { type: Boolean, default: false, index: true }
+  isManager: { type: Boolean, default: false, index: true },
+  legacyMysqlId: { type: Number, index: true, sparse: true },
+  legacyImportedAt: { type: Date }
 }, {
   timestamps: true,
   toJSON: {
