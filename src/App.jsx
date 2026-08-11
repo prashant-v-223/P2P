@@ -107,7 +107,7 @@ export default function App() {
   // Automatic proactive token refresh every 10 minutes to maintain an infinite smooth session
   useEffect(() => {
     if (!isAuthenticated) return;
-    
+
     const refreshTimer = setInterval(() => {
       dispatch(refreshAccessToken());
     }, 10 * 60 * 1000); // Proactively refresh token every 10 min (before 15m expiry)
@@ -133,7 +133,7 @@ export default function App() {
     if (Notification.permission !== 'default') return; // already granted or denied
 
     const timer = setTimeout(() => {
-      Notification.requestPermission().catch(() => {}); // fire-and-forget
+      Notification.requestPermission().catch(() => { }); // fire-and-forget
     }, 3000);
 
     return () => clearTimeout(timer);
@@ -154,159 +154,158 @@ export default function App() {
           }>
             <Routes>
               {/* Public Auth Routes */}
-          <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
-          <Route path="/register" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <RegisterPage />} />
+              <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
+              <Route path="/register" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <RegisterPage />} />
+              {/* Dedicated Vendor & Customs Portal Routes */}
+              <Route path="/vendor/login" element={<VendorLoginPage />} />
+              <Route path="/vendor" element={<VendorLayout />}>
+                <Route index element={<Navigate to="/vendor/dashboard" replace />} />
+                <Route path="dashboard" element={<VendorDashboardPage />} />
+                <Route path="invoices" element={<VendorInvoicesListPage />} />
+                <Route path="invoices/upload" element={<VendorUploadInvoicePage />} />
+                <Route path="advances" element={<VendorAdvancesPage />} />
+                <Route path="profile" element={<VendorProfilePage />} />
+                <Route path="rfqs" element={<FreightRfqListPage />} />
+                <Route path="rfqs/:id" element={<FreightRfqDetailPage />} />
+                <Route path="rfqs/:id/bl-entries" element={<FreightBlEntriesPage />} />
+                <Route path="rfqs/:id/bl-entries/create" element={<FreightBlCreatePage />} />
+                <Route path="rfqs/:id/bl-entries/:blId" element={<FreightBlDetailPage />} />
+              </Route>
 
-          {/* Dedicated Vendor & Customs Portal Routes */}
-          <Route path="/vendor/login" element={<VendorLoginPage />} />
-          <Route path="/vendor" element={<VendorLayout />}>
-            <Route index element={<Navigate to="/vendor/dashboard" replace />} />
-            <Route path="dashboard" element={<VendorDashboardPage />} />
-            <Route path="invoices" element={<VendorInvoicesListPage />} />
-            <Route path="invoices/upload" element={<VendorUploadInvoicePage />} />
-            <Route path="advances" element={<VendorAdvancesPage />} />
-            <Route path="profile" element={<VendorProfilePage />} />
-            <Route path="rfqs" element={<FreightRfqListPage />} />
-            <Route path="rfqs/:id" element={<FreightRfqDetailPage />} />
-            <Route path="rfqs/:id/bl-entries" element={<FreightBlEntriesPage />} />
-            <Route path="rfqs/:id/bl-entries/create" element={<FreightBlCreatePage />} />
-            <Route path="rfqs/:id/bl-entries/:blId" element={<FreightBlDetailPage />} />
-          </Route>
+              {/* Customs Agent Portal Routes */}
+              <Route path="/customs-agent/login" element={<CustomAgentLoginPage />} />
+              <Route path="/customs/login" element={<CustomAgentLoginPage />} />
+              <Route path="/customs/dashboard" element={<CustomsBrokerPortalPage />} />
+              <Route path="/customs-agent/dashboard" element={<CustomsBrokerPortalPage />} />
+              <Route path="/customs-agent/bl-entries" element={<CustomsBrokerPortalPage />} />
+              <Route path="/customs-agent/bl-entries/:blId" element={<CustomsBrokerPortalPage />} />
+              <Route path="/customs-agent/profile" element={<CustomsBrokerPortalPage />} />
+              <Route path="/agent/bl-entries" element={<CustomsBrokerPortalPage />} />
+              <Route path="/agent/bl-entries/:blId" element={<CustomsBrokerPortalPage />} />
+              <Route path="/agent/profile" element={<CustomsBrokerPortalPage />} />
 
-          {/* Customs Agent Portal Routes */}
-          <Route path="/customs-agent/login" element={<CustomAgentLoginPage />} />
-          <Route path="/customs/login" element={<CustomAgentLoginPage />} />
-          <Route path="/customs/dashboard" element={<CustomsBrokerPortalPage />} />
-          <Route path="/customs-agent/dashboard" element={<CustomsBrokerPortalPage />} />
-          <Route path="/customs-agent/bl-entries" element={<CustomsBrokerPortalPage />} />
-          <Route path="/customs-agent/bl-entries/:blId" element={<CustomsBrokerPortalPage />} />
-          <Route path="/customs-agent/profile" element={<CustomsBrokerPortalPage />} />
-          <Route path="/agent/bl-entries" element={<CustomsBrokerPortalPage />} />
-          <Route path="/agent/bl-entries/:blId" element={<CustomsBrokerPortalPage />} />
-          <Route path="/agent/profile" element={<CustomsBrokerPortalPage />} />
+              {/* Protected Main Admin/User Portal Routes */}
+              <Route
+                path="/"
+                element={
+                  <ProtectedRoute>
+                    <MainLayout />
+                  </ProtectedRoute>
+                }
+              >
+                <Route index element={<HomeRedirect />} />
+                <Route path="dashboard" element={<OverviewDashboard />} />
 
-          {/* Protected Main Admin/User Portal Routes */}
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <MainLayout />
-              </ProtectedRoute>
-            }
-          >
-            <Route index element={<HomeRedirect />} />
-            <Route path="dashboard" element={<OverviewDashboard />} />
-            
-            {/* PAYMENTS Group Routes */}
-            <Route path="p2p/purchase-orders" element={<PurchaseOrdersView />} />
-            <Route path="p2p/purchase-orders/:poId" element={<PurchaseOrderDetailView />} />
-            <Route path="admin/purchase-orders/:poId" element={<PurchaseOrderDetailView />} />
+                {/* PAYMENTS Group Routes */}
+                <Route path="p2p/purchase-orders" element={<PurchaseOrdersView />} />
+                <Route path="p2p/purchase-orders/:poId" element={<PurchaseOrderDetailView />} />
+                <Route path="admin/purchase-orders/:poId" element={<PurchaseOrderDetailView />} />
 
-            <Route path="p2p/advances" element={<AdvancePaymentsView />} />
-            <Route path="p2p/advance-payments/create" element={<CreateAdvancePaymentWizard />} />
-            <Route path="admin/advance-payments/create" element={<CreateAdvancePaymentWizard />} />
-            <Route path="p2p/advance-payments/:id" element={<AdvancePaymentDetailView />} />
-            <Route path="admin/advance-payments/:id" element={<AdvancePaymentDetailView />} />
-            <Route path="p2p/advance-payments/:id/edit" element={<EditAdvancePaymentView />} />
-            <Route path="admin/advance-payments/:id/edit" element={<EditAdvancePaymentView />} />
+                <Route path="p2p/advances" element={<AdvancePaymentsView />} />
+                <Route path="p2p/advance-payments/create" element={<CreateAdvancePaymentWizard />} />
+                <Route path="admin/advance-payments/create" element={<CreateAdvancePaymentWizard />} />
+                <Route path="p2p/advance-payments/:id" element={<AdvancePaymentDetailView />} />
+                <Route path="admin/advance-payments/:id" element={<AdvancePaymentDetailView />} />
+                <Route path="p2p/advance-payments/:id/edit" element={<EditAdvancePaymentView />} />
+                <Route path="admin/advance-payments/:id/edit" element={<EditAdvancePaymentView />} />
 
-            <Route path="p2p/invoices" element={<InvoicePaymentsView />} />
-            <Route path="p2p/invoice-payments" element={<InvoicePaymentsView />} />
-            <Route path="admin/invoice-payments" element={<InvoicePaymentsView />} />
+                <Route path="p2p/invoices" element={<InvoicePaymentsView />} />
+                <Route path="p2p/invoice-payments" element={<InvoicePaymentsView />} />
+                <Route path="admin/invoice-payments" element={<InvoicePaymentsView />} />
 
-            <Route path="p2p/invoice-payments/create" element={<InvoicePaymentFormView />} />
-            <Route path="admin/invoice-payments/create" element={<InvoicePaymentFormView />} />
+                <Route path="p2p/invoice-payments/create" element={<InvoicePaymentFormView />} />
+                <Route path="admin/invoice-payments/create" element={<InvoicePaymentFormView />} />
 
-            <Route path="p2p/invoice-payments/:id" element={<InvoicePaymentDetailView />} />
-            <Route path="admin/invoice-payments/:id" element={<InvoicePaymentDetailView />} />
+                <Route path="p2p/invoice-payments/:id" element={<InvoicePaymentDetailView />} />
+                <Route path="admin/invoice-payments/:id" element={<InvoicePaymentDetailView />} />
 
-            <Route path="p2p/invoice-payments/:id/edit" element={<InvoicePaymentFormView />} />
-            <Route path="admin/invoice-payments/:id/edit" element={<InvoicePaymentFormView />} />
-            <Route path="p2p/custom-duty" element={<CustomDutyView />} />
-            <Route path="p2p/custom-duty/create" element={<CreateCustomDutyWizard />} />
-            <Route path="admin/custom-duty/create" element={<CreateCustomDutyWizard />} />
+                <Route path="p2p/invoice-payments/:id/edit" element={<InvoicePaymentFormView />} />
+                <Route path="admin/invoice-payments/:id/edit" element={<InvoicePaymentFormView />} />
+                <Route path="p2p/custom-duty" element={<CustomDutyView />} />
+                <Route path="p2p/custom-duty/create" element={<CreateCustomDutyWizard />} />
+                <Route path="admin/custom-duty/create" element={<CreateCustomDutyWizard />} />
 
-            <Route path="p2p/logistics-payments" element={<LogisticsPaymentsView />} />
-            <Route path="p2p/logistics-payments/create" element={<CreateLogisticsPaymentWizard />} />
-            <Route path="admin/logistics-payments/create" element={<CreateLogisticsPaymentWizard />} />
+                <Route path="p2p/logistics-payments" element={<LogisticsPaymentsView />} />
+                <Route path="p2p/logistics-payments/create" element={<CreateLogisticsPaymentWizard />} />
+                <Route path="admin/logistics-payments/create" element={<CreateLogisticsPaymentWizard />} />
 
-            {/* LOGISTICS Group Routes */}
-            <Route path="p2p/rfq" element={<RfqSourcingView />} />
-            <Route path="p2p/rfq-logistics" element={<RfqSourcingView />} />
-            <Route path="admin/rfqs" element={<RfqSourcingView />} />
-            <Route path="admin/rfqs/create" element={<RfqFormView />} />
-            <Route path="p2p/rfqs/create" element={<RfqFormView />} />
-            <Route path="admin/rfqs/:id" element={<RfqDetailView />} />
-            <Route path="admin/rfqs/:id/edit" element={<RfqFormView />} />
-            <Route path="p2p/exim-review" element={<EximReviewView />} />
-            <Route path="p2p/exim-review/:blId" element={<EximReviewView />} />
-            <Route path="admin/exim" element={<EximReviewView />} />
-            <Route path="admin/exim/:blId" element={<EximReviewView />} />
-            <Route path="p2p/bl-invoices" element={<BlInvoicesView />} />
+                {/* LOGISTICS Group Routes */}
+                <Route path="p2p/rfq" element={<RfqSourcingView />} />
+                <Route path="p2p/rfq-logistics" element={<RfqSourcingView />} />
+                <Route path="admin/rfqs" element={<RfqSourcingView />} />
+                <Route path="admin/rfqs/create" element={<RfqFormView />} />
+                <Route path="p2p/rfqs/create" element={<RfqFormView />} />
+                <Route path="admin/rfqs/:id" element={<RfqDetailView />} />
+                <Route path="admin/rfqs/:id/edit" element={<RfqFormView />} />
+                <Route path="p2p/exim-review" element={<EximReviewView />} />
+                <Route path="p2p/exim-review/:blId" element={<EximReviewView />} />
+                <Route path="admin/exim" element={<EximReviewView />} />
+                <Route path="admin/exim/:blId" element={<EximReviewView />} />
+                <Route path="p2p/bl-invoices" element={<BlInvoicesView />} />
 
-            {/* APPROVALS & SETTLEMENT */}
-            <Route path="approvals" element={<PendingApprovalsView />} />
-            <Route path="p2p/approval-engine" element={<ApprovalEngineView />} />
-            <Route path="p2p/settlement-ledger" element={<SettlementLedgerView />} />
+                {/* APPROVALS & SETTLEMENT */}
+                <Route path="approvals" element={<PendingApprovalsView />} />
+                <Route path="p2p/approval-engine" element={<ApprovalEngineView />} />
+                <Route path="p2p/settlement-ledger" element={<SettlementLedgerView />} />
 
-            {/* MANAGEMENT Group Routes */}
-            <Route path="vendors" element={<VendorListView />} />
-            <Route path="management/vendors" element={<VendorListView />} />
-            <Route path="admin/vendors" element={<VendorListView />} />
+                {/* MANAGEMENT Group Routes */}
+                <Route path="vendors" element={<VendorListView />} />
+                <Route path="management/vendors" element={<VendorListView />} />
+                <Route path="admin/vendors" element={<VendorListView />} />
 
-            <Route path="vendors/create" element={<VendorFormView />} />
-            <Route path="management/vendors/create" element={<VendorFormView />} />
-            <Route path="admin/vendors/create" element={<VendorFormView />} />
+                <Route path="vendors/create" element={<VendorFormView />} />
+                <Route path="management/vendors/create" element={<VendorFormView />} />
+                <Route path="admin/vendors/create" element={<VendorFormView />} />
 
-            <Route path="vendors/:id" element={<VendorDetailsView />} />
-            <Route path="management/vendors/:id" element={<VendorDetailsView />} />
-            <Route path="admin/vendors/:id" element={<VendorDetailsView />} />
+                <Route path="vendors/:id" element={<VendorDetailsView />} />
+                <Route path="management/vendors/:id" element={<VendorDetailsView />} />
+                <Route path="admin/vendors/:id" element={<VendorDetailsView />} />
 
-            <Route path="vendors/:id/edit" element={<VendorFormView />} />
-            <Route path="management/vendors/:id/edit" element={<VendorFormView />} />
-            <Route path="admin/vendors/:id/edit" element={<VendorFormView />} />
+                <Route path="vendors/:id/edit" element={<VendorFormView />} />
+                <Route path="management/vendors/:id/edit" element={<VendorFormView />} />
+                <Route path="admin/vendors/:id/edit" element={<VendorFormView />} />
 
-            {/* MANAGEMENT / ADMIN: Custom Agents Routes */}
-            <Route path="p2p/custom-agents" element={<CustomAgentsView />} />
-            <Route path="management/custom-agents" element={<CustomAgentsView />} />
-            <Route path="admin/custom-agents" element={<CustomAgentsView />} />
-            <Route path="p2p/custom-agents/create" element={<CustomAgentFormView />} />
-            <Route path="management/custom-agents/create" element={<CustomAgentFormView />} />
-            <Route path="admin/custom-agents/create" element={<CustomAgentFormView />} />
-            <Route path="p2p/custom-agents/:id/edit" element={<CustomAgentFormView />} />
-            <Route path="management/custom-agents/:id/edit" element={<CustomAgentFormView />} />
-            <Route path="admin/custom-agents/:id/edit" element={<CustomAgentFormView />} />
+                {/* MANAGEMENT / ADMIN: Custom Agents Routes */}
+                <Route path="p2p/custom-agents" element={<CustomAgentsView />} />
+                <Route path="management/custom-agents" element={<CustomAgentsView />} />
+                <Route path="admin/custom-agents" element={<CustomAgentsView />} />
+                <Route path="p2p/custom-agents/create" element={<CustomAgentFormView />} />
+                <Route path="management/custom-agents/create" element={<CustomAgentFormView />} />
+                <Route path="admin/custom-agents/create" element={<CustomAgentFormView />} />
+                <Route path="p2p/custom-agents/:id/edit" element={<CustomAgentFormView />} />
+                <Route path="management/custom-agents/:id/edit" element={<CustomAgentFormView />} />
+                <Route path="admin/custom-agents/:id/edit" element={<CustomAgentFormView />} />
 
-            {/* MANAGEMENT / ADMIN: Logistics Providers Routes */}
-            <Route path="p2p/logistics-providers" element={<LogisticsProvidersView />} />
-            <Route path="management/logistics-providers" element={<LogisticsProvidersView />} />
-            <Route path="admin/logistics-providers" element={<LogisticsProvidersView />} />
-            <Route path="p2p/logistics-providers/create" element={<LogisticsProviderFormView />} />
-            <Route path="management/logistics-providers/create" element={<LogisticsProviderFormView />} />
-            <Route path="admin/logistics-providers/create" element={<LogisticsProviderFormView />} />
-            <Route path="p2p/logistics-providers/:id/edit" element={<LogisticsProviderFormView />} />
-            <Route path="management/logistics-providers/:id/edit" element={<LogisticsProviderFormView />} />
-            <Route path="admin/logistics-providers/:id/edit" element={<LogisticsProviderFormView />} />
+                {/* MANAGEMENT / ADMIN: Logistics Providers Routes */}
+                <Route path="p2p/logistics-providers" element={<LogisticsProvidersView />} />
+                <Route path="management/logistics-providers" element={<LogisticsProvidersView />} />
+                <Route path="admin/logistics-providers" element={<LogisticsProvidersView />} />
+                <Route path="p2p/logistics-providers/create" element={<LogisticsProviderFormView />} />
+                <Route path="management/logistics-providers/create" element={<LogisticsProviderFormView />} />
+                <Route path="admin/logistics-providers/create" element={<LogisticsProviderFormView />} />
+                <Route path="p2p/logistics-providers/:id/edit" element={<LogisticsProviderFormView />} />
+                <Route path="management/logistics-providers/:id/edit" element={<LogisticsProviderFormView />} />
+                <Route path="admin/logistics-providers/:id/edit" element={<LogisticsProviderFormView />} />
 
-            <Route path="users" element={<UserManagementView />} />
-            <Route path="admin/users" element={<UserManagementView />} />
-            <Route path="roles" element={<RolesAndPermissionsView />} />
-            <Route path="admin/roles" element={<RolesAndPermissionsView />} />
-            <Route path="admin/hierarchy-report" element={<HierarchicalReportView />} />
-            
-            {/* SYSTEM Group Routes */}
-            <Route path="p2p/sap-sync" element={<SapIntegrationView />} />
-            <Route path="admin/sap-sync" element={<SapIntegrationView />} />
-            <Route path="workflows" element={<WorkflowsDashboard />} />
-            <Route path="admin/workflows" element={<WorkflowsDashboard />} />
-            <Route path="exchange-rates" element={<ExchangeRatesDashboard />} />
-            <Route path="admin/exchange-rates" element={<ExchangeRatesDashboard />} />
-            <Route path="profile" element={<UserProfilePage />} />
-          </Route>
+                <Route path="users" element={<UserManagementView />} />
+                <Route path="admin/users" element={<UserManagementView />} />
+                <Route path="roles" element={<RolesAndPermissionsView />} />
+                <Route path="admin/roles" element={<RolesAndPermissionsView />} />
+                <Route path="admin/hierarchy-report" element={<HierarchicalReportView />} />
 
-          <Route path="*" element={<HomeRedirect />} />
-        </Routes>
-        </Suspense>
+                {/* SYSTEM Group Routes */}
+                <Route path="p2p/sap-sync" element={<SapIntegrationView />} />
+                <Route path="admin/sap-sync" element={<SapIntegrationView />} />
+                <Route path="workflows" element={<WorkflowsDashboard />} />
+                <Route path="admin/workflows" element={<WorkflowsDashboard />} />
+                <Route path="exchange-rates" element={<ExchangeRatesDashboard />} />
+                <Route path="admin/exchange-rates" element={<ExchangeRatesDashboard />} />
+                <Route path="profile" element={<UserProfilePage />} />
+              </Route>
+
+              <Route path="*" element={<HomeRedirect />} />
+            </Routes>
+          </Suspense>
         </CustomAgentProvider>
       </VendorProvider>
     </BrowserRouter>

@@ -222,12 +222,12 @@ async function getStepAssignment(approval, stepNumber) {
     }
   } catch (_) {}
 
-  // Pool approval step → no single assigned approver
+  // Pool approval step → reuse pool names from stepObj
   if (stepObj?.isPoolApproval) {
     return {
       assignedApprover: null,
-      assignedApproverName: null,
-      assignedApproverRole: stepObj.roleKey || null
+      assignedApproverName: stepObj.assignedApproverName || null,
+      assignedApproverRole: stepObj.assignedApproverRole || stepObj.roleKey || null
     };
   }
 

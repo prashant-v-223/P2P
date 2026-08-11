@@ -36,19 +36,22 @@ const JOURNEY_LABELS = {
     { title: 'EXIM Manager Approval', role: 'EXIM Manager' },
     { title: 'Finance Lead Approval', role: 'Finance Lead' }
   ],
-'Advance Payment': [
-    { title: 'Purchase HOD Approval', role: 'Procurement_head' },
-    { title: 'Exim HOD Approval', role: 'Exim-Manager' },
-    { title: 'MD Approval', role: 'Md' }
+  'Advance Payment': [
+    { title: 'Purchase Manager Review', role: 'Purchase Manager' },
+    { title: 'Purchase Head Approval', role: 'Procurement_head' },
+    { title: 'CFO Approval', role: 'CFO' }
   ],
   'Invoice Payment': [
-    { title: 'Invoice Verification', role: 'Accounts_Lead' },
-    { title: 'Finance Head Signoff', role: 'Finance_Head' }
+    { title: 'Procurement Head Approval', role: 'Procurement_head' },
+    { title: 'Finance Approval', role: 'Finance' }
+  ],
+  'RFQ Vendor Award': [
+    { title: 'Purchase Head Review', role: 'Procurement_head' },
+    { title: 'CFO Signoff', role: 'CFO' }
   ],
   'RFQ': [
-    { title: 'Purchase HOD Approval', role: 'Procurement_head' },
-    { title: 'Exim HOD Approval', role: 'Exim-Manager' },
-    { title: 'MD Approval', role: 'Md' }
+    { title: 'Purchase Head Review', role: 'Procurement_head' },
+    { title: 'CFO Signoff', role: 'CFO' }
   ],
   'Custom Duty': [
     { title: 'Logistics Head Signoff', role: 'Logistics_Head' },
