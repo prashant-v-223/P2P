@@ -78,6 +78,14 @@ const rfqBlEntrySchema = new mongoose.Schema({
   etaDate: { type: Date },
   customAgentId: { type: String },
   customAgentName: { type: String },
+  customAgentAgencyName: { type: String },
+  boeNumber: String,
+  eximNotes: String,
+  agentNotes: String,
+  eximReviewedAt: Date,
+  assignedAt: Date,
+  materialReceivedAt: Date,
+  customsClearedAt: Date,
   autoAsnNumber: { type: String },
   status: { 
     type: String, 
@@ -99,6 +107,8 @@ const rfqBlEntrySchema = new mongoose.Schema({
   documents: [{
     docType: String,
     fileUrl: String,
+    fileName: String,
+    stage: String,
     uploadedBy: String,
     uploadedAt: { type: Date, default: Date.now }
   }]

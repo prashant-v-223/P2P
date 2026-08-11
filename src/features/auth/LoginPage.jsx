@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Eye, EyeOff, Lock, Mail } from 'lucide-react';
-import { loginUser, clearAuthError } from './authSlice';
+import { loginUser } from './authSlice';
 import ForgotPasswordModal from './ForgotPasswordModal';
 import AuthShell from './AuthShell';
 import { Button } from '../../components/ui/button';
@@ -13,8 +13,8 @@ export default function LoginPage() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const { loading, error } = useSelector((state) => state.auth);
-  const [email, setEmail] = useState('admin@rayzon.one');
-  const [password, setPassword] = useState('password123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
@@ -29,13 +29,6 @@ export default function LoginPage() {
     return data;
   });
   const submit = (event) => { event.preventDefault(); signIn({ email, password, rememberMe }).catch(() => {}); };
-  const demoLogin = (demoEmail) => {
-    dispatch(clearAuthError());
-    setEmail(demoEmail);
-    setPassword('Rayzon@2026');
-    signIn({ email: demoEmail, password: 'Rayzon@2026', rememberMe }).catch(() => {});
-  };
-
   return (
     <AuthShell title="Sign in to your account" description="Rayzon Solar — Procure-to-Pay Portal">
       {error && <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-3.5 text-sm text-rose-700">{error}</div>}
@@ -69,24 +62,6 @@ export default function LoginPage() {
           </>
         )}
       </form>
-      <details className="group mt-5 border-t border-slate-100 pt-4">
-        <summary className="cursor-pointer list-none text-center text-xs font-semibold text-slate-400 hover:text-teal-700">Development demo accounts</summary>
-        <div className="mt-3 grid gap-2 sm:grid-cols-3">
-          {[
-            ['Admin', 'Full System Admin', 'prashantvadhvana@gmail.com'],
-            ['Logistics Lead', 'Logistics & Providers', 'vikram.singh@rayzon.com'],
-            ['Procurement Head', 'PO & RFQ Approvals', 'harish.solanki@rayzon.com'],
-            ['Managing Director', 'Executive Approvals', 'arjun.shah@rayzon.com'],
-            ['CFO', 'Financial Oversight', 'rajesh.patel@rayzon.com'],
-            ['Accounts', 'Payments & SAP View', 'kavya.mehta@rayzon.com']
-          ].map(([label, description, value]) => (
-            <button key={value} type="button" disabled={loading} onClick={() => demoLogin(value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition hover:border-teal-200 hover:bg-teal-50">
-              <span className="block text-xs font-bold text-slate-800">{label}</span>
-              <span className="mt-1 block text-[11px] text-slate-500">{description}</span>
-            </button>
-          ))}
-        </div>
-      </details>
       <ForgotPasswordModal isOpen={forgotOpen} onClose={() => setForgotOpen(false)} />
     </AuthShell>
   );

@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import { config } from '../../config/index.js';
 import { Vendor } from '../../models/Vendor.js';
@@ -108,12 +109,12 @@ export const vendorLogin = async (req, res) => {
         { supplierId: rx },
         { id: rx }
       ]
-    }).sort({ updatedAt: -1 }).select('+passwordHash');
+    }).sort({ updatedAt: -1 }).select('+passwordHash +legacyPasswordHash');
 
     if (!vendor) {
       vendor = await Vendor.findOne({
         email: new RegExp(escapeRegex(loginIdentifier), 'i')
-      }).sort({ updatedAt: -1 }).select('+passwordHash');
+      }).sort({ updatedAt: -1 }).select('+passwordHash +legacyPasswordHash');
     }
 
     if (!vendor) {
@@ -126,7 +127,13 @@ export const vendorLogin = async (req, res) => {
 
     // Verify password using scrypt hash
     const { User } = await import('../../models/User.js');
-    const isPasswordValid = await User.prototype.verifyPassword.call({ passwordHash: vendor.passwordHash }, password);
+    const currentPasswordValid = vendor.passwordHash
+      ? await User.prototype.verifyPassword.call({ passwordHash: vendor.passwordHash }, password)
+      : false;
+    const legacyPasswordValid = !currentPasswordValid && vendor.legacyPasswordHash
+      ? await bcrypt.compare(password, vendor.legacyPasswordHash)
+      : false;
+    const isPasswordValid = currentPasswordValid || legacyPasswordValid;
 
     if (!isPasswordValid) {
       return res.status(401).json({ success: false, error: 'Invalid password. Please try again.' });
@@ -433,7 +440,7 @@ export const generateVendorPassword = async (req, res) => {
 
     const updated = await Vendor.findOneAndUpdate(
       filter,
-      { $set: { passwordHash } },
+      { $set: { passwordHash, passwordResetRequired: true, portalAccessEnabled: true }, $unset: { legacyPasswordHash: 1 } },
       { new: true }
     ).select('+passwordHash');
 
@@ -479,9 +486,9 @@ export const vendorChangePassword = async (req, res) => {
     }
 
     const filter = buildVendorFilter(identifier);
-    let vendor = await Vendor.findOne(filter).select('+passwordHash');
+    let vendor = await Vendor.findOne(filter).select('+passwordHash +legacyPasswordHash');
     if (!vendor && email) {
-      vendor = await Vendor.findOne({ email: new RegExp(escapeRegex(email), 'i') }).select('+passwordHash');
+      vendor = await Vendor.findOne({ email: new RegExp(escapeRegex(email), 'i') }).select('+passwordHash +legacyPasswordHash');
     }
 
     if (!vendor) {
@@ -490,7 +497,10 @@ export const vendorChangePassword = async (req, res) => {
 
     // Verify current password
     const { User } = await import('../../models/User.js');
-    const isPasswordValid = await User.prototype.verifyPassword.call({ passwordHash: vendor.passwordHash }, currentPassword);
+    const currentPasswordValid = vendor.passwordHash
+      ? await User.prototype.verifyPassword.call({ passwordHash: vendor.passwordHash }, currentPassword)
+      : false;
+    const isPasswordValid = currentPasswordValid || Boolean(vendor.legacyPasswordHash && await bcrypt.compare(currentPassword, vendor.legacyPasswordHash));
 
     if (!isPasswordValid) {
       return res.status(401).json({ success: false, error: 'Current password is incorrect.' });
@@ -498,6 +508,8 @@ export const vendorChangePassword = async (req, res) => {
 
     // Hash and save new password
     vendor.passwordHash = await User.hashPassword(newPassword);
+    vendor.legacyPasswordHash = undefined;
+    vendor.passwordResetRequired = false;
     await vendor.save();
 
     return res.json({

@@ -15,6 +15,7 @@
     "test:backend": "node server/src/db/smoke-test.js",
     "test:mail": "node server/src/services/verify-mail.js",
     "import:legacy": "node server/src/db/import-legacy-mysql.js",
+    "backup:database": "node server/src/db/export-database.js",
     "dev:all": "concurrently \"npm run server:dev\" \"npm run dev\"",
     "start": "node server/server.js"
   },
@@ -22,6 +23,7 @@
     "@aws-sdk/client-s3": "^3.470.0",
     "@aws-sdk/s3-request-presigner": "^3.470.0",
     "@reduxjs/toolkit": "^2.2.5",
+    "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",
     "cors": "^2.8.5",
     "express": "^4.19.2",

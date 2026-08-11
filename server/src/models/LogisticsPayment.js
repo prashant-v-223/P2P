@@ -16,6 +16,19 @@ const logisticsPaymentSchema = new mongoose.Schema({
   currency: { type: String, default: 'INR' },
   category: { type: String, enum: ['freight', 'destination_charges', 'detention', 'port_storage', 'agency_fee'], default: 'freight' },
   invoiceFile: String,
+  fileName: String,
+  fileUrl: String,
+  documents: [{
+    docType: String,
+    documentType: String,
+    label: String,
+    fileName: String,
+    fileUrl: String,
+    filePath: String,
+    originalFilename: String,
+    uploadedBy: String,
+    uploadedAt: Date
+  }],
   remarks: String,
 
   status: {

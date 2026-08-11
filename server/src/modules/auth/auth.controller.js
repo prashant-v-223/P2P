@@ -79,7 +79,7 @@ const generateTokens = (user) => {
   const accessToken = jwt.sign(payload, config.jwtAccessSecret, {
     expiresIn: config.jwtAccessExpiresIn
   });
-  const refreshToken = jwt.sign({ id: user.id }, config.jwtRefreshSecret, {
+  const refreshToken = jwt.sign({ id: user.id, email: user.email }, config.jwtRefreshSecret, {
     expiresIn: config.jwtRefreshExpiresIn
   });
   const tokens = refreshTokensStore.get(user.id) || new Set();
@@ -131,16 +131,23 @@ export const login = async (req, res) => {
     const normalizedEmail = email.trim().toLowerCase();
     let user = null;
 
-    if (mongoose.connection.readyState === 1) {
+    const databaseConnected = mongoose.connection.readyState === 1;
+    let databaseQueryFailed = false;
+
+    if (databaseConnected) {
       try {
         user = await User.findOne({ email: normalizedEmail })
           .select('+passwordHash +twoFactorCodeHash +twoFactorCodeExpiresAt');
       } catch (dbErr) {
+        databaseQueryFailed = true;
         console.warn('[AUTH DB WARNING]: Failed to query User model:', dbErr.message);
       }
     }
 
-    if (!user) {
+    // Demo identities must never bypass the real user directory. They are only
+    // available when MongoDB itself is unavailable, not when an account is
+    // absent, inactive, or deleted from the User collection.
+    if (!user && (!databaseConnected || databaseQueryFailed)) {
       const fallback = FALLBACK_USERS.find((u) => u.email.toLowerCase() === normalizedEmail);
       if (fallback) {
         // Standard password check for demo/fallback mode
@@ -203,17 +210,24 @@ export const refreshTokenController = async (req, res) => {
     if (!refreshToken) return res.status(401).json({ success: false, error: 'Refresh token required.' });
 
     const decoded = jwt.verify(refreshToken, config.jwtRefreshSecret);
+    if (!decoded.id || !decoded.email) {
+      return res.status(403).json({ success: false, error: 'This older login session must sign in again.' });
+    }
     let user = null;
 
-    if (mongoose.connection.readyState === 1) {
+    const databaseConnected = mongoose.connection.readyState === 1;
+    let databaseQueryFailed = false;
+
+    if (databaseConnected) {
       try {
-        user = await User.findOne({ $or: [{ id: decoded.id }, { _id: decoded.id }, { email: decoded.email }] });
+        user = await User.findOne({ id: decoded.id, email: String(decoded.email).toLowerCase() });
       } catch (dbErr) {
+        databaseQueryFailed = true;
         console.warn('[REFRESH DB WARN]:', dbErr.message);
       }
     }
 
-    if (!user) {
+    if (!user && (!databaseConnected || databaseQueryFailed)) {
       user = FALLBACK_USERS.find((u) => u.id === decoded.id || u.email?.toLowerCase() === decoded.email?.toLowerCase());
     }
 

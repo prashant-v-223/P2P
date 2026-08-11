@@ -4,7 +4,7 @@ import path from 'node:path';
 import express from 'express';
 import mongoose from 'mongoose';
 import multer from 'multer';
-import { UPLOAD_DIR, toLocalPath, getDownloadUrl, fileExistsInS3, uploadToS3 } from '../../services/storage.service.js';
+import { UPLOAD_DIR, toLocalPath, openDownloadStream, fileExistsInS3, uploadToS3 } from '../../services/storage.service.js';
 import { PurchaseOrder } from '../../models/PurchaseOrder.js';
 import { InvoicePayment } from '../../models/InvoicePayment.js';
 import { AdvancePayment } from '../../models/AdvancePayment.js';
@@ -3557,11 +3557,19 @@ router.get('/exim/bl-entries/:blId', authenticateToken, async (req, res) => {
   try {
     const entry = await RfqBlEntry.findOne({ $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] }).lean();
     if (!entry) return res.status(404).json({ success: false, error: 'BL entry not found.' });
-    const [rfq, agents] = await Promise.all([
+    const [rfq, agents, assignedAgent, invoices] = await Promise.all([
       RfqHeader.findOne({ rfqId: entry.rfqId }).select('rfqId rfqNumber title').lean(),
-      CustomAgent.find({ status: 'Active' }).select('agentId agencyName contactPerson email').sort({ agencyName: 1 }).lean()
+      CustomAgent.find({ status: 'Active' }).select('agentId agencyName contactPerson email').sort({ agencyName: 1 }).lean(),
+      entry.customAgentId ? CustomAgent.findOne({ agentId: entry.customAgentId }).select('agentId agencyName contactPerson email').lean() : null,
+      BlInvoice.find({ $or: [{ blId: entry.blId }, { blNumber: entry.blNumber }] }).sort({ submittedAt: 1, createdAt: 1 }).lean()
     ]);
-    return res.json({ success: true, data: { ...entry, rfq }, agents });
+    return res.json({ success: true, data: {
+      ...entry,
+      customAgentName: assignedAgent?.contactPerson || entry.customAgentName,
+      customAgentAgencyName: assignedAgent?.agencyName || entry.customAgentAgencyName,
+      rfq,
+      invoices
+    }, agents });
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -3569,10 +3577,11 @@ router.post('/exim/bl-entries/:blId/documents', authenticateToken, async (req, r
   try {
     const bl = await RfqBlEntry.findOne({ $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] });
     if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+    if (bl.status === 'custom_cleared') return res.status(400).json({ success: false, error: 'Documents cannot be changed after customs clearance.' });
     const documents = Array.isArray(req.body.documents) ? req.body.documents : [];
     const valid = documents.filter((doc) => String(doc.docType || '').trim() && String(doc.fileName || '').trim());
     if (!valid.length) return res.status(400).json({ success: false, error: 'Select a document type and file.' });
-    bl.documents.push(...valid.map((doc) => ({ docType: String(doc.docType).trim(), fileUrl: String(doc.fileName).trim(), uploadedBy: req.user?.name || req.user?.email || 'EXIM Team', uploadedAt: new Date(), stage: 'EXIM Review' })));
+    bl.documents.push(...valid.map((doc) => ({ docType: String(doc.docType).trim(), fileUrl: String(doc.fileName).trim(), fileName: String(doc.fileName).trim(), uploadedBy: req.user?.name || req.user?.email || 'EXIM Team', uploadedAt: new Date(), stage: 'EXIM Review' })));
     if (bl.status === 'submitted') bl.status = 'exim_review';
     bl.eximReviewedAt = bl.eximReviewedAt || new Date();
     await bl.save();
@@ -3590,6 +3599,7 @@ router.post('/exim/bl-entries/:blId/assign', authenticateToken, async (req, res)
     if (bl.status === 'custom_cleared') return res.status(400).json({ success: false, error: 'A customs-cleared BL cannot be reassigned.' });
     bl.customAgentId = agent.agentId;
     bl.customAgentName = agent.agencyName;
+    bl.customAgentAgencyName = agent.agencyName;
     bl.eximNotes = String(req.body.notes || '').trim();
     bl.eximReviewedAt = bl.eximReviewedAt || new Date();
     bl.assignedAt = new Date();
@@ -4031,6 +4041,18 @@ router.get('/bl-invoices', optionalAuth, async (req, res) => {
     const statusFilter = String(req.query.status || 'All').trim();
     const sourceFilter = String(req.query.source || 'All').trim();
 
+    const normalizeInvoiceDocument = (doc, fallbackType, fallbackUploader) => {
+      const fileUrl = String(doc?.fileUrl || doc?.filePath || doc?.fileName || doc?.originalFilename || '').trim();
+      if (!fileUrl) return null;
+      return {
+        ...doc,
+        docType: doc?.docType || doc?.documentType || doc?.label || fallbackType || 'Supporting Document',
+        fileUrl,
+        fileName: doc?.fileName || doc?.originalFilename || path.basename(fileUrl),
+        uploadedBy: doc?.uploadedBy || fallbackUploader || 'Vendor'
+      };
+    };
+
     let filtered = await Promise.all(items.map(async (item) => {
       const typeDisplay = item.typeDisplay || (
         item.category === 'freight' ? 'Freight Invoice' :
@@ -4053,10 +4075,20 @@ router.get('/bl-invoices', optionalAuth, async (req, res) => {
         try { workflowSteps = JSON.parse(app.workflowSteps); } catch (_) { }
       }
 
-      const fileTarget = String(item.fileName || item.fileUrl || item.invoiceFile || app?.transactionSnapshot?.fileName || app?.documents?.[0]?.fileUrl || 'Invoice_Document.pdf').trim();
-      const documentsList = (Array.isArray(item.documents) && item.documents.length > 0)
-        ? item.documents
-        : (fileTarget ? [{ docType: typeDisplay, fileName: fileTarget, fileUrl: fileTarget, uploadedBy: item.vendorName || 'Vendor' }] : []);
+      const fileTarget = String(item.fileUrl || item.fileName || item.invoiceFile || app?.transactionSnapshot?.fileUrl || app?.transactionSnapshot?.fileName || app?.documents?.[0]?.fileUrl || '').trim();
+      const documentsList = (Array.isArray(item.documents) ? item.documents : [])
+        .map((doc) => normalizeInvoiceDocument(doc, typeDisplay, item.vendorName))
+        .filter(Boolean);
+      if (!documentsList.length && fileTarget) {
+        documentsList.push(normalizeInvoiceDocument({ fileUrl: fileTarget }, typeDisplay, item.vendorName));
+      }
+
+      const blEntry = item.blId
+        ? await RfqBlEntry.findOne({ blId: item.blId }, { documents: 1 }).lean()
+        : await RfqBlEntry.findOne({ blNumber: item.blNumber }, { documents: 1 }).lean();
+      const blEntryDocuments = (blEntry?.documents || [])
+        .map((doc) => normalizeInvoiceDocument(doc, 'Bill of Lading', item.vendorName))
+        .filter(Boolean);
 
       return {
         ...item,
@@ -4066,6 +4098,7 @@ router.get('/bl-invoices', optionalAuth, async (req, res) => {
         fileUrl: fileTarget,
         invoiceFile: fileTarget,
         documents: documentsList,
+        blEntryDocuments,
         typeDisplay,
         source,
         amount,
@@ -4384,14 +4417,23 @@ router.get('/download-file', authenticateToken, async (req, res) => {
     if (!rawTarget) return res.status(400).json({ success: false, error: 'File path or name required.' });
 
     const cleanTarget = String(rawTarget).trim();
-    const filename = path.basename(cleanTarget);
+    const filename = path.basename(String(req.query.name || cleanTarget).trim());
+    const storageFilename = path.basename(cleanTarget);
 
     try {
-      if (typeof fileExistsInS3 === 'function' && typeof getDownloadUrl === 'function') {
+      if (typeof fileExistsInS3 === 'function' && typeof openDownloadStream === 'function') {
         const existsInS3 = await fileExistsInS3(cleanTarget);
         if (existsInS3) {
-          const s3Url = await getDownloadUrl(cleanTarget, 3600);
-          if (s3Url) return res.redirect(s3Url);
+          const storedFile = await openDownloadStream(cleanTarget);
+          res.setHeader('Content-Type', storedFile.contentType);
+          res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/["\r\n]/g, '_')}"`);
+          if (storedFile.contentLength != null) res.setHeader('Content-Length', storedFile.contentLength);
+          storedFile.body.on('error', (streamError) => {
+            console.error('[Download API] Storage stream failed:', streamError);
+            if (!res.headersSent) res.status(500).json({ success: false, error: 'Document stream failed.' });
+            else res.destroy(streamError);
+          });
+          return storedFile.body.pipe(res);
         }
       }
     } catch (_) { }
@@ -4406,7 +4448,7 @@ router.get('/download-file', authenticateToken, async (req, res) => {
           if (entry.isDirectory()) {
             const found = findFile(fullPath);
             if (found) return found;
-          } else if (entry.name.toLowerCase() === filename.toLowerCase() || entry.name.toLowerCase().includes(filename.toLowerCase())) {
+          } else if (entry.name.toLowerCase() === storageFilename.toLowerCase() || entry.name.toLowerCase().includes(storageFilename.toLowerCase())) {
             return fullPath;
           }
         }
@@ -4419,6 +4461,12 @@ router.get('/download-file', authenticateToken, async (req, res) => {
       return res.download(localPath, filename);
     }
 
+    return res.status(404).json({
+      success: false,
+      error: 'This legacy document is referenced in the database, but its physical file is not available in local or configured cloud storage.'
+    });
+
+    /* istanbul ignore next -- retained only for compatibility with old builds */
     const lowerName = filename.toLowerCase();
 
     if (lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) {

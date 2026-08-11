@@ -117,6 +117,30 @@ function DetailModal({ invoice, onClose, onRefresh }) {
     (isEXIMStep && (userRole.includes('exim') || userRole.includes('manager'))) ||
     (isFinanceStep && (userRole.includes('finance') || userRole.includes('cfo')));
 
+  const renderDocuments = (documents, emptyMessage) => documents.length ? (
+    <div className="space-y-2">
+      {documents.map((doc, idx) => {
+        const targetFile = doc.fileUrl || doc.filePath || doc.fileName || doc.originalFilename;
+        const docLabel = doc.docType || doc.documentType || doc.label || doc.originalFilename || 'Supporting Document';
+        const displayName = doc.originalFilename || doc.fileName || String(targetFile || '').split('/').pop();
+        return (
+          <div key={`${targetFile}-${idx}`} className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/70 text-xs">
+            <div className="flex items-center gap-2 truncate max-w-[75%]">
+              <FileText className="w-3.5 h-3.5 text-[#0d7676] shrink-0" />
+              <div className="truncate">
+                <p className="font-bold text-slate-800 truncate">{docLabel}</p>
+                <p className="text-[10px] font-mono text-slate-400 truncate">{displayName}</p>
+              </div>
+            </div>
+            <button type="button" disabled={!targetFile} onClick={() => downloadDocumentFile(targetFile, displayName || docLabel)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-teal-200 bg-white hover:bg-teal-50 text-[#0d7676] font-bold text-xs transition shadow-2xs cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
+              <Download className="w-3.5 h-3.5" /><span>Download</span>
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  ) : <p className="text-xs text-slate-400 italic">{emptyMessage}</p>;
+
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && !submitting && onClose()}>
       <section className="modal-panel max-w-2xl">
@@ -186,35 +210,15 @@ function DetailModal({ invoice, onClose, onRefresh }) {
               </span>
             </div>
 
-            {((invoice.documents && invoice.documents.length > 0) || invoice.fileName || invoice.fileUrl) ? (
-              <div className="space-y-2">
-                {(invoice.documents || [{ fileName: invoice.fileName || invoice.fileUrl, docType: invoice.typeDisplay || 'Supporting Document' }]).map((doc, idx) => {
-                  const targetFile = doc.fileUrl || doc.fileName || doc.name || invoice.fileName || invoice.fileUrl;
-                  const docLabel = doc.docType || doc.name || 'Logistics Invoice Document';
-                  return (
-                    <div key={idx} className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/70 text-xs">
-                      <div className="flex items-center gap-2 truncate max-w-[75%]">
-                        <FileText className="w-3.5 h-3.5 text-[#0d7676] shrink-0" />
-                        <div className="truncate">
-                          <p className="font-bold text-slate-800 truncate">{docLabel}</p>
-                          <p className="text-[10px] font-mono text-slate-400 truncate">{targetFile}</p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => downloadDocumentFile(targetFile, docLabel)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-teal-200 bg-white hover:bg-teal-50 text-[#0d7676] font-bold text-xs transition shadow-2xs cursor-pointer shrink-0"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Download</span>
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-xs text-slate-400 italic">No document file attached to this invoice.</p>
-            )}
+            {renderDocuments(invoice.documents || [], 'No document file attached to this invoice.')}
+          </div>
+
+          <div className="rounded-xl border border-slate-200/80 bg-white p-4 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+              <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2"><Paperclip className="w-3.5 h-3.5 text-[#0d7676]" />BL Entry Documents</h4>
+              <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{(invoice.blEntryDocuments || []).length} file(s)</span>
+            </div>
+            {renderDocuments(invoice.blEntryDocuments || [], 'No documents are attached to the linked BL entry.')}
           </div>
 
           {/* Universal Dynamic Approval Workflow Stepper Component */}

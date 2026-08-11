@@ -4,10 +4,11 @@ import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import {
   FileSpreadsheet, FileCheck, Plus, Search, Eye, Pencil, Copy, Trash2, Loader2,
-  ChevronLeft, ChevronRight, Box, MapPin, X, RefreshCw
+  Box, MapPin, X, RefreshCw
 } from 'lucide-react';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { Button } from '../../components/ui/button';
+import { ServerPagination } from '../../components/ui/server-pagination';
 import { getRfqAllocationSummary } from './rfqStatus';
 
 const ActionButton = ({ onClick, icon: Icon, label, color = "slate", bordered = false }) => {
@@ -45,7 +46,7 @@ export default function RfqSourcingView() {
   const [totalRfqs, setTotalRfqs] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const pageSize = 10;
+  const [pageSize, setPageSize] = useState(10);
 
   // Helper function
   const isRfqClosed = (rfq) => {
@@ -81,7 +82,7 @@ export default function RfqSourcingView() {
     }, 300);
     return () => clearTimeout(timer);
   }, [search]);
-  useEffect(() => { fetchRfqs(); }, [debouncedSearch, statusFilter, currentPage]);
+  useEffect(() => { fetchRfqs(); }, [debouncedSearch, statusFilter, currentPage, pageSize]);
 
   const startIndex = (currentPage - 1) * pageSize;
   const displayedRfqs = rfqs;
@@ -351,18 +352,20 @@ export default function RfqSourcingView() {
                 })}
               </tbody>
             </table>
-            {totalRfqs > 0 && (
-              <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200 bg-slate-50/50">
-                <span className="text-[11px] text-slate-500 font-medium">Showing {startIndex + 1} to {Math.min(startIndex + rfqs.length, totalRfqs)} of {totalRfqs} RFQs</span>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="p-1.5 rounded border border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 transition"><ChevronLeft className="w-4 h-4 text-slate-600" /></button>
-                  <span className="text-[11px] font-bold text-slate-700 px-1">{currentPage} / {totalPages}</span>
-                  <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="p-1.5 rounded border border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 transition"><ChevronRight className="w-4 h-4 text-slate-600" /></button>
-                </div>
-              </div>
-            )}
           </div>
         )}
+      </div>
+
+      <div className="pt-1">
+        <ServerPagination
+          page={currentPage}
+          totalPages={totalPages}
+          total={totalRfqs}
+          pageSize={pageSize}
+          itemLabel="RFQs"
+          onPageChange={setCurrentPage}
+          onPageSizeChange={(size) => { setPageSize(size); setCurrentPage(1); }}
+        />
       </div>
 
       {/* REOPEN RFQ MODAL */}

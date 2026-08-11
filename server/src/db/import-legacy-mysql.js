@@ -113,10 +113,10 @@ for (const statement of insertStatements(source)) {
     if (values.length !== statement.columns.length) {
       throw new Error(`Column mismatch in ${statement.table}: expected ${statement.columns.length}, got ${values.length}`);
     }
-    const row = Object.fromEntries(statement.columns.map((column, index) => [
-      column,
-      SECRET_COLUMNS.has(column) ? '[REDACTED]' : values[index]
-    ]));
+    const row = Object.fromEntries(statement.columns.map((column, index) => {
+      const retainVendorPasswordHash = statement.table === 'vendor_users' && column === 'password';
+      return [column, SECRET_COLUMNS.has(column) && !retainVendorPasswordHash ? '[REDACTED]' : values[index]];
+    }));
     list.push(row);
   }
   tables.set(statement.table, list);
@@ -397,13 +397,15 @@ for (const row of (tables.get('custom_agent_users') || []).filter(activeRow)) {
 }
 
 for (const row of (tables.get('vendor_users') || []).filter(activeRow)) {
-  vendorOps.push({ updateOne: { filter: { sapVendorCode: str(row.sap_vendor_code) }, update: { $setOnInsert: {
+  const legacyPasswordHash = /^\$2[aby]\$/.test(str(row.password)) ? str(row.password) : '';
+  vendorOps.push({ updateOne: { filter: { sapVendorCode: str(row.sap_vendor_code) }, update: { $set: {
     id: id('legacy-vendor', row.id), supplierId: str(row.sap_vendor_code), sapVendorCode: str(row.sap_vendor_code),
     companyName: str(row.company_name), contactPerson: str(row.contact_person), phone: str(row.phone), email: str(row.email),
     vendorType: str(row.vendor_type, 'domestic').toUpperCase(), paymentTerms: row.payment_term_days == null ? '30 Days' : `${row.payment_term_days} Days`,
     status: str(row.status).toLowerCase() === 'active' ? 'Active' : 'Inactive', gstin: str(row.gstin), pan: str(row.pan),
     bankName: str(row.bank_name), branch: str(row.bank_branch), accountNumber: str(row.bank_account), ifscCode: str(row.ifsc_code),
-    legacyMysqlId: row.id, legacyImportedAt: new Date(), portalAccessEnabled: false
+    legacyMysqlId: row.id, legacyImportedAt: new Date(), portalAccessEnabled: Boolean(legacyPasswordHash) && str(row.status).toLowerCase() === 'active',
+    legacyPasswordHash: legacyPasswordHash || undefined, passwordResetRequired: false
   } }, upsert: true } });
   summary.vendors += 1;
 }
@@ -553,20 +555,23 @@ for (const row of (tables.get('rfq_bl_entries') || []).filter(activeRow)) {
   if (!rfq) continue;
   const vendor = vendors.get(str(row.vendor_user_id));
   const assignedAgent = (tables.get('custom_agent_users') || []).find((agent) => str(agent.id) === str(row.assigned_agent_id));
+  const importedBl = {
+    blId: id('legacy-bl', row.id), blNumber: str(row.bl_number), rfqId: str(rfq.rfq_number), rfqNumber: str(rfq.rfq_number),
+    vendorId: id('legacy-vendor', row.vendor_user_id), vendorName: str(vendor?.company_name), containerCount: num(row.num_containers),
+    autoAsnNumber: str(row.asn_number), status: str(row.status, 'submitted'), customAgentId: row.assigned_agent_id ? id('legacy-agent', row.assigned_agent_id) : '',
+    customAgentName: str(assignedAgent?.name || assignedAgent?.company_name), customAgentAgencyName: str(assignedAgent?.company_name),
+    remarks: str(row.remarks), eximNotes: str(row.exim_notes), agentNotes: str(row.agent_notes), boeNumber: str(row.boe_number),
+    eximReviewedAt: date(row.exim_reviewed_at), assignedAt: date(row.assigned_at), materialReceivedAt: date(row.material_received_at),
+    customsClearedAt: date(row.custom_cleared_at), legacyMysqlId: row.id, legacyImportedAt: new Date()
+  };
   blEntryOps.push({ updateOne: {
     filter: { blNumber: str(row.bl_number) },
-    update: { $setOnInsert: {
-      blId: id('legacy-bl', row.id), blNumber: str(row.bl_number), rfqId: str(rfq.rfq_number), rfqNumber: str(rfq.rfq_number),
-      vendorId: id('legacy-vendor', row.vendor_user_id), vendorName: str(vendor?.company_name), containerCount: num(row.num_containers),
-      autoAsnNumber: str(row.asn_number), status: str(row.status, 'submitted'), customAgentId: row.assigned_agent_id ? id('legacy-agent', row.assigned_agent_id) : '',
-      customAgentName: str(assignedAgent?.company_name || assignedAgent?.name),
-      remarks: str(row.remarks), boeNumber: str(row.boe_number), legacyMysqlId: row.id, legacyImportedAt: new Date()
-    } }, upsert: true
+    update: { $set: importedBl }, upsert: true
   } });
   if (row.assigned_agent_id) {
     blAgentRepairOps.push({ updateOne: {
       filter: { blNumber: str(row.bl_number) },
-      update: { $set: { customAgentId: id('legacy-agent', row.assigned_agent_id), customAgentName: str(assignedAgent?.company_name || assignedAgent?.name) } }
+      update: { $set: { customAgentId: id('legacy-agent', row.assigned_agent_id), customAgentName: str(assignedAgent?.name || assignedAgent?.company_name), customAgentAgencyName: str(assignedAgent?.company_name) } }
     } });
   }
   blDocumentRepairOps.push({ updateOne: {

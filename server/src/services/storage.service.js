@@ -193,6 +193,37 @@ export async function getDownloadUrl(fileUrl, expiresIn = 3600) {
 }
 
 /**
+ * Open a stored object for same-origin streaming through an API response.
+ * This avoids exposing a presigned cross-origin URL to browser fetch(), which
+ * requires CORS rules on the S3-compatible bucket.
+ */
+export async function openDownloadStream(fileUrl) {
+  const localPath = toLocalPath(fileUrl);
+  if (localPath) {
+    if (!fs.existsSync(localPath)) throw new Error('File not found in local storage.');
+    const stat = fs.statSync(localPath);
+    return {
+      body: fs.createReadStream(localPath),
+      contentLength: stat.size,
+      contentType: 'application/octet-stream'
+    };
+  }
+
+  if (!isS3Configured()) throw new Error('File not available for download.');
+  const key = String(fileUrl || '').startsWith('s3://')
+    ? String(fileUrl).replace(`s3://${BUCKET_NAME}/`, '')
+    : String(fileUrl || '').replace(/^\/+/, '');
+  if (!key) throw new Error('No file reference provided.');
+
+  const response = await getS3Client().send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key }));
+  return {
+    body: response.Body,
+    contentLength: response.ContentLength,
+    contentType: response.ContentType || 'application/octet-stream'
+  };
+}
+
+/**
  * Delete a file (S3 or local).
  * @param {string} fileUrl - stored s3:// URL or /uploads/... path
  */
@@ -292,6 +323,7 @@ export async function getFileMetadata(fileUrl) {
 export default {
   uploadToS3,
   getDownloadUrl,
+  openDownloadStream,
   deleteFromS3,
   fileExistsInS3,
   getFileMetadata,

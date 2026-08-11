@@ -1,5 +1,5 @@
 // downloadHelper.js - Universal Instant File Downloader (AWS S3 & Server Storage)
-export function downloadDocumentFile(fileUrlOrName, customTitle) {
+export async function downloadDocumentFile(fileUrlOrName, customTitle) {
   const fileStr = String(fileUrlOrName || customTitle || 'Document.pdf').trim();
   if (!fileStr) return;
 
@@ -30,11 +30,23 @@ export function downloadDocumentFile(fileUrlOrName, customTitle) {
   // Triggers native browser attachment download immediately without async gesture blocking
   const downloadUrl = `/api/p2p/download-file?fileUrl=${encodeURIComponent(fileStr)}&name=${encodeURIComponent(filename)}`;
   
-  const link = document.createElement('a');
-  link.href = downloadUrl;
-  link.download = filename;
-  link.target = '_blank';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  const token = localStorage.getItem('rayzon_access_token') || sessionStorage.getItem('rayzon_access_token') || localStorage.getItem('rayzon_token');
+  try {
+    const response = await fetch(downloadUrl, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || 'Document is not available for download.');
+    }
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(objectUrl);
+  } catch (error) {
+    window.alert(error.message);
+  }
 }

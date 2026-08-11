@@ -32,6 +32,24 @@ const statusClass = (value) => {
 
 const dateText = (value, withTime = false) => value ? new Date(value).toLocaleString('en-IN', withTime ? { dateStyle: 'medium', timeStyle: 'short' } : { dateStyle: 'medium' }) : '—';
 
+const friendlyDocumentType = (value) => ({
+  bl_document: 'Bill of Lading',
+  boe_document: 'Bill of Entry (BOE)'
+}[String(value || '').toLowerCase()] || String(value || 'Document').replaceAll('_', ' '));
+const friendlyStage = (value) => ({
+  vendor_submission: 'Vendor Submission', custom_agent: 'Custom Agent', exim_review: 'EXIM Review'
+}[String(value || '').toLowerCase()] || String(value || 'Vendor Submission').replaceAll('_', ' '));
+const displayFileName = (doc) => doc.fileName || String(doc.fileUrl || '').split(/[\\/]/).pop() || 'Document';
+const friendlyUploader = (doc) => {
+  const value = String(doc.uploadedBy || '').toLowerCase();
+  if (value.startsWith('custom_agent')) return 'Custom Agent';
+  if (value.startsWith('vendor')) return 'Vendor';
+  return doc.uploadedBy || 'Vendor';
+};
+const formatMoney = (amount, currency = 'INR') => new Intl.NumberFormat('en-IN', {
+  style: 'currency', currency: String(currency || 'INR').toUpperCase(), maximumFractionDigits: 2
+}).format(Number(amount) || 0);
+
 function AssignModal({ entry, agents, onClose, onSaved }) {
   const { showToast } = useToast();
   const [agentId, setAgentId] = useState(entry.customAgentId || '');
@@ -364,9 +382,37 @@ function EximDetail({ blId }) {
         <div><p className="text-slate-400">EXIM Reviewed</p><strong>{dateText(entry.eximReviewedAt, true)}</strong></div>
         <div><p className="text-slate-400">Assigned At</p><strong>{dateText(entry.assignedAt, true)}</strong></div>
         <div><p className="text-slate-400">Customs Cleared At</p><strong className={entry.customsClearedAt ? 'text-emerald-700' : 'text-slate-400'}>{dateText(entry.customsClearedAt, true)}</strong></div>
-        {entry.customAgentName && <div><p className="text-slate-400">Assigned Agent</p><strong>{entry.customAgentName}</strong></div>}
+        {entry.boeNumber && <div><p className="text-slate-400">BOE Number</p><strong className="text-[#0d7676]">{entry.boeNumber}</strong></div>}
+        {entry.customAgentName && <div><p className="text-slate-400">Assigned Agent</p><strong>{entry.customAgentName}</strong>{entry.customAgentAgencyName && <span className="ml-1 text-slate-400">{entry.customAgentAgencyName}</span>}</div>}
         {entry.eximNotes && <div className="sm:col-span-2"><p className="text-slate-400">EXIM Notes</p><strong>{entry.eximNotes}</strong></div>}
       </section>
+
+      {entry.invoices?.length > 0 && (
+        <section className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <h2 className="text-sm font-extrabold">Invoices ({entry.invoices.length})</h2>
+            <div className="flex gap-3 text-xs font-semibold">
+              <span className="text-emerald-700">{entry.invoices.filter((invoice) => String(invoice.status).toLowerCase() === 'paid').length} paid</span>
+              <span className="text-amber-600">{entry.invoices.filter((invoice) => String(invoice.status).toLowerCase() !== 'paid').length} pending</span>
+            </div>
+          </div>
+          {['Vendor', 'Agent'].map((source) => {
+            const sourceInvoices = entry.invoices.filter((invoice) => String(invoice.source || 'Vendor').toLowerCase() === source.toLowerCase());
+            if (!sourceInvoices.length) return null;
+            return <div key={source}>
+              <div className={`px-5 py-2 text-xs font-extrabold uppercase ${source === 'Agent' ? 'bg-teal-50 text-teal-700' : 'bg-amber-50 text-amber-700'}`}>{source} Invoices</div>
+              <div className="divide-y">
+                {sourceInvoices.map((invoice) => <div key={invoice.referenceNumber || invoice._id} className="grid items-center gap-2 px-5 py-3 text-xs sm:grid-cols-[1.2fr_1fr_auto_auto]">
+                  <strong>{invoice.referenceNumber || invoice.logisticsPaymentId}</strong>
+                  <span className="text-slate-500">{invoice.typeDisplay || invoice.category}</span>
+                  <span className="rounded-full bg-blue-50 px-2 py-1 text-center font-semibold text-blue-700">{invoice.status}</span>
+                  <strong className="text-right">{formatMoney(invoice.amount, invoice.currency)}</strong>
+                </div>)}
+              </div>
+            </div>;
+          })}
+        </section>
+      )}
 
       {/* Documents List */}
       <section className="overflow-hidden rounded-2xl border bg-white shadow-sm">
@@ -386,10 +432,10 @@ function EximDetail({ blId }) {
             <tbody>
               {entry.documents?.map((doc, index) => (
                 <tr key={`${doc.fileUrl || doc.fileName}-${index}`} className="border-t">
-                  <td className="px-4 py-4 font-semibold">{doc.docType}</td>
-                  <td>{doc.stage || (String(doc.uploadedBy).includes('Customs Agent') ? 'Customs Agent' : 'Vendor Submission')}</td>
-                  <td>{doc.uploadedBy || 'Vendor'}</td>
-                  <td className="max-w-xs truncate font-mono text-[10px]">{doc.fileUrl || doc.fileName}</td>
+                  <td className="px-4 py-4 font-semibold">{friendlyDocumentType(doc.docType)}</td>
+                  <td>{friendlyStage(doc.stage || (String(doc.uploadedBy).includes('Customs Agent') ? 'custom_agent' : 'vendor_submission'))}</td>
+                  <td>{friendlyUploader(doc)}</td>
+                  <td className="max-w-xs truncate font-mono text-[10px]">{displayFileName(doc)}</td>
                   <td>{dateText(doc.uploadedAt, true)}</td>
                   <td className="px-4">
                     <button
@@ -409,7 +455,7 @@ function EximDetail({ blId }) {
       </section>
 
       {/* Upload EXIM Document Section */}
-      <section className="rounded-2xl border bg-white p-5 shadow-sm">
+      {entry.status !== 'custom_cleared' && <section className="rounded-2xl border bg-white p-5 shadow-sm">
         <h2 className="flex items-center gap-2 text-sm font-extrabold"><Upload className="h-4 w-4" />Upload EXIM Documents</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
           <SearchableSelect
@@ -425,7 +471,7 @@ function EximDetail({ blId }) {
             {uploading ? 'Uploading...' : 'Upload Documents'}
           </button>
         </div>
-      </section>
+      </section>}
 
       {/* Audit History */}
       {entry.eximApprovalHistory && entry.eximApprovalHistory.length > 0 && (
