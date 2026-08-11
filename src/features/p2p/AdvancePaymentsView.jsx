@@ -173,7 +173,8 @@ export default function AdvancePaymentsView() {
     <div className="space-y-3 font-sans text-left pb-10 flex flex-col min-h-0">
       {/* Scope Selector Bar (My Records / My Team Records / All Records) */}
       <div className="flex items-center justify-between gap-3 shrink-0 flex-wrap">
-        <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200">
+        <div></div>
+        {/* <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200">
           <button
             type="button"
             onClick={() => updateUrlParams({ scope: 'my', page: '1' })}
@@ -207,7 +208,7 @@ export default function AdvancePaymentsView() {
           >
             All Records
           </button>
-        </div>
+        </div> */}
 
         <Link
           to="/p2p/advance-payments/create"

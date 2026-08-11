@@ -232,7 +232,7 @@ const getInitials = (name) => {
     <div className="w-full space-y-3 font-sans text-slate-800 pb-10">
       {/* Scope Selector Bar (My Records / My Team Records / All Records) */}
       <div className="flex items-center justify-between gap-3 shrink-0 flex-wrap">
-        <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200">
+        {/* <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200">
           <button
             type="button"
             onClick={() => updateUrlParams({ scope: 'my', page: '1' })}
@@ -266,8 +266,8 @@ const getInitials = (name) => {
           >
             All Records
           </button>
-        </div>
-
+        </div> */}
+<div></div>
         <button
           onClick={() => navigate('/admin/invoice-payments/create')}
           className="flex items-center gap-1.5 bg-[#0d7676] hover:bg-[#0f766e] text-white px-4 py-2 rounded-lg font-bold text-xs shadow-2xs transition-colors shrink-0"

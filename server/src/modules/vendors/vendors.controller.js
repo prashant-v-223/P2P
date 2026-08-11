@@ -363,7 +363,7 @@ export const createVendor = async (req, res) => {
         actorRole: req.user?.role || 'Admin',
         remarks: `Vendor account "${companyName}" (${finalSapCode}) provisioned.`
       });
-    } catch (_) {}
+    } catch (_) { }
 
     return res.status(201).json({
       success: true,
@@ -379,37 +379,92 @@ export const createVendor = async (req, res) => {
 export const updateVendor = async (req, res) => {
   try {
     const { id } = req.params;
+    const loggedInUserId = req.user?.id;
+
+    if (!loggedInUserId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User authentication required.',
+      });
+    }
+
     const filter = buildVendorFilter(id);
+
     const existingVendor = await Vendor.findOne(filter);
+
     if (!existingVendor) {
-      return res.status(404).json({ success: false, error: 'Vendor account not found.' });
+      return res.status(404).json({
+        success: false,
+        error: 'Vendor account not found.',
+      });
     }
 
     let updates = { ...req.body };
+
+    // Never allow password fields through this API
     delete updates.passwordHash;
     delete updates.password;
 
+    // IMPORTANT:
+    // Vendor user can ONLY update their own vendor record
     if (req.user?.role === 'Vendor') {
-      const ownsAccount = [existingVendor.id, existingVendor.sapVendorCode, existingVendor.supplierId]
-        .filter(Boolean)
-        .some((value) => String(value) === String(req.user.sapVendorCode || req.user.id));
+      const ownsAccount =
+        String(existingVendor.userId) === String(loggedInUserId);
+
       if (!ownsAccount) {
-        return res.status(403).json({ success: false, error: 'You cannot update another vendor account.' });
+        return res.status(403).json({
+          success: false,
+          error: 'You cannot update another vendor account.',
+        });
       }
 
-      const editableFields = ['contactPerson', 'phone', 'email', 'bankName', 'branch', 'accountNumber', 'ifscCode'];
-      updates = Object.fromEntries(Object.entries(updates).filter(([key]) => editableFields.includes(key)));
+      // Fields Vendor user is allowed to edit
+      const editableFields = [
+        'contactPerson',
+        'phone',
+        'email',
+        'bankName',
+        'branch',
+        'accountNumber',
+        'ifscCode',
+      ];
+
+      updates = Object.fromEntries(
+        Object.entries(updates).filter(([key]) =>
+          editableFields.includes(key)
+        )
+      );
     }
 
-    const updatedVendor = await Vendor.findOneAndUpdate(filter, { $set: updates }, { new: true, runValidators: true });
+    // Never allow userId to be changed from request body
+    delete updates.userId;
+
+    // Audit information
+    updates.updatedBy = loggedInUserId;
+
+    const updatedVendor = await Vendor.findOneAndUpdate(
+      filter,
+      {
+        $set: updates,
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
+    );
 
     return res.json({
       success: true,
       message: 'Vendor record updated',
-      vendor: updatedVendor
+      vendor: updatedVendor,
     });
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    console.error('[UPDATE VENDOR ERROR]', err);
+
+    return res.status(500).json({
+      success: false,
+      error: err.message,
+    });
   }
 };
 

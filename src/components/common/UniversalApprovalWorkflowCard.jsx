@@ -17,20 +17,36 @@ function formatRoleTitle(roleKey = '') {
 
 // Helper: Check if user can act on a step
 function canRoleActOnStep(userRoleInput, stepRoleInput) {
-  if (!userRoleInput) return false;
+  if (!userRoleInput || !stepRoleInput) return false;
   
-  const u = String(userRoleInput).toLowerCase().replace(/[\s_-]+/g, '').trim();
-  const s = String(stepRoleInput).toLowerCase().replace(/[\s_-]+/g, '').trim();
+  const u = String(userRoleInput).toLowerCase().replace(/[\s_-]+/g, '_').trim();
+  const s = String(stepRoleInput).toLowerCase().replace(/[\s_-]+/g, '_').trim();
 
   // Admins can act on any step
-  if (['admin', 'systemadmin', 'superadmin', 'md'].includes(u)) return true;
-  if (!s) return false;
+  if (['admin', 'systemadmin', 'system_admin', 'superadmin', 'md'].some(r => u.includes(r))) return true;
 
-  // Role matching
-  if (u.includes('procurement') && s.includes('procurement')) return true;
-  if (u.includes('finance') && s.includes('finance')) return true;
-  if ((u.includes('md') || u.includes('director')) && (s.includes('md') || s.includes('director'))) return true;
-  if (u === s || u.includes(s) || s.includes(u)) return true;
+  if (u === s) return true;
+
+  // Procurement Head
+  if ((s.includes('procurement_head') || s.includes('purchase_head') || s.includes('procurement_lead') || s.includes('purchase_hod')) &&
+      (u.includes('procurement_head') || u.includes('purchase_head') || u.includes('procurement_lead') || u.includes('purchase_hod'))) return true;
+
+  // Procurement Manager
+  if ((s.includes('procurement_manager') || s.includes('purchase_manager') || s === 'manager') &&
+      (u.includes('procurement_manager') || u.includes('purchase_manager') || u.includes('manager'))) return true;
+
+  // Finance / CFO
+  if ((s.includes('finance') || s.includes('cfo') || s.includes('account')) &&
+      (u.includes('finance') || u.includes('cfo') || u.includes('account'))) return true;
+
+  // MD / Director
+  if ((s.includes('md') || s.includes('director')) && (u.includes('md') || u.includes('director'))) return true;
+
+  // EXIM
+  if (s.includes('exim') && u.includes('exim')) return true;
+
+  // Logistics
+  if (s.includes('logistics') && u.includes('logistics')) return true;
 
   return false;
 }

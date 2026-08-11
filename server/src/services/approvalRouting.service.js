@@ -7,36 +7,38 @@ import { Approval } from '../models/Approval.js';
 export const FINANCIAL_REVIEW_THRESHOLD = 5000000; // ₹50 Lakhs
 export const STRATEGIC_REVIEW_THRESHOLD = 10000000; // ₹1 Crore
 
-export function isRoleMatchingStep(userRole = '', targetStepRole = '') {
+export function isRoleMatchingStep(userRole = '', targetStepRole = '', allowAdminOverride = true) {
   const u = String(userRole || '').toLowerCase().replace(/[\s_-]+/g, '_').trim();
   const t = String(targetStepRole || '').toLowerCase().replace(/[\s_-]+/g, '_').trim();
   if (!u || !t) return false;
 
   if (u === t) return true;
 
-  if (['admin', 'superadmin', 'system_admin', 'systemadmin'].includes(u)) return true;
+  if (allowAdminOverride && ['admin', 'superadmin', 'system_admin', 'systemadmin'].includes(u)) return true;
 
-  if ((t === 'md' || t.includes('director')) && (u === 'md' || u.includes('director'))) return true;
+  if ((t === 'md' || t.includes('director') || t.includes('managing_director')) &&
+      (u === 'md' || u.includes('director') || u.includes('managing_director'))) return true;
 
-  if ((t === 'cfo' || t.includes('cfo_approval') || t.includes('cfo_signoff')) && (u === 'cfo' || u.includes('cfo'))) return true;
+  if ((t === 'cfo' || t === 'cfo_approval' || t === 'cfo_signoff') &&
+      (u === 'cfo' || u === 'cfo_approval' || u === 'cfo_signoff')) return true;
 
-  if ((t.includes('cfo_inner') || t.includes('account_finance') || t.includes('accounts')) &&
-      (u.includes('cfo_inner') || u.includes('account_finance') || u.includes('accounts') || u.includes('cfo'))) return true;
+  if ((t.includes('cfo_inner') || t.includes('account_finance') || t.includes('accounts') || t === 'finance' || t.includes('finance_lead') || t.includes('finance_head')) &&
+      (u.includes('cfo_inner') || u.includes('account_finance') || u.includes('accounts') || u === 'finance' || u.includes('finance_lead') || u.includes('finance_head') || u === 'cfo')) return true;
 
-  if ((t.includes('procurement_head') || t.includes('procurement_lead') || t.includes('purchase_head')) && 
-      (u.includes('procurement_head') || u.includes('procurement_lead') || u.includes('purchase_head'))) return true;
+  if ((t.includes('procurement_head') || t.includes('procurement_lead') || t.includes('purchase_head') || t.includes('purchase_hod') || t.includes('procurement_hod')) && 
+      (u.includes('procurement_head') || u.includes('procurement_lead') || u.includes('purchase_head') || u.includes('purchase_hod') || u.includes('procurement_hod'))) return true;
 
-  if ((t.includes('procurement_manager') || t.includes('purchase_manager') || t === 'manager') &&
-      (u.includes('procurement_manager') || u.includes('purchase_manager') || u.includes('manager'))) return true;
+  if ((t.includes('procurement_manager') || t.includes('purchase_manager') || t === 'manager' || t.includes('team_manager')) &&
+      (u.includes('procurement_manager') || u.includes('purchase_manager') || u.includes('manager') || u.includes('team_manager'))) return true;
 
-  if ((t.includes('inner_team') || t.includes('procurement_executive')) &&
-      (u.includes('inner_team') || u.includes('procurement_executive'))) return true;
+  if ((t.includes('inner_team') || t.includes('procurement_executive') || t === 'procurement') &&
+      (u.includes('inner_team') || u.includes('procurement_executive') || u === 'procurement')) return true;
 
   if (t.includes('exim') && u.includes('exim')) return true;
 
   if (t.includes('logistics') && u.includes('logistics')) return true;
 
-  return u.includes(t) || t.includes(u);
+  return false;
 }
 
 /**
@@ -82,20 +84,21 @@ export async function attachApprovers(steps, requester) {
       let isPoolApproval = false;
       let approverPool = [];
 
-      const isRequesterManagerInRole = isRoleMatchingStep(requesterUser.role, roleKey);
+      const isRequesterManagerInRole = isRoleMatchingStep(requesterUser.role, roleKey, false);
       const isChildUser = Boolean(requesterUser.managerId) && !isRequesterManagerInRole;
 
       if (isChildUser) {
-        // 1. Child user created request: Route ONLY to direct parent line manager
+        // 1. Child user created request: Route ONLY to direct parent line manager if role matches
         approver = await findParentManager(requesterUser, roleKey);
-        isPoolApproval = false;
-      } else {
-        // 2. Parent / Manager user created request: Route to BOTH / ALL managers in role tier
+      }
+
+      if (!approver) {
+        // 2. Route to role-specific active users (excluding admin from normal assignment pool unless no role users exist)
         const allRoleManagers = await User.find({
           status: 'Active'
-        }).lean().then(users => users.filter(u => isRoleMatchingStep(u.role, roleKey)));
+        }).lean().then(users => users.filter(u => isRoleMatchingStep(u.role, roleKey, false)));
 
-        if (allRoleManagers && allRoleManagers.length > 0) {
+        if (allRoleManagers && allRoleManagers.length > 1) {
           isPoolApproval = true;
           approverPool = allRoleManagers.map(u => ({
             id: u.id,
@@ -109,6 +112,16 @@ export async function attachApprovers(steps, requester) {
             role: roleKey,
             email: null,
             resolutionMethod: 'manager_peer_pool'
+          };
+        } else if (allRoleManagers && allRoleManagers.length === 1) {
+          isPoolApproval = false;
+          const u = allRoleManagers[0];
+          approver = {
+            id: u.id,
+            name: u.name,
+            role: u.role,
+            email: u.email,
+            resolutionMethod: 'direct_role_assignment'
           };
         } else if (requesterUser.managerId) {
           approver = await findParentManager(requesterUser, roleKey);
@@ -167,15 +180,16 @@ async function findParentManager(requester, roleKey) {
     if (!manager) break;
     if (!firstLineManager) firstLineManager = manager;
 
-    if (isRoleMatchingStep(manager.role, roleKey)) {
+    if (isRoleMatchingStep(manager.role, roleKey, false)) {
       return { ...manager, resolutionMethod: 'parent_manager' };
     }
 
     current = manager;
   }
 
-  // If no specific role matched higher up, return direct parent line manager
-  if (firstLineManager) {
+  // Only return direct line manager if target role is a manager/lead role
+  const normKey = String(roleKey || '').toLowerCase();
+  if (firstLineManager && (normKey.includes('manager') || normKey.includes('lead') || normKey === 'manager')) {
     return { ...firstLineManager, resolutionMethod: 'direct_line_manager' };
   }
 
@@ -439,3 +453,57 @@ export async function getEscalationApprover(currentApproverId, stepRole) {
 
   return null;
 }
+
+/**
+ * Repair existing active approvals in MongoDB to ensure clean approver assignments and pools
+ */
+export async function repairAllActiveApprovals() {
+  try {
+    const TERMINAL = ['Approved & Dispatched', 'Rejected', 'Cancelled'];
+    const activeApprovals = await Approval.find({ status: { $nin: TERMINAL } });
+
+    console.log(`[Approval Repair] Checking ${activeApprovals.length} active approvals...`);
+    let repairedCount = 0;
+
+    for (const app of activeApprovals) {
+      let rawSteps = [];
+      if (app.workflowSnapshot?.steps && Array.isArray(app.workflowSnapshot.steps) && app.workflowSnapshot.steps.length > 0) {
+        rawSteps = app.workflowSnapshot.steps;
+      } else if (app.workflowSteps) {
+        try {
+          rawSteps = typeof app.workflowSteps === 'string' ? JSON.parse(app.workflowSteps) : app.workflowSteps;
+        } catch (_) {}
+      }
+
+      if (!rawSteps || rawSteps.length === 0) continue;
+
+      const requester = app.requestedById ? await User.findOne({
+        $or: [{ id: app.requestedById }, { userId: app.requestedById }, { email: app.requestedByEmail }]
+      }).lean() : null;
+
+      const freshSteps = await attachApprovers(rawSteps, requester);
+      const currentStepNum = app.currentStep || 1;
+      const activeStep = freshSteps.find(s => (s.step || s.stepNumber) === currentStepNum) || freshSteps[0];
+
+      app.workflowSteps = JSON.stringify(freshSteps);
+      if (app.workflowSnapshot) {
+        app.workflowSnapshot.steps = freshSteps;
+        app.markModified('workflowSnapshot');
+      }
+
+      if (activeStep) {
+        app.assignedApprover = activeStep.isPoolApproval ? null : (activeStep.assignedApproverId || null);
+        app.assignedApproverName = activeStep.assignedApproverName || null;
+        app.assignedApproverRole = activeStep.assignedApproverRole || activeStep.roleKey || null;
+        app.assignedApproverEmail = activeStep.assignedApproverEmail || null;
+      }
+
+      await app.save();
+      repairedCount++;
+    }
+
+    console.log(`[Approval Repair] Successfully repaired ${repairedCount} active approval workflow records.`);
+  } catch (err) {
+    console.error('[Approval Repair] Failed to repair active approvals:', err.message);
+  }
+}

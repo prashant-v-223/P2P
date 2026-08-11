@@ -798,15 +798,17 @@ router.get('/purchase-orders/:id', authenticateToken, async (req, res) => {
       + enrichedInvoices.filter(isInProgress).reduce((s, r) => s + invoiceValue(r), 0);
     const poValue = Number(po.totalAmount) || 0;
 
-    res.json({ success: true, data: {
-      ...po,
-      vendorGstin: vendor?.gstin || '',
-      vendorPan: vendor?.pan || '',
-      advances: enrichedAdvances,
-      invoices: enrichedInvoices,
-      rfqs,
-      financialSummary: { poValue, paidAmount, inProgressAmount, availableAmount: Math.max(0, poValue - paidAmount - inProgressAmount) }
-    } });
+    res.json({
+      success: true, data: {
+        ...po,
+        vendorGstin: vendor?.gstin || '',
+        vendorPan: vendor?.pan || '',
+        advances: enrichedAdvances,
+        invoices: enrichedInvoices,
+        rfqs,
+        financialSummary: { poValue, paidAmount, inProgressAmount, availableAmount: Math.max(0, poValue - paidAmount - inProgressAmount) }
+      }
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -1027,12 +1029,14 @@ const getAdvancesHandler = async (req, res) => {
 
     const filter = {
       isDeleted: { $ne: true },
-      ...(!canSeeAllAdvances ? { $or: [
-        { requestedById: { $in: allowedUserIds } },
-        { userId: { $in: allowedUserIds } },
-        { createdBy: { $in: [...allowedUserIds, ...allowedUserNames] } },
-        { requestedBy: { $in: [...allowedUserIds, ...allowedUserNames] } }
-      ] } : {})
+      ...(!canSeeAllAdvances ? {
+        $or: [
+          { requestedById: { $in: allowedUserIds } },
+          { userId: { $in: allowedUserIds } },
+          { createdBy: { $in: [...allowedUserIds, ...allowedUserNames] } },
+          { requestedBy: { $in: [...allowedUserIds, ...allowedUserNames] } }
+        ]
+      } : {})
     };
 
     // ==================================================
@@ -1670,8 +1674,8 @@ const createAdvanceHandler = async (req, res) => {
       requestedById: req.user?.id || req.user?.email || 'system',
       userId: req.user?.id || req.user?.email || 'system',
       requestedBy: req.user?.name || requestedBy || 'Finance Team'
-      ,createdByType: req.user?.role === 'Vendor' ? 'vendor' : 'user'
-      ,createdByVendorId: req.user?.role === 'Vendor' ? vendorIdFinal : ''
+      , createdByType: req.user?.role === 'Vendor' ? 'vendor' : 'user'
+      , createdByVendorId: req.user?.role === 'Vendor' ? vendorIdFinal : ''
     });
 
     const { amountINR, fxRate, amountFormatted } = await getFxConversion(numAmount, poCurrency, req.body.fxRate);
@@ -1851,49 +1855,203 @@ router.post('/advances/:id/payout', authenticateToken, authorizePermission('adva
     return res.json({ success: true, message: 'Advance payment marked as paid.', data: advance });
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
+async function getPaymentOwnerFilter(req, visibility) {
+  if (visibility.seesAll) {
+    return {};
+  }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// INVOICE PAYMENTS
-// ─────────────────────────────────────────────────────────────────────────────
+  const loggedInUserId = req.user?.id;
 
+  // Vendors created by the currently logged-in user
+  const createdVendors = await Vendor.find({
+    createdBy: loggedInUserId,
+    isDeleted: { $ne: true }
+  })
+    .select('id _id companyName')
+    .lean();
+
+  const createdVendorIds = createdVendors
+    .map(v => v.id)
+    .filter(Boolean);
+
+  const createdVendorNames = createdVendors
+    .map(v => v.companyName)
+    .filter(Boolean);
+
+  const identities = [
+    ...visibility.ids,
+    ...visibility.names,
+    ...createdVendorIds
+  ];
+
+  return {
+    $or: [
+      // Normal employee/user ownership
+      { requestedById: { $in: visibility.ids } },
+      { userId: { $in: visibility.ids } },
+
+      // Records created/requested by visible users
+      { createdBy: { $in: identities } },
+      { requestedBy: { $in: identities } },
+
+      // Vendor created by this user
+      { requestedById: { $in: createdVendorIds } },
+      { userId: { $in: createdVendorIds } },
+
+      // Optional support for old records using vendor name
+      { createdBy: { $in: createdVendorNames } },
+      { requestedBy: { $in: createdVendorNames } }
+    ]
+  };
+}
 router.get('/invoices', authenticateToken, async (req, res) => {
   try {
-    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
-    const size = Math.min(100, Math.max(1, Number.parseInt(req.query.size || req.query.pageSize, 10) || 10));
-    const search = String(req.query.q || req.query.search || '').trim();
-    const statusFilter = String(req.query.status || '').trim();
-    const matchFilter = String(req.query.threeWayMatch || req.query.match || '').trim();
+    const page = Math.max(
+      1,
+      Number.parseInt(req.query.page, 10) || 1
+    );
+
+    const size = Math.min(
+      100,
+      Math.max(
+        1,
+        Number.parseInt(
+          req.query.size || req.query.pageSize,
+          10
+        ) || 10
+      )
+    );
+
+    const search = String(
+      req.query.q || req.query.search || ''
+    ).trim();
+
+    const statusFilter = String(
+      req.query.status || ''
+    ).trim();
+
+    const matchFilter = String(
+      req.query.threeWayMatch || req.query.match || ''
+    ).trim();
 
     const visibility = await getPaymentVisibility(req);
-    if (!visibility) return res.status(403).json({ success: false, error: 'Your active user record could not be found.' });
-    const filter = { isDeleted: { $ne: true }, ...paymentOwnerFilter(visibility) };
-    if (search) {
-      const regex = new RegExp(escapeRegex(search), 'i');
-      filter.$and = [{ $or: [
-        { invoiceNumber: regex }, { invoicePaymentId: regex },
-        { poId: regex }, { sapPoNumber: regex },
-        { vendorName: regex }, { vendorId: regex }
-      ] }];
+
+    console.log('PAYMENT VISIBILITY:', visibility);
+
+    if (!visibility) {
+      return res.status(403).json({
+        success: false,
+        error: 'Your active user record could not be found.'
+      });
     }
-    if (statusFilter && statusFilter !== 'All Status' && statusFilter !== 'All') {
+
+    // ---------------------------------------------------------
+    // IMPORTANT:
+    // Include payments created/requested by vendors
+    // that were created by the logged-in user.
+    // ---------------------------------------------------------
+
+    const ownerFilter = await getPaymentOwnerFilter(
+      req,
+      visibility
+    );
+
+    const filter = {
+      isDeleted: { $ne: true },
+      ...ownerFilter
+    };
+
+    // ---------------------------------------------------------
+    // SEARCH
+    // ---------------------------------------------------------
+
+    if (search) {
+      const regex = new RegExp(
+        escapeRegex(search),
+        'i'
+      );
+
+      filter.$and = [
+        {
+          $or: [
+            { invoiceNumber: regex },
+            { invoicePaymentId: regex },
+            { poId: regex },
+            { sapPoNumber: regex },
+            { vendorName: regex },
+            { vendorId: regex }
+          ]
+        }
+      ];
+    }
+
+    // ---------------------------------------------------------
+    // STATUS
+    // ---------------------------------------------------------
+
+    if (
+      statusFilter &&
+      statusFilter !== 'All Status' &&
+      statusFilter !== 'All'
+    ) {
       filter.status = statusFilter.toLowerCase();
     }
-    if (matchFilter && matchFilter !== 'All Match' && matchFilter !== 'All') {
-      filter['threeWayMatch.status'] = matchFilter.toLowerCase();
+
+    // ---------------------------------------------------------
+    // THREE WAY MATCH
+    // ---------------------------------------------------------
+
+    if (
+      matchFilter &&
+      matchFilter !== 'All Match' &&
+      matchFilter !== 'All'
+    ) {
+      filter['threeWayMatch.status'] =
+        matchFilter.toLowerCase();
     }
 
-    const total = await InvoicePayment.countDocuments(filter);
-    const totalPages = Math.max(1, Math.ceil(total / size));
-    const safePage = Math.min(page, totalPages);
+    // ---------------------------------------------------------
+    // PAGINATION
+    // ---------------------------------------------------------
+
+    const total = await InvoicePayment.countDocuments(
+      filter
+    );
+
+    const totalPages = Math.max(
+      1,
+      Math.ceil(total / size)
+    );
+
+    const safePage = Math.min(
+      page,
+      totalPages
+    );
+
     const invoices = await InvoicePayment.find(filter)
-      .sort({ createdAt: -1 }).skip((safePage - 1) * size).limit(size).lean();
+      .sort({ createdAt: -1 })
+      .skip((safePage - 1) * size)
+      .limit(size)
+      .lean();
 
     return res.json({
-      success: true, data: invoices, total, page: safePage, pageSize: size, totalPages,
-      hasPrevious: safePage > 1, hasNext: safePage < totalPages
+      success: true,
+      data: invoices,
+      total,
+      page: safePage,
+      pageSize: size,
+      totalPages,
+      hasPrevious: safePage > 1,
+      hasNext: safePage < totalPages
     });
+
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('GET /invoices ERROR:', err);
+
+    return res.status(500).json({
+      success: false,
+      error: err.message
+    });
   }
 });
 
@@ -2458,26 +2616,28 @@ router.get('/rfqs', authenticateToken, async (req, res) => {
     });
     const statusRepairs = [];
     const enriched = rfqs.map((r) => {
-        let currentStatus = r.status || 'published';
-        const app = approvalByKey.get(String(r.awardApprovalId || r.rfqId));
-        if (app?.status === 'Approved & Dispatched') currentStatus = 'awarded';
-        else if (app?.status === 'Rejected' && r.status === 'pending_approval') currentStatus = 'published';
-        if (currentStatus !== r.status || (!r.awardApprovalId && app?.id)) {
-          statusRepairs.push({ updateOne: {
+      let currentStatus = r.status || 'published';
+      const app = approvalByKey.get(String(r.awardApprovalId || r.rfqId));
+      if (app?.status === 'Approved & Dispatched') currentStatus = 'awarded';
+      else if (app?.status === 'Rejected' && r.status === 'pending_approval') currentStatus = 'published';
+      if (currentStatus !== r.status || (!r.awardApprovalId && app?.id)) {
+        statusRepairs.push({
+          updateOne: {
             filter: { _id: r._id },
             update: { $set: { status: currentStatus, ...(app?.id ? { awardApprovalId: app.id } : {}) } }
-          } });
-        }
-        const invitedCount = (r.invitedVendors && Array.isArray(r.invitedVendors)) ? r.invitedVendors.length : 0;
-        return {
-          ...r,
-          status: currentStatus,
-          closingDateFormatted: r.closingDate ? new Date(r.closingDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Not set',
-          deadlinePassed: Boolean(r.closingDate && new Date(r.closingDate) < new Date()),
-          invitedVendorsCount: invitedCount,
-          quotesCount: quoteCountByRfq.get(r.rfqId) || 0
-        };
-      });
+          }
+        });
+      }
+      const invitedCount = (r.invitedVendors && Array.isArray(r.invitedVendors)) ? r.invitedVendors.length : 0;
+      return {
+        ...r,
+        status: currentStatus,
+        closingDateFormatted: r.closingDate ? new Date(r.closingDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Not set',
+        deadlinePassed: Boolean(r.closingDate && new Date(r.closingDate) < new Date()),
+        invitedVendorsCount: invitedCount,
+        quotesCount: quoteCountByRfq.get(r.rfqId) || 0
+      };
+    });
     if (statusRepairs.length) await RfqHeader.bulkWrite(statusRepairs, { ordered: false });
 
     return res.json({
@@ -3563,13 +3723,15 @@ router.get('/exim/bl-entries/:blId', authenticateToken, async (req, res) => {
       entry.customAgentId ? CustomAgent.findOne({ agentId: entry.customAgentId }).select('agentId agencyName contactPerson email').lean() : null,
       BlInvoice.find({ $or: [{ blId: entry.blId }, { blNumber: entry.blNumber }] }).sort({ submittedAt: 1, createdAt: 1 }).lean()
     ]);
-    return res.json({ success: true, data: {
-      ...entry,
-      customAgentName: assignedAgent?.contactPerson || entry.customAgentName,
-      customAgentAgencyName: assignedAgent?.agencyName || entry.customAgentAgencyName,
-      rfq,
-      invoices
-    }, agents });
+    return res.json({
+      success: true, data: {
+        ...entry,
+        customAgentName: assignedAgent?.contactPerson || entry.customAgentName,
+        customAgentAgencyName: assignedAgent?.agencyName || entry.customAgentAgencyName,
+        rfq,
+        invoices
+      }, agents
+    });
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
