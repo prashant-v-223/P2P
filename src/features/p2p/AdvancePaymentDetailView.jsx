@@ -377,7 +377,7 @@ export default function AdvancePaymentDetailView() {
                 { label: 'REQUESTED AMOUNT', value: `INR ${(advance?.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, mono: true, highlight: true },
                 { label: '% OF PO',          value: `${advance?.percentageOfPo || 0}%`, mono: true },
                 { label: 'PAYMENT MODE',     value: advance?.paymentMode || 'NEFT' },
-                { label: 'REQUESTED BY',     value: advance?.createdBy || 'Finance Team' },
+                { label: 'REQUESTED BY',     value: advance?.requestedByName || advance?.requestedBy || advance?.createdBy || 'Finance Team' },
                 { label: 'SUBMITTED ON',     value: advance?.createdAt ? new Date(advance.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—' },
                 { label: 'GST',              value: (advance?.gstBreakup?.totalGst || 0) > 0 ? 'With GST' : 'Without GST', badge: true }
               ].map(({ label, value, mono, highlight, badge }) => (

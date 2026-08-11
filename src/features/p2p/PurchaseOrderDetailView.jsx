@@ -66,7 +66,7 @@ export default function PurchaseOrderDetailView() {
     fetchPoAndRelatedData();
   }, [poId]);
 
-  const fetchPoAndRelatedData = async () => {
+  const fetchPoAndRelatedDataLegacy = async () => {
     try {
       setLoading(true);
       // 1. Fetch PO from backend
@@ -146,7 +146,60 @@ export default function PurchaseOrderDetailView() {
     }
   };
 
-  const percentUtilized = (((po.paidAmount + po.inProgressAmount) / (po.poValue || 1)) * 100);
+  const fetchPoAndRelatedData = async () => {
+    try {
+      setLoading(true);
+      const response = await apiFetch(`/api/p2p/purchase-orders/${encodeURIComponent(poId)}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Unable to load purchase order');
+
+      const found = payload.data;
+      const summary = found.financialSummary || {};
+      const formatDate = (value) => value
+        ? new Date(value).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+        : '—';
+      setPo({
+        poNumber: found.sapPoNumber || found.poNumber,
+        vendorName: found.supplierName || '—',
+        vendorCode: found.supplierId || '—',
+        gstNumber: found.vendorGstin || '—',
+        companyCode: found.companyCode || '—',
+        plant: found.plant || found.plantName || '—',
+        poDate: formatDate(found.documentDate || found.createdAt),
+        delivery: formatDate(found.deliveryDate),
+        paymentTerms: found.paymentTerms || '—',
+        type: found.poType || found.type || ((found.poNumber || '').startsWith('60') ? 'Import' : 'Domestic'),
+        poValue: Number(summary.poValue ?? found.totalAmount) || 0,
+        currency: found.currency || 'INR',
+        paidAmount: Number(summary.paidAmount) || 0,
+        inProgressAmount: Number(summary.inProgressAmount) || 0,
+        availableAmount: Number(summary.availableAmount) || 0,
+        status: String(found.status || 'open').replaceAll('_', ' ').replace(/\b\w/g, (char) => char.toUpperCase())
+      });
+      setAdvances((found.advances || []).map((item) => ({
+        id: item.advanceId,
+        reference: item.advanceId,
+        status: item.status || 'draft',
+        mode: item.paymentMode || '—',
+        date: formatDate(item.createdAt),
+        requestedBy: item.requestedByName || item.requestedBy || item.createdBy || 'Unknown user',
+        amount: Number(item.amount) || 0,
+        currency: item.currency || found.currency || 'INR',
+        pctOfPo: `${Number(item.percentageOfPo || 0).toFixed(2)}%`
+      })));
+      setInvoices(found.invoices || []);
+      setRfqs(found.rfqs || []);
+    } catch (error) {
+      console.error('Error fetching PO details:', error);
+      setAdvances([]);
+      setInvoices([]);
+      setRfqs([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const percentUtilized = Math.min(100, ((po.paidAmount + po.inProgressAmount) / (po.poValue || 1)) * 100);
 
   return (
     <div className="w-full space-y-4 font-sans text-slate-800 pb-10">
@@ -412,18 +465,35 @@ export default function PurchaseOrderDetailView() {
 
           {/* TAB 2: INVOICE PAYMENTS */}
           {activeTab === 'invoices' && (
-            <div className="p-12 flex-1 flex flex-col items-center justify-center text-center text-xs text-slate-400">
-              <CreditCard className="w-8 h-8 text-slate-300 mb-2" />
-              <p className="font-semibold text-slate-700">No invoice payments registered</p>
-              <p className="text-[11px] text-slate-400 mt-0.5">Invoices submitted against this PO will be listed here.</p>
+            <div className="p-4 flex-1">
+              {invoices.length === 0 ? (
+                <div className="p-12 flex flex-col items-center justify-center text-center text-xs text-slate-400">
+                  <CreditCard className="w-8 h-8 text-slate-300 mb-2" />
+                  <p className="font-semibold text-slate-700">No invoice payments registered</p>
+                </div>
+              ) : <div className="space-y-2.5">{invoices.map((item) => {
+                const status = String(item.status || 'draft').toLowerCase();
+                const style = STATUS_STYLE[status] || STATUS_STYLE.draft;
+                const Icon = style.icon;
+                return <Link key={item.invoicePaymentId || item._id} to={`/admin/invoice-payments/${item.invoicePaymentId || item._id}`} className="p-4 rounded-xl border border-slate-200 hover:border-teal-300 hover:shadow-sm flex items-center justify-between gap-4 transition-all">
+                  <div className="flex items-center gap-3.5">
+                    <div className={`w-10 h-10 rounded-xl border flex items-center justify-center ${style.iconBox}`}><Icon className="w-5 h-5" /></div>
+                    <div>
+                      <div className="flex items-center gap-2"><span className={`font-mono font-bold text-xs ${style.ref}`}>{item.invoicePaymentId}</span><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${style.pill}`}>{style.label}</span></div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">{item.invoiceNumber} · {item.requestedByName || item.requestedBy || item.createdBy || 'Unknown user'}</p>
+                    </div>
+                  </div>
+                  <p className="font-mono font-extrabold text-slate-900 text-xs">{item.currency || po.currency} {Number(item.netPayable ?? item.grossAmount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                </Link>;
+              })}</div>}
             </div>
           )}
 
           {/* TAB 3: RFQs */}
           {activeTab === 'rfqs' && (
-            <div className="p-12 flex-1 flex flex-col items-center justify-center text-center text-xs text-slate-400">
-              <FileSpreadsheet className="w-8 h-8 text-slate-300 mb-2" />
-              <p className="font-semibold text-slate-700">No freight RFQs associated</p>
+            <div className="p-4 flex-1">
+              {rfqs.length === 0 ? <div className="p-12 flex flex-col items-center justify-center text-center text-xs text-slate-400"><FileSpreadsheet className="w-8 h-8 text-slate-300 mb-2" /><p className="font-semibold text-slate-700">No freight RFQs associated</p></div>
+                : <div className="space-y-2.5">{rfqs.map((item) => <Link key={item.rfqId || item._id} to={`/admin/rfqs/${item.rfqId || item.rfqNumber}`} className="p-4 rounded-xl border border-slate-200 hover:border-teal-300 flex items-center justify-between transition-all"><div><p className="font-mono font-bold text-xs text-slate-800">{item.rfqNumber || item.rfqId}</p><p className="text-[11px] text-slate-500 mt-0.5">{item.title || 'Freight RFQ'}</p></div><span className="text-[10px] font-bold uppercase text-teal-700">{String(item.status || 'draft').replaceAll('_', ' ')}</span></Link>)}</div>}
             </div>
           )}
 

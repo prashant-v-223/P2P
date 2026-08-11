@@ -175,6 +175,13 @@ export const ROLE_PERMISSIONS = {
   ]
 };
 
+for (const role of ['accounts', 'cfo', 'exim', 'exim-manager', 'finance', 'logistics', 'md', 'procurement', 'procurement_head']) {
+  if (ROLE_PERMISSIONS[role] && !ROLE_PERMISSIONS[role].includes('reports.view')) ROLE_PERMISSIONS[role].push('reports.view');
+}
+for (const role of ['purchase-manager', 'cfo-inner', 'inner-team', 'manager']) {
+  ROLE_PERMISSIONS[role] = [...(ROLE_PERMISSIONS[role] || []), 'reports.view'];
+}
+
 // Route permission requirements mapping
 export const ROUTE_PERMISSIONS = {
   '/dashboard': 'dashboard.view',
@@ -183,7 +190,11 @@ export const ROUTE_PERMISSIONS = {
   '/p2p/advance-payments': 'advance-payments.view',
   '/p2p/invoices': 'invoice-payments.view',
   '/p2p/invoice-payments': 'invoice-payments.view',
+  '/p2p/custom-duty/create': 'custom-duty.create',
+  '/admin/custom-duty/create': 'custom-duty.create',
   '/p2p/custom-duty': 'custom-duty.view',
+  '/p2p/logistics-payments/create': 'logistics-payments.create',
+  '/admin/logistics-payments/create': 'logistics-payments.create',
   '/p2p/logistics-payments': 'logistics-payments.view',
   '/p2p/rfq': 'rfq.view',
   '/admin/rfqs': 'rfq.view',
@@ -199,6 +210,7 @@ export const ROUTE_PERMISSIONS = {
   '/admin/logistics-providers': 'logistics-providers.view',
   '/admin/users': 'users.view',
   '/admin/roles': 'roles.view',
+  '/admin/hierarchy-report': 'reports.view',
   '/admin/sap-sync': 'sap.view',
   '/p2p/sap-sync': 'sap.view',
   '/admin/workflows': 'workflows.view',

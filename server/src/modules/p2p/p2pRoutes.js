@@ -18,10 +18,11 @@ import { Vendor } from '../../models/Vendor.js';
 import { LogisticsProvider } from '../../models/LogisticsProvider.js';
 import { CustomAgent } from '../../models/CustomAgent.js';
 import { User } from '../../models/User.js';
+import { Role } from '../../models/Role.js';
 import { broadcastEvent } from '../../services/sse.service.js';
 import { sendApprovalCreatedEmails } from '../../services/notification.service.js';
 import { authenticateToken, optionalAuth } from '../../middleware/auth.middleware.js';
-import { authorizeRole } from '../../middleware/rbac.middleware.js';
+import { authorizeRole, authorizePermission } from '../../middleware/rbac.middleware.js';
 import { sendRfqInvitationEmail, sendBlSubmittedEmail, sendBlAssignedToAgentEmail, sendBlCustomsClearedEmail, sendRfqAwardedEmail } from '../../services/mail.service.js';
 import { ExchangeRate } from '../../models/ExchangeRate.js';
 import { WorkflowAudit } from '../../models/WorkflowAudit.js';
@@ -69,6 +70,63 @@ async function getFxConversion(amount, currency = 'INR', customFxRate = null) {
 // Helper to escape regex search inputs
 function escapeRegex(text) {
   return text.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+}
+
+// A payment ledger is visible to its requester, every manager above that
+// requester, and users explicitly granted organisation-wide visibility.
+async function getPaymentVisibility(req) {
+  const identity = [req.user?.id, req.user?.userId, req.user?.email].filter(Boolean);
+  const loginUser = await User.findOne({
+    status: 'Active',
+    $or: [{ id: { $in: identity } }, { email: req.user?.email }]
+  }).lean();
+  if (!loginUser) return null;
+
+  const users = await User.find({ status: 'Active' }, { id: 1, name: 1, managerId: 1 }).lean();
+  const visibleIds = new Set([loginUser.id]);
+  const globalRoles = ['admin', 'superadmin', 'system_admin', 'systemadmin', 'md'];
+  const seesAll = loginUser.canSeeAllRequests || globalRoles.includes(String(loginUser.role || '').toLowerCase());
+
+  if (seesAll) {
+    users.forEach((user) => visibleIds.add(user.id));
+  } else {
+    const children = new Map();
+    users.forEach((user) => {
+      if (!user.managerId) return;
+      if (!children.has(user.managerId)) children.set(user.managerId, []);
+      children.get(user.managerId).push(user.id);
+    });
+    const queue = [loginUser.id];
+    while (queue.length) {
+      const managerId = queue.shift();
+      for (const childId of children.get(managerId) || []) {
+        if (visibleIds.has(childId)) continue;
+        visibleIds.add(childId);
+        queue.push(childId);
+      }
+    }
+  }
+
+  const visibleUsers = users.filter((user) => visibleIds.has(user.id));
+  return {
+    user: loginUser,
+    seesAll,
+    ids: visibleUsers.map((user) => user.id),
+    names: visibleUsers.map((user) => user.name).filter(Boolean)
+  };
+}
+
+function paymentOwnerFilter(visibility) {
+  if (visibility.seesAll) return {};
+  const identities = [...visibility.ids, ...visibility.names];
+  return {
+    $or: [
+      { requestedById: { $in: visibility.ids } },
+      { userId: { $in: visibility.ids } },
+      { createdBy: { $in: identities } },
+      { requestedBy: { $in: identities } }
+    ]
+  };
 }
 
 // Helper to build safe MongoDB filter matching ObjectId, custom string ID, or reference
@@ -147,6 +205,29 @@ async function validateVendorOwnsPo(req, po) {
     return vendorIdentifiers.has(String(po.supplierId).trim().toLowerCase());
   }
   return Boolean(po.supplierName && sameValue(po.supplierName, vendor?.companyName || req.user.companyName));
+}
+
+async function canMutateOwnPayment(req, payment) {
+  if (['admin', 'System Admin'].includes(req.user?.role)) return true;
+  const identity = [req.user?.id, req.user?.userId, req.user?.email].filter(Boolean).map(String);
+  const user = await User.findOne({ $or: [{ id: { $in: identity } }, { email: req.user?.email }] }, { id: 1, name: 1, email: 1 }).lean();
+  const actorValues = new Set([...identity, user?.id, user?.name, user?.email].filter(Boolean).map((value) => String(value).toLowerCase()));
+  return [payment.requestedById, payment.userId, payment.requestedBy, payment.createdBy]
+    .filter(Boolean)
+    .some((value) => actorValues.has(String(value).toLowerCase()));
+}
+
+async function canViewPayment(req, payment) {
+  if (req.user?.role === 'Vendor') {
+    const vendorIds = [req.user?.id, req.user?.sapVendorCode].filter(Boolean).map((value) => String(value).toLowerCase());
+    return vendorIds.includes(String(payment.vendorId || '').toLowerCase());
+  }
+  const visibility = await getPaymentVisibility(req);
+  if (!visibility) return false;
+  const visibleValues = new Set([...visibility.ids, ...visibility.names].filter(Boolean).map((value) => String(value).toLowerCase()));
+  return [payment.requestedById, payment.userId, payment.requestedBy, payment.createdBy]
+    .filter(Boolean)
+    .some((value) => visibleValues.has(String(value).toLowerCase()));
 }
 
 // ─── WORKFLOW RESOLUTION ──────────────────────────────────────────────────────
@@ -677,13 +758,50 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
   }
 });
 
-router.get('/purchase-orders/:id', async (req, res) => {
+router.get('/purchase-orders/:id', authenticateToken, async (req, res) => {
   try {
     const filterOr = [{ poNumber: req.params.id }, { sapPoNumber: req.params.id }];
     if (mongoose.Types.ObjectId.isValid(req.params.id)) filterOr.push({ _id: req.params.id });
     const po = await PurchaseOrder.findOne({ $or: filterOr }).lean();
     if (!po) return res.status(404).json({ success: false, error: 'Purchase order not found' });
-    res.json({ success: true, data: po });
+    if (!(await validateVendorOwnsPo(req, po))) return res.status(403).json({ success: false, error: 'You cannot view this purchase order.' });
+
+    const references = [...new Set([req.params.id, po.poNumber, po.sapPoNumber].filter(Boolean).map(String))];
+    const relatedFilter = { $or: [{ poId: { $in: references } }, { sapPoNumber: { $in: references } }] };
+    const [advances, invoices, rfqs, vendor, users] = await Promise.all([
+      AdvancePayment.find({ ...relatedFilter, isDeleted: { $ne: true } }).sort({ createdAt: -1 }).lean(),
+      InvoicePayment.find({ ...relatedFilter, isDeleted: { $ne: true } }).sort({ createdAt: -1 }).lean(),
+      RfqHeader.find(relatedFilter).sort({ createdAt: -1 }).lean(),
+      Vendor.findOne({ $or: [{ id: po.supplierId }, { supplierId: po.supplierId }, { sapVendorCode: po.supplierId }, { companyName: po.supplierName }] }).lean(),
+      User.find({}, { id: 1, name: 1, email: 1 }).lean()
+    ]);
+    const userNames = new Map();
+    users.forEach((user) => [user.id, user.email].filter(Boolean).forEach((key) => userNames.set(String(key).toLowerCase(), user.name)));
+    const withRequesterName = (record) => {
+      const requester = record.requestedById || record.userId || record.requestedBy || record.createdBy;
+      return { ...record, requestedByName: userNames.get(String(requester || '').toLowerCase()) || record.requestedBy || record.createdBy || 'Unknown user' };
+    };
+    const enrichedAdvances = advances.map(withRequesterName);
+    const enrichedInvoices = invoices.map(withRequesterName);
+    const paidStatuses = new Set(['paid', 'adjusted']);
+    const isInProgress = (record) => !paidStatuses.has(String(record.status).toLowerCase()) && String(record.status).toLowerCase() !== 'rejected';
+    const advanceValue = (record) => Number(record.amount) || 0;
+    const invoiceValue = (record) => Number(record.netPayable ?? record.grossAmount) || 0;
+    const paidAmount = enrichedAdvances.filter((r) => paidStatuses.has(String(r.status).toLowerCase())).reduce((s, r) => s + advanceValue(r), 0)
+      + enrichedInvoices.filter((r) => paidStatuses.has(String(r.status).toLowerCase())).reduce((s, r) => s + invoiceValue(r), 0);
+    const inProgressAmount = enrichedAdvances.filter(isInProgress).reduce((s, r) => s + advanceValue(r), 0)
+      + enrichedInvoices.filter(isInProgress).reduce((s, r) => s + invoiceValue(r), 0);
+    const poValue = Number(po.totalAmount) || 0;
+
+    res.json({ success: true, data: {
+      ...po,
+      vendorGstin: vendor?.gstin || '',
+      vendorPan: vendor?.pan || '',
+      advances: enrichedAdvances,
+      invoices: enrichedInvoices,
+      rfqs,
+      financialSummary: { poValue, paidAmount, inProgressAmount, availableAmount: Math.max(0, poValue - paidAmount - inProgressAmount) }
+    } });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -770,7 +888,7 @@ const getAdvancesHandler = async (req, res) => {
     // ==================================================
 
     const loginUser = await User.findOne(
-      { email: req.user?.email },
+      { status: 'Active', $or: [{ id: req.user?.id || req.user?.userId }, { email: req.user?.email }] },
       {
         _id: 0,
         id: 1,
@@ -785,8 +903,6 @@ const getAdvancesHandler = async (req, res) => {
         status: 1
       }
     ).lean();
-
-    console.log("Logged-in user:", loginUser);
 
     if (!loginUser) {
       return res.status(401).json({
@@ -871,7 +987,12 @@ const getAdvancesHandler = async (req, res) => {
       }
     };
 
-    collectChildren(loggedInUserId);
+    const globalRoles = ['admin', 'superadmin', 'system_admin', 'systemadmin', 'md'];
+    if (loginUser.canSeeAllRequests || globalRoles.includes(String(loginUser.role || '').toLowerCase())) {
+      users.forEach((user) => teamUsers.set(user.id, user));
+    } else {
+      collectChildren(loggedInUserId);
+    }
 
     // ==================================================
     // 5. BUILD ALLOWED USER NAMES
@@ -892,24 +1013,7 @@ const getAdvancesHandler = async (req, res) => {
       )
     ];
 
-    console.log(
-      "Logged-in user:",
-      loginUser.name
-    );
-
-    console.log(
-      "Allowed users:",
-      allowedUsers.map((u) => ({
-        id: u.id,
-        name: u.name,
-        managerId: u.managerId
-      }))
-    );
-
-    console.log(
-      "Allowed user names:",
-      allowedUserNames
-    );
+    const allowedUserIds = [...new Set(allowedUsers.map((user) => user.id).filter(Boolean))];
 
     // ==================================================
     // 6. ADVANCE PAYMENT FILTER
@@ -918,10 +1022,12 @@ const getAdvancesHandler = async (req, res) => {
     const filter = {
       isDeleted: { $ne: true },
 
-      // AdvancePayment stores createdBy = NAME
-      createdBy: {
-        $in: allowedUserNames
-      }
+      $or: [
+        { requestedById: { $in: allowedUserIds } },
+        { userId: { $in: allowedUserIds } },
+        { createdBy: { $in: [...allowedUserIds, ...allowedUserNames] } },
+        { requestedBy: { $in: [...allowedUserIds, ...allowedUserNames] } }
+      ]
     };
 
     // ==================================================
@@ -989,10 +1095,20 @@ const getAdvancesHandler = async (req, res) => {
     // 11. RESPONSE
     // ==================================================
 
+    const userNameById = new Map(users.map((user) => [String(user.id), user.name]));
+    const enrichedAdvances = advances.map((advance) => ({
+      ...advance,
+      requestedByName:
+        userNameById.get(String(advance.requestedById || advance.userId || advance.createdBy)) ||
+        advance.requestedBy ||
+        advance.createdBy ||
+        'Finance Team'
+    }));
+
     return res.json({
       success: true,
 
-      data: advances,
+      data: enrichedAdvances,
 
       total,
 
@@ -1035,7 +1151,7 @@ router.get('/advance-payments', authenticateToken, getAdvancesHandler);
 // ─────────────────────────────────────────────────────────────────────────────
 // HIERARCHICAL REPORT GRID ENDPOINT
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/reports/hierarchy', authenticateToken, async (req, res) => {
+router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports', 'view'), async (req, res) => {
   try {
     const loginUser = await User.findOne(
       { email: req.user?.email },
@@ -1063,7 +1179,10 @@ router.get('/reports/hierarchy', authenticateToken, async (req, res) => {
     const accessibleUserIds = new Set();
     accessibleUserIds.add(loginUser.id);
 
-    const isTopExecutive = ['admin', 'superadmin', 'system_admin', 'md', 'cfo'].includes(String(loginUser.role || '').toLowerCase()) || loginUser.canSeeAllRequests;
+    const reportRole = await Role.findOne({ roleName: loginUser.role }, { permissions: 1 }).lean();
+    const reportActions = reportRole?.permissions?.reports || [];
+    const isTopExecutive = ['admin', 'system admin', 'superadmin'].includes(String(loginUser.role || '').toLowerCase())
+      || reportActions.includes('view-all') || reportActions.includes('manage') || reportActions.includes('*');
 
     if (isTopExecutive) {
       allUsers.forEach((u) => accessibleUserIds.add(u.id));
@@ -1082,27 +1201,37 @@ router.get('/reports/hierarchy', authenticateToken, async (req, res) => {
     }
 
     const allowedUserList = allUsers.filter((u) => accessibleUserIds.has(u.id));
+    if (isTopExecutive) allowedUserList.push({
+      id: 'external-requests', name: 'Vendor Portal / Unassigned', email: '', role: 'External',
+      department: 'Vendor Portal', managerId: null, managerName: null, hierarchyLevel: 0,
+      team: 'External', avatar: 'VP'
+    });
     const allowedUserIds = allowedUserList.map((u) => u.id);
     const allowedUserNames = allowedUserList.map((u) => u.name).filter(Boolean);
 
+    // Top-level users need vendor-portal and admin-created transactions too;
+    // managers remain restricted to their reporting subtree.
+    const hierarchyTransactionFilter = isTopExecutive ? {} : {
+      $or: [
+        { userId: { $in: allowedUserIds } },
+        { requestedById: { $in: allowedUserIds } },
+        { createdBy: { $in: [...allowedUserIds, ...allowedUserNames] } },
+        { requestedBy: { $in: [...allowedUserIds, ...allowedUserNames] } }
+      ]
+    };
+
     // Fetch transactions
-    const [advances, invoices, pos, vendors] = await Promise.all([
+    const [advances, invoices, logisticsPayments, customDuties, pos, vendors] = await Promise.all([
       AdvancePayment.find({
         isDeleted: { $ne: true },
-        $or: [
-          { userId: { $in: allowedUserIds } },
-          { requestedById: { $in: allowedUserIds } },
-          { createdBy: { $in: [...allowedUserIds, ...allowedUserNames] } }
-        ]
+        ...hierarchyTransactionFilter
       }).lean(),
       InvoicePayment.find({
         isDeleted: { $ne: true },
-        $or: [
-          { userId: { $in: allowedUserIds } },
-          { requestedById: { $in: allowedUserIds } },
-          { createdBy: { $in: [...allowedUserIds, ...allowedUserNames] } }
-        ]
+        ...hierarchyTransactionFilter
       }).lean(),
+      LogisticsPayment.find(hierarchyTransactionFilter).lean(),
+      CustomDutyPayment.find(hierarchyTransactionFilter).lean(),
       PurchaseOrder.find().lean(),
       Vendor.find({}, { id: 1, supplierId: 1, sapVendorCode: 1, companyName: 1, vendorType: 1, paymentTerms: 1 }).lean()
     ]);
@@ -1122,11 +1251,18 @@ router.get('/reports/hierarchy', authenticateToken, async (req, res) => {
         poTotalAmount: 0,
         advancePaymentTotal: 0,
         invoicePaymentTotal: 0,
+        logisticsPaymentTotal: 0,
+        customDutyTotal: 0,
         invoiceAdvanceAdjustedTotal: 0,
+        paidAmount: 0,
+        approvedAmount: 0,
+        pendingAmount: 0,
+        poCommittedAmount: 0,
         pendingNotApprovedAdvanceCount: 0,
         pendingNotApprovedAdvanceAmount: 0,
         verifiedRecordsCount: 0,
         associatedVendors: new Set(),
+        associatedPoRefs: new Set(),
         turnaroundHoursList: [],
         latestCreatedAt: null
       });
@@ -1134,13 +1270,18 @@ router.get('/reports/hierarchy', authenticateToken, async (req, res) => {
 
     // Process Advance Payments
     for (const adv of advances) {
-      const ownerId = adv.userId || adv.requestedById || allowedUserList.find(u => u.name === adv.createdBy)?.id || loginUser.id;
-      const metric = userMetrics.get(ownerId) || userMetrics.get(loginUser.id);
+      const ownerId = adv.userId || adv.requestedById || allowedUserList.find(u => u.name === adv.createdBy)?.id || 'external-requests';
+      const metric = userMetrics.get(ownerId);
       if (!metric) continue;
 
       const amt = Number(adv.amount || 0);
       metric.advancePaymentTotal += amt;
-      const isApproved = ['approved', 'paid', 'adjusted'].includes(String(adv.status || '').toLowerCase());
+      const advanceStatus = String(adv.status || '').toLowerCase();
+      const isApproved = ['approved', 'paid', 'adjusted'].includes(advanceStatus);
+      if (['paid', 'adjusted'].includes(advanceStatus)) metric.paidAmount += amt;
+      else if (advanceStatus === 'approved') metric.approvedAmount += amt;
+      else if (advanceStatus !== 'rejected') metric.pendingAmount += amt;
+      if (advanceStatus !== 'rejected') metric.poCommittedAmount += amt;
       if (isApproved) {
         metric.verifiedRecordsCount += 1;
       } else if (!String(adv.status || '').toLowerCase().includes('reject')) {
@@ -1149,6 +1290,7 @@ router.get('/reports/hierarchy', authenticateToken, async (req, res) => {
       }
 
       if (adv.vendorName) metric.associatedVendors.add(adv.vendorName);
+      if (adv.sapPoNumber || adv.poId) metric.associatedPoRefs.add(String(adv.sapPoNumber || adv.poId));
       if (adv.createdAt) {
         const cDate = new Date(adv.createdAt);
         if (!metric.latestCreatedAt || cDate > metric.latestCreatedAt) metric.latestCreatedAt = cDate;
@@ -1175,19 +1317,26 @@ router.get('/reports/hierarchy', authenticateToken, async (req, res) => {
 
     // Process Invoice Payments
     for (const inv of invoices) {
-      const ownerId = inv.userId || inv.requestedById || allowedUserList.find(u => u.name === inv.createdBy)?.id || loginUser.id;
-      const metric = userMetrics.get(ownerId) || userMetrics.get(loginUser.id);
+      const ownerId = inv.userId || inv.requestedById || allowedUserList.find(u => u.name === inv.createdBy)?.id || 'external-requests';
+      const metric = userMetrics.get(ownerId);
       if (!metric) continue;
 
       const gross = Number(inv.grossAmount || 0);
+      const payable = Number(inv.netPayable ?? inv.grossAmount) || 0;
       const advAdj = Number(inv.advanceAdjusted || 0);
       metric.invoicePaymentTotal += gross;
       metric.invoiceAdvanceAdjustedTotal += advAdj;
 
-      const isVerified = ['approved', 'paid'].includes(String(inv.status || '').toLowerCase()) || inv.threeWayMatch?.status === 'matched';
+      const invoiceStatus = String(inv.status || '').toLowerCase();
+      const isVerified = ['approved', 'paid'].includes(invoiceStatus) || inv.threeWayMatch?.status === 'matched';
+      if (invoiceStatus === 'paid') metric.paidAmount += payable;
+      else if (invoiceStatus === 'approved') metric.approvedAmount += payable;
+      else if (invoiceStatus !== 'rejected') metric.pendingAmount += payable;
+      if (invoiceStatus !== 'rejected') metric.poCommittedAmount += payable;
       if (isVerified) metric.verifiedRecordsCount += 1;
 
       if (inv.vendorName) metric.associatedVendors.add(inv.vendorName);
+      if (inv.sapPoNumber || inv.poId) metric.associatedPoRefs.add(String(inv.sapPoNumber || inv.poId));
       if (inv.createdAt) {
         const cDate = new Date(inv.createdAt);
         if (!metric.latestCreatedAt || cDate > metric.latestCreatedAt) metric.latestCreatedAt = cDate;
@@ -1203,7 +1352,8 @@ router.get('/reports/hierarchy', authenticateToken, async (req, res) => {
         type: 'Invoice Payment',
         poNumber: inv.sapPoNumber || inv.poId,
         vendorName: inv.vendorName,
-        amount: gross,
+        amount: payable,
+        grossAmount: gross,
         currency: inv.currency || 'INR',
         status: inv.status,
         threeWayMatchStatus: inv.threeWayMatch?.status || 'pending',
@@ -1213,13 +1363,40 @@ router.get('/reports/hierarchy', authenticateToken, async (req, res) => {
       });
     }
 
-    // Process POs
-    for (const po of pos) {
-      const amt = Number(po.totalAmount || 0);
-      allowedUserList.forEach((u) => {
-        const metric = userMetrics.get(u.id);
-        if (metric) metric.poTotalAmount += Math.round(amt / Math.max(1, allowedUserList.length));
+    const addNonPoPayment = (payment, type, amount, vendorName) => {
+      const ownerId = payment.userId || payment.requestedById || allowedUserList.find((user) => user.name === payment.createdBy)?.id || 'external-requests';
+      const metric = userMetrics.get(ownerId);
+      if (!metric) return;
+      const status = String(payment.status || '').toLowerCase();
+      if (type === 'Logistics Payment') metric.logisticsPaymentTotal += amount;
+      else metric.customDutyTotal += amount;
+      if (status === 'paid') metric.paidAmount += amount;
+      else if (status === 'approved' || status === 'approved & dispatched') metric.approvedAmount += amount;
+      else if (status !== 'rejected') metric.pendingAmount += amount;
+      if (['approved', 'approved & dispatched', 'paid'].includes(status)) metric.verifiedRecordsCount += 1;
+      if (vendorName) metric.associatedVendors.add(vendorName);
+      metric.records.push({
+        id: payment.logisticsPaymentId || payment.referenceNumber || payment.dutyId,
+        type,
+        poNumber: payment.sapPoNumber || payment.poId || payment.blNumber || 'Non-PO',
+        vendorName: vendorName || 'Government / Service Provider',
+        amount,
+        currency: payment.currency || 'INR',
+        status: payment.status,
+        verified: ['approved', 'approved & dispatched', 'paid'].includes(status),
+        createdAt: payment.createdAt,
+        advanceAdjusted: 0
       });
+    };
+    logisticsPayments.forEach((payment) => addNonPoPayment(payment, 'Logistics Payment', Number(payment.totalAmount ?? payment.amount) || 0, payment.vendorName || payment.providerName));
+    customDuties.forEach((payment) => addNonPoPayment(payment, 'Custom Duty', Number(payment.dutyAmount ?? payment.totalAmount) || 0, payment.customAgentName || 'ICEGATE / Customs'));
+
+    const poAmountByRef = new Map();
+    for (const po of pos) {
+      [po.poNumber, po.sapPoNumber].filter(Boolean).forEach((ref) => poAmountByRef.set(String(ref), Number(po.totalAmount || 0)));
+    }
+    for (const metric of userMetrics.values()) {
+      metric.poTotalAmount = [...metric.associatedPoRefs].reduce((sum, ref) => sum + (poAmountByRef.get(ref) || 0), 0);
     }
 
     // Build Rows
@@ -1247,13 +1424,82 @@ router.get('/reports/hierarchy', authenticateToken, async (req, res) => {
         poTotalAmount: m.poTotalAmount,
         advancePaymentTotal: m.advancePaymentTotal,
         invoicePaymentTotal: m.invoicePaymentTotal,
+        logisticsPaymentTotal: m.logisticsPaymentTotal,
+        customDutyTotal: m.customDutyTotal,
         invoiceAdvanceAdjustedTotal: m.invoiceAdvanceAdjustedTotal,
+        paidAmount: m.paidAmount,
+        approvedAmount: m.approvedAmount,
+        pendingAmount: m.pendingAmount,
+        committedAmount: m.paidAmount + m.approvedAmount + m.pendingAmount,
+        poCommittedAmount: m.poCommittedAmount,
+        availableBalance: Math.max(0, m.poTotalAmount - m.poCommittedAmount),
         vendorRequirements: Array.from(m.associatedVendors),
         avgTurnaroundHours: avgHours,
         latestCreatedAt: m.latestCreatedAt ? m.latestCreatedAt.toISOString() : null,
         records: m.records
       };
     });
+
+    // Vendor-centric report includes records submitted by employees, admins,
+    // and vendor-portal accounts. It does not reassign unknown owners to admin.
+    const vendorByKey = new Map();
+    vendors.forEach((vendor) => {
+      [vendor.id, vendor.sapVendorCode, vendor.supplierId, vendor.companyName]
+        .filter(Boolean)
+        .forEach((key) => vendorByKey.set(String(key).toLowerCase(), vendor));
+    });
+    const vendorMetrics = new Map();
+    const addToVendorReport = (payment, type, amount) => {
+      const vendor = vendorByKey.get(String(payment.vendorId || '').toLowerCase()) || vendorByKey.get(String(payment.vendorName || '').toLowerCase());
+      const key = String(vendor?.id || vendor?.sapVendorCode || payment.vendorId || payment.vendorName || 'unknown-vendor');
+      if (!vendorMetrics.has(key)) vendorMetrics.set(key, {
+        vendorId: vendor?.id || payment.vendorId || key,
+        vendorCode: vendor?.sapVendorCode || vendor?.supplierId || payment.vendorId || '',
+        vendorName: vendor?.companyName || payment.vendorName || 'Unknown Vendor',
+        vendorType: vendor?.vendorType || '',
+        advanceTotal: 0,
+        invoiceTotal: 0,
+        paidTotal: 0,
+        pendingTotal: 0,
+        requesters: new Set(),
+        records: []
+      });
+      const metric = vendorMetrics.get(key);
+      if (type === 'Advance Payment') metric.advanceTotal += amount;
+      else metric.invoiceTotal += amount;
+      const status = String(payment.status || '').toLowerCase();
+      if (status === 'paid') metric.paidTotal += amount;
+      if (!['paid', 'approved', 'rejected'].includes(status)) metric.pendingTotal += amount;
+      const requester = allowedUserList.find((user) => user.id === (payment.requestedById || payment.userId));
+      const vendorCreated = payment.createdByType === 'vendor'
+        || sameValue(payment.requestedById, payment.vendorId)
+        || sameValue(payment.userId, payment.vendorId);
+      const creatorName = vendorCreated
+        ? `Vendor: ${metric.vendorName}`
+        : `User: ${requester?.name || payment.requestedBy || payment.createdBy || 'Unknown'}`;
+      metric.requesters.add(creatorName);
+      metric.records.push({
+        id: payment.advanceId || payment.invoicePaymentId || payment.invoiceNumber,
+        type,
+        poNumber: payment.sapPoNumber || payment.poId,
+        vendorName: metric.vendorName,
+        amount,
+        currency: payment.currency || 'INR',
+        status: payment.status,
+        requestedByName: creatorName,
+        createdByType: vendorCreated ? 'vendor' : 'user',
+        createdByName: vendorCreated ? metric.vendorName : (requester?.name || payment.requestedBy || payment.createdBy || 'Unknown'),
+        createdAt: payment.createdAt
+      });
+    };
+    advances.forEach((payment) => addToVendorReport(payment, 'Advance Payment', Number(payment.amount || 0)));
+    invoices.forEach((payment) => addToVendorReport(payment, 'Invoice Payment', Number(payment.netPayable || payment.grossAmount || 0)));
+    const vendorRows = Array.from(vendorMetrics.values()).map((metric) => ({
+      ...metric,
+      totalRecords: metric.records.length,
+      totalAmount: metric.advanceTotal + metric.invoiceTotal,
+      requesters: Array.from(metric.requesters)
+    })).sort((a, b) => b.totalAmount - a.totalAmount);
 
     // Build Hierarchy Tree
     const rowMap = new Map(rows.map((r) => [r.userId, { ...r, reports: [] }]));
@@ -1274,16 +1520,25 @@ router.get('/reports/hierarchy', authenticateToken, async (req, res) => {
         id: loginUser.id,
         name: loginUser.name,
         role: loginUser.role,
-        canSeeAllRequests: isTopExecutive
+        canSeeAllRequests: isTopExecutive,
+        reportScope: isTopExecutive ? 'organisation' : (allowedUserIds.length > 1 ? 'hierarchy' : 'self')
       },
       summary: {
         totalUsers: rows.length,
+        totalVendors: vendorRows.length,
         totalVerifiedRecords: rows.reduce((acc, r) => acc + r.verifiedRecordsCount, 0),
         totalPendingAdvanceCount: rows.reduce((acc, r) => acc + r.pendingNotApprovedAdvanceCount, 0),
         totalPendingAdvanceAmount: rows.reduce((acc, r) => acc + r.pendingNotApprovedAdvanceAmount, 0),
-        totalInvoiceAdvanceAdjusted: rows.reduce((acc, r) => acc + r.invoiceAdvanceAdjustedTotal, 0)
+        totalInvoiceAdvanceAdjusted: rows.reduce((acc, r) => acc + r.invoiceAdvanceAdjustedTotal, 0),
+        totalPoValue: [...new Set([...advances, ...invoices].map((payment) => String(payment.sapPoNumber || payment.poId || '')).filter(Boolean))]
+          .reduce((sum, ref) => sum + (poAmountByRef.get(ref) || 0), 0),
+        totalPaidAmount: rows.reduce((acc, r) => acc + r.paidAmount, 0),
+        totalApprovedAmount: rows.reduce((acc, r) => acc + r.approvedAmount, 0),
+        totalPendingAmount: rows.reduce((acc, r) => acc + r.pendingAmount, 0),
+        totalPoCommittedAmount: rows.reduce((acc, r) => acc + r.poCommittedAmount, 0)
       },
       rows,
+      vendorRows,
       tree: rootNodes
     });
   } catch (err) {
@@ -1302,15 +1557,27 @@ const getSingleAdvanceHandler = async (req, res) => {
       ]
     }).lean();
     if (!adv) return res.status(404).json({ success: false, error: 'Advance payment not found' });
+    if (!(await canViewPayment(req, adv))) return res.status(403).json({ success: false, error: 'You cannot view this advance payment.' });
     const approval = await Approval.findOne({ $or: [{ id: adv.advanceId }, { id: req.params.id }] }).lean();
-    return res.json({ success: true, data: { ...adv, approval: approval || null } });
+    const requester = await User.findOne(
+      { $or: [{ id: adv.requestedById || adv.userId || adv.createdBy }, { email: adv.requestedById || adv.createdBy }] },
+      { name: 1 }
+    ).lean();
+    return res.json({
+      success: true,
+      data: {
+        ...adv,
+        requestedByName: requester?.name || adv.requestedBy || adv.createdBy || 'Finance Team',
+        approval: approval || null
+      }
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 };
 
-router.get('/advances/:id', getSingleAdvanceHandler);
-router.get('/advance-payments/:id', getSingleAdvanceHandler);
+router.get('/advances/:id', authenticateToken, getSingleAdvanceHandler);
+router.get('/advance-payments/:id', authenticateToken, getSingleAdvanceHandler);
 
 // ─── POST Create Advance Payment ─────────────────────────────────────────────
 
@@ -1394,28 +1661,37 @@ const createAdvanceHandler = async (req, res) => {
       bankAccountNumber: bankAccountNumber || vendorDoc?.bankAccountNumber || vendorDoc?.accountNumber || '',
       remarks: remarks || '',
       status: 'pending',
-      createdBy: req.user?.id || req.user?.email || 'system',
+      createdBy: req.user?.name || req.user?.email || 'System User',
       requestedById: req.user?.id || req.user?.email || 'system',
       userId: req.user?.id || req.user?.email || 'system',
-      requestedBy: req.user?.name || requestedBy || 'Finance Team'
+      requestedBy: req.user?.name || requestedBy || 'Finance Team',
+      createdByType: req.user?.role === 'Vendor' ? 'vendor' : 'user',
+      createdByVendorId: req.user?.role === 'Vendor' ? vendorIdFinal : ''
     });
 
     const { amountINR, fxRate, amountFormatted } = await getFxConversion(numAmount, poCurrency, req.body.fxRate);
 
     const wf = await resolveWorkflowFromDB('Advance Payment', amountINR, { currency: poCurrency, vendorType: req.user?.vendorType, poType: po.poType || po.type });
 
-    await createApprovalRecord({
+    const approval = await createApprovalRecord({
       referenceId: advanceId,
       type: 'Advance Payment',
       vendorName: vendorNameFinal,
       amountFormatted,
       poRef,
-      requestedBy: requestedBy || 'Finance Team',
+      requestedBy: req.user?.name || requestedBy || 'Finance Team',
       requestedById: req.user?.id || req.user?.email,
       requestId: req.headers['x-request-id'],
       transactionSnapshot: { amount: numAmount, amountINR, currency: poCurrency, fxRate, poId: poRef, vendorId: vendorIdFinal },
       wf
     });
+
+    newAdv.approvalInstanceId = approval._id.toString();
+    newAdv.requestedByTeam = approval.requestedByTeam || null;
+    newAdv.assignedApprover = approval.assignedApprover || null;
+    newAdv.assignedApproverName = approval.assignedApproverName || null;
+    newAdv.assignedApproverRole = approval.assignedApproverRole || null;
+    await newAdv.save();
 
     try {
       await WorkflowAudit.create({
@@ -1453,6 +1729,8 @@ const updateAdvanceHandler = async (req, res) => {
   try {
     const adv = await AdvancePayment.findOne(buildAdvanceFilter(req.params.id));
     if (!adv) return res.status(404).json({ success: false, error: 'Advance payment not found' });
+    if (!['draft', 'returned'].includes(adv.status)) return res.status(409).json({ success: false, error: 'Only a draft or returned advance can be edited.' });
+    if (!(await canMutateOwnPayment(req, adv))) return res.status(403).json({ success: false, error: 'Only the requester can edit this advance.' });
 
     const { amount, paymentMode, bankName, bankAccountNumber, remarks } = req.body;
     if (amount !== undefined) adv.amount = Number(amount);
@@ -1486,8 +1764,8 @@ const updateAdvanceHandler = async (req, res) => {
   }
 };
 
-router.put('/advances/:id', updateAdvanceHandler);
-router.put('/advance-payments/:id', updateAdvanceHandler);
+router.put('/advances/:id', authenticateToken, updateAdvanceHandler);
+router.put('/advance-payments/:id', authenticateToken, updateAdvanceHandler);
 
 // ─── DELETE Advance Payment ───────────────────────────────────────────────────
 
@@ -1495,6 +1773,7 @@ const deleteAdvanceHandler = async (req, res) => {
   try {
     const adv = await AdvancePayment.findOne(buildAdvanceFilter(req.params.id));
     if (adv) {
+      if (!['draft', 'returned'].includes(adv.status)) return res.status(409).json({ success: false, error: 'Only a draft or returned advance can be deleted.' });
       try {
         await WorkflowAudit.create({
           eventId: `wa-${crypto.randomUUID()}`,
@@ -1523,20 +1802,22 @@ const deleteAdvanceHandler = async (req, res) => {
   }
 };
 
-router.delete('/advances/:id', deleteAdvanceHandler);
-router.delete('/advance-payments/:id', deleteAdvanceHandler);
+router.delete('/advances/:id', authenticateToken, authorizePermission('advance-payments', 'delete'), deleteAdvanceHandler);
+router.delete('/advance-payments/:id', authenticateToken, authorizePermission('advance-payments', 'delete'), deleteAdvanceHandler);
 
 // ─── PUT Update Advance Payment Status ──────────────────────────────────────
 
-router.put('/advances/:id/status', async (req, res) => {
+router.put('/advances/:id/status', authenticateToken, async (req, res) => {
   try {
     const { status } = req.body;
-    const validStatuses = ['draft', 'pending', 'approved', 'rejected', 'returned', 'paid', 'adjusted'];
+    const validStatuses = ['pending'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ success: false, error: 'Invalid status value.' });
     }
     const adv = await AdvancePayment.findOne(buildAdvanceFilter(req.params.id));
     if (!adv) return res.status(404).json({ success: false, error: 'Advance not found' });
+    if (!['draft', 'returned'].includes(adv.status)) return res.status(409).json({ success: false, error: 'Only a draft or returned advance can be submitted.' });
+    if (!(await canMutateOwnPayment(req, adv))) return res.status(403).json({ success: false, error: 'Only the requester can submit this advance.' });
     adv.status = status;
     await adv.save();
 
@@ -1553,11 +1834,24 @@ router.put('/advances/:id/status', async (req, res) => {
   }
 });
 
+router.post('/advances/:id/payout', authenticateToken, authorizePermission('advance-payments', 'mark-paid'), async (req, res) => {
+  try {
+    const utrNumber = String(req.body.utrNumber || '').trim();
+    if (!utrNumber) return res.status(400).json({ success: false, error: 'UTR number is required.' });
+    const advance = await AdvancePayment.findOne(buildAdvanceFilter(req.params.id));
+    if (!advance) return res.status(404).json({ success: false, error: 'Advance payment not found.' });
+    if (advance.status !== 'approved') return res.status(409).json({ success: false, error: 'Only an approved advance can be marked paid.' });
+    advance.status = 'paid'; advance.utrNumber = utrNumber; advance.paidAt = new Date();
+    await advance.save();
+    return res.json({ success: true, message: 'Advance payment marked as paid.', data: advance });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // INVOICE PAYMENTS
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.get('/invoices', async (req, res) => {
+router.get('/invoices', authenticateToken, async (req, res) => {
   try {
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
     const size = Math.min(100, Math.max(1, Number.parseInt(req.query.size || req.query.pageSize, 10) || 10));
@@ -1565,16 +1859,16 @@ router.get('/invoices', async (req, res) => {
     const statusFilter = String(req.query.status || '').trim();
     const matchFilter = String(req.query.threeWayMatch || req.query.match || '').trim();
 
-    await InvoicePayment.deleteMany({ invoicePaymentId: { $in: ['INV-PAY-901', 'INV-PAY-902', 'INV-PAY-903'] } }).catch(() => { });
-
-    const filter = { isDeleted: { $ne: true } };
+    const visibility = await getPaymentVisibility(req);
+    if (!visibility) return res.status(403).json({ success: false, error: 'Your active user record could not be found.' });
+    const filter = { isDeleted: { $ne: true }, ...paymentOwnerFilter(visibility) };
     if (search) {
       const regex = new RegExp(escapeRegex(search), 'i');
-      filter.$or = [
+      filter.$and = [{ $or: [
         { invoiceNumber: regex }, { invoicePaymentId: regex },
         { poId: regex }, { sapPoNumber: regex },
         { vendorName: regex }, { vendorId: regex }
-      ];
+      ] }];
     }
     if (statusFilter && statusFilter !== 'All Status' && statusFilter !== 'All') {
       filter.status = statusFilter.toLowerCase();
@@ -1598,7 +1892,7 @@ router.get('/invoices', async (req, res) => {
   }
 });
 
-router.get('/invoices/:id', async (req, res) => {
+router.get('/invoices/:id', authenticateToken, async (req, res) => {
   try {
     const inv = await InvoicePayment.findOne({
       $and: [
@@ -1607,6 +1901,7 @@ router.get('/invoices/:id', async (req, res) => {
       ]
     }).lean();
     if (!inv) return res.status(404).json({ success: false, error: 'Invoice payment not found' });
+    if (!(await canViewPayment(req, inv))) return res.status(403).json({ success: false, error: 'You cannot view this invoice payment.' });
     const approval = await Approval.findOne({ $or: [{ id: inv.invoicePaymentId }, { id: req.params.id }] }).lean();
     return res.json({ success: true, data: { ...inv, approval: approval || null } });
   } catch (err) {
@@ -1767,27 +2062,36 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         matchedAt: new Date()
       },
       status: 'pending',
-      createdBy: req.user?.id || req.user?.email || 'system',
+      createdBy: req.user?.name || req.user?.email || 'System User',
       requestedById: req.user?.id || req.user?.email || 'system',
       userId: req.user?.id || req.user?.email || 'system',
-      requestedBy: req.user?.name || requestedBy || 'Finance Team'
+      requestedBy: req.user?.name || requestedBy || 'Finance Team',
+      createdByType: req.user?.role === 'Vendor' ? 'vendor' : 'user',
+      createdByVendorId: req.user?.role === 'Vendor' ? vendorIdFinal : ''
     });
 
     const { amountINR, fxRate, amountFormatted } = await getFxConversion(netPayable, poCurrency, req.body.fxRate);
     const wf = await resolveWorkflowFromDB('Invoice Payment', amountINR, { currency: poCurrency, vendorType: vendor?.vendorType, poType: po.poType || po.type });
 
-    await createApprovalRecord({
+    const approval = await createApprovalRecord({
       referenceId: invPaymentId,
       type: 'Invoice Payment',
       vendorName: vendorNameFinal,
       amountFormatted,
       poRef,
-      requestedBy: requestedBy || 'Finance Team',
+      requestedBy: req.user?.name || requestedBy || 'Finance Team',
       requestedById: req.user?.id || req.user?.email,
       requestId: req.headers['x-request-id'],
       transactionSnapshot: { netPayable, amountINR, grossAmount: numGross, currency: poCurrency, fxRate, poId: poRef, vendorId: vendorIdFinal, invoiceNumber: finalInvoiceNumber },
       wf
     });
+
+    newInvoice.approvalInstanceId = approval._id.toString();
+    newInvoice.requestedByTeam = approval.requestedByTeam || null;
+    newInvoice.assignedApprover = approval.assignedApprover || null;
+    newInvoice.assignedApproverName = approval.assignedApproverName || null;
+    newInvoice.assignedApproverRole = approval.assignedApproverRole || null;
+    await newInvoice.save();
 
     try {
       await WorkflowAudit.create({
@@ -1815,7 +2119,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
 
 // ─── PUT Update Invoice ───────────────────────────────────────────────────────
 
-router.put('/invoices/:id', optionalAuth, async (req, res) => {
+router.put('/invoices/:id', authenticateToken, async (req, res) => {
   try {
     const invoice = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
     if (!invoice) return res.status(404).json({ success: false, error: 'Invoice payment not found' });
@@ -1866,16 +2170,18 @@ router.put('/invoices/:id', optionalAuth, async (req, res) => {
 
 // ─── PUT Update Invoice Status ────────────────────────────────────────────────
 
-router.put('/invoices/:id/status', async (req, res) => {
+router.put('/invoices/:id/status', authenticateToken, async (req, res) => {
   try {
     const { status } = req.body;
-    const validStatuses = ['draft', 'pending', 'approved', 'rejected', 'returned', 'paid'];
+    const validStatuses = ['pending'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ success: false, error: 'Invalid status value.' });
     }
 
     const invoice = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
     if (invoice) {
+      if (!['draft', 'returned'].includes(invoice.status)) return res.status(409).json({ success: false, error: 'Only a draft or returned invoice can be submitted.' });
+      if (!(await canMutateOwnPayment(req, invoice))) return res.status(403).json({ success: false, error: 'Only the requester can submit this invoice.' });
       invoice.status = status;
       await invoice.save();
 
@@ -1905,7 +2211,7 @@ router.put('/invoices/:id/status', async (req, res) => {
 
 // ─── POST Record Invoice Payout ───────────────────────────────────────────────
 
-router.post('/invoices/:id/payout', async (req, res) => {
+router.post('/invoices/:id/payout', authenticateToken, authorizePermission('invoice-payments', 'mark-paid'), async (req, res) => {
   try {
     const { utrNumber, paymentMode } = req.body;
     if (!utrNumber?.trim()) {
@@ -1914,6 +2220,9 @@ router.post('/invoices/:id/payout', async (req, res) => {
 
     const invoice = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
     if (!invoice) return res.status(404).json({ success: false, error: 'Invoice payment not found' });
+    if (!['draft', 'returned'].includes(invoice.status)) return res.status(409).json({ success: false, error: 'Only a draft or returned invoice can be edited.' });
+    if (!(await canMutateOwnPayment(req, invoice))) return res.status(403).json({ success: false, error: 'Only the requester can edit this invoice.' });
+    if (invoice.status !== 'approved') return res.status(409).json({ success: false, error: 'Only an approved invoice can be marked paid.' });
 
     invoice.utrNumber = utrNumber.trim();
     invoice.status = 'paid';
@@ -1950,10 +2259,11 @@ router.post('/invoices/:id/payout', async (req, res) => {
 
 // ─── DELETE Invoice Payment ───────────────────────────────────────────────────
 
-router.delete('/invoices/:id', async (req, res) => {
+router.delete('/invoices/:id', authenticateToken, authorizePermission('invoice-payments', 'delete'), async (req, res) => {
   try {
     const inv = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
     if (inv) {
+      if (!['draft', 'returned'].includes(inv.status)) return res.status(409).json({ success: false, error: 'Only a draft or returned invoice can be deleted.' });
       await InvoicePayment.deleteOne({ _id: inv._id });
       await Approval.deleteOne({ id: inv.invoicePaymentId }).catch(() => { });
     }
@@ -2166,7 +2476,7 @@ router.get('/rfqs', authenticateToken, async (req, res) => {
 
 // ─── LOGISTICS PROVIDERS CRUD API ───────────────────────────────────────────
 
-router.get('/logistics-providers', async (req, res) => {
+router.get('/logistics-providers', authenticateToken, authorizePermission('logistics-providers', 'view'), async (req, res) => {
   try {
     let providers = await LogisticsProvider.find().sort({ createdAt: -1 }).lean().catch(() => []);
 
@@ -2213,7 +2523,7 @@ router.get('/logistics-providers', async (req, res) => {
   }
 });
 
-router.get('/logistics-providers/:id', async (req, res) => {
+router.get('/logistics-providers/:id', authenticateToken, authorizePermission('logistics-providers', 'view'), async (req, res) => {
   try {
     const { id } = req.params;
     const filter = { $or: [{ providerId: id }] };
@@ -2256,7 +2566,7 @@ router.get('/logistics-providers/:id', async (req, res) => {
   }
 });
 
-router.post('/logistics-providers', async (req, res) => {
+router.post('/logistics-providers', authenticateToken, authorizePermission('logistics-providers', 'manage'), async (req, res) => {
   try {
     const {
       name, companyName, contactPerson, phone, email, status,
@@ -2292,7 +2602,7 @@ router.post('/logistics-providers', async (req, res) => {
   }
 });
 
-router.put('/logistics-providers/:id', async (req, res) => {
+router.put('/logistics-providers/:id', authenticateToken, authorizePermission('logistics-providers', 'manage'), async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
@@ -2321,7 +2631,7 @@ router.put('/logistics-providers/:id', async (req, res) => {
   }
 });
 
-router.delete('/logistics-providers/:id', async (req, res) => {
+router.delete('/logistics-providers/:id', authenticateToken, authorizePermission('logistics-providers', 'manage'), async (req, res) => {
   try {
     const { id } = req.params;
     const filter = { $or: [{ providerId: id }] };
@@ -2387,7 +2697,7 @@ router.post('/rfqs/demo-workflow', authenticateToken, async (req, res) => {
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.post('/rfqs', authenticateToken, async (req, res) => {
+router.post('/rfqs', authenticateToken, authorizePermission('rfq', 'create'), async (req, res) => {
   try {
     const {
       title, linkedPoId, closingDate, description,
@@ -2626,7 +2936,7 @@ router.put('/rfqs/:id', authenticateToken, async (req, res) => {
 
 // ─── DELETE RFQ ──────────────────────────────────────────────────────────────
 
-router.delete('/rfqs/:id', authenticateToken, async (req, res) => {
+router.delete('/rfqs/:id', authenticateToken, authorizePermission('rfq', 'delete'), async (req, res) => {
   try {
     const { id } = req.params;
     const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
@@ -2744,7 +3054,7 @@ router.post('/rfqs/:id/quote', authenticateToken, async (req, res) => {
 
 // ─── POST Award RFQ Quote ─────────────────────────────────────────────────────
 
-router.post('/rfqs/:id/award', authenticateToken, async (req, res) => {
+router.post('/rfqs/:id/award', authenticateToken, authorizePermission('rfq', 'award'), async (req, res) => {
   try {
     const { id } = req.params;
     const { quoteId, vendorId, vendorName, allocations, submitForApproval, isReassignment } = req.body;
@@ -3477,9 +3787,11 @@ router.post('/customs-agent/invoices', authenticateToken, async (req, res) => {
 
 // ─── LOGISTICS PAYMENTS ROUTES ──────────────────────────────────────────────
 
-router.get('/logistics-payments', optionalAuth, async (req, res) => {
+router.get('/logistics-payments', authenticateToken, async (req, res) => {
   try {
-    let items = await LogisticsPayment.find().sort({ createdAt: -1 }).lean();
+    const visibility = await getPaymentVisibility(req);
+    if (!visibility) return res.status(403).json({ success: false, error: 'Your active user record could not be found.' });
+    let items = await LogisticsPayment.find(paymentOwnerFilter(visibility)).sort({ createdAt: -1 }).lean();
 
     const q = String(req.query.q || '').toLowerCase().trim();
     const statusFilter = String(req.query.status || 'All').trim();
@@ -3498,9 +3810,9 @@ router.get('/logistics-payments', optionalAuth, async (req, res) => {
       const app = await Approval.findOne({ $or: [{ id: ref }, { referenceNumber: ref }] }).lean();
 
       let rawStatus = app?.status || item.status || 'Approved';
-      let status = isLOG ? (rawStatus.toLowerCase().includes('pending') ? 'Approved' : rawStatus) : rawStatus;
-      let currentStep = isLOG ? 1 : (app?.currentStep || item.currentStep || 1);
-      let totalSteps = isLOG ? 1 : (app?.totalSteps || item.totalSteps || 1);
+      let status = rawStatus;
+      let currentStep = app?.currentStep || item.currentStep || 1;
+      let totalSteps = app?.totalSteps || item.totalSteps || 1;
       let workflowSteps = null;
       if (app?.workflowSteps) {
         try { workflowSteps = JSON.parse(app.workflowSteps); } catch (_) { }
@@ -3518,7 +3830,7 @@ router.get('/logistics-payments', optionalAuth, async (req, res) => {
         status,
         currentStep,
         totalSteps,
-        currentSlab: isLOG ? 'Direct Approval (No Workflow)' : (app?.currentSlab || 'BL Freight Invoice Workflow'),
+        currentSlab: app?.currentSlab || (isLOG ? 'Logistics Payment Workflow' : 'BL Freight Invoice Workflow'),
         workflowSteps: app?.workflowSteps,
         parsedSteps: workflowSteps,
         submittedAt: item.submittedAt || item.createdAt
@@ -3556,7 +3868,7 @@ router.get('/logistics-payments', optionalAuth, async (req, res) => {
   }
 });
 
-router.post('/logistics-payments', authenticateToken, async (req, res) => {
+router.post('/logistics-payments', authenticateToken, authorizePermission('logistics-payments', 'create'), async (req, res) => {
   try {
     const { blNumber, typeDisplay, category, source, invoiceNumber, vendorName, amount, currency, remarks } = req.body;
     if (!invoiceNumber || !amount || Number(amount) <= 0) {
@@ -3566,6 +3878,7 @@ router.post('/logistics-payments', authenticateToken, async (req, res) => {
     const numAmount = Number(amount);
     const ref = `LOG-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    const wf = await resolveWorkflowFromDB('Logistics Payment', numAmount, { currency: currency || 'INR', category: category || 'freight' });
     const approval = await createApprovalRecord({
       referenceId: ref,
       type: 'Logistics Payment',
@@ -3576,15 +3889,8 @@ router.post('/logistics-payments', authenticateToken, async (req, res) => {
       requestedById: req.user?.id || req.user?.email,
       requestId: req.headers['x-request-id'],
       transactionSnapshot: { blNumber: blNumber || '', invoiceNumber, category: category || 'freight', typeDisplay: typeDisplay || 'Logistics Freight Payment', source: source || 'Logistics', amount: numAmount },
-      wf: { status: 'Approved', currentStep: 1, totalSteps: 1, steps: [] }
+      wf
     });
-
-    if (approval) {
-      approval.status = 'Approved';
-      approval.currentStep = 1;
-      approval.totalSteps = 1;
-      await approval.save().catch(() => { });
-    }
 
     const payment = await LogisticsPayment.create({
       logisticsPaymentId: ref,
@@ -3599,20 +3905,26 @@ router.post('/logistics-payments', authenticateToken, async (req, res) => {
       amount: numAmount,
       totalAmount: numAmount,
       currency: currency || 'INR',
-      status: 'Approved',
-      currentStep: 1,
-      totalSteps: 1,
+      status: approval.status,
+      currentStep: approval.currentStep || 1,
+      totalSteps: approval.totalSteps || 1,
       remarks: remarks || '',
       submittedAt: new Date(),
       createdBy: req.user?.name || req.user?.email || 'System User',
+      requestedBy: req.user?.name || req.user?.email || 'System User',
+      requestedById: req.user?.id || req.user?.email,
+      requestedByTeam: approval.requestedByTeam || null,
+      assignedApprover: approval.assignedApprover || null,
+      assignedApproverName: approval.assignedApproverName || null,
+      assignedApproverRole: approval.assignedApproverRole || null,
       actionHistory: [
-        { action: 'submit', step: 1, role: 'Requester', actionedBy: req.user?.name || req.user?.email || 'User', actionedAt: new Date(), remarks: 'Submitted Logistics Payment (Directly Approved)' }
+        { action: 'submit', step: 1, role: 'Requester', actionedBy: req.user?.name || req.user?.email || 'User', actionedAt: new Date(), remarks: 'Submitted Logistics Payment for approval' }
       ]
     });
 
-    broadcastEvent('LOGISTICS_PAYMENT_SUBMITTED', { id: payment.logisticsPaymentId, referenceNumber: ref, blNumber, amount: numAmount, status: 'Approved' });
+    broadcastEvent('LOGISTICS_PAYMENT_SUBMITTED', { id: payment.logisticsPaymentId, referenceNumber: ref, blNumber, amount: numAmount, status: approval.status });
 
-    return res.status(201).json({ success: true, message: 'Logistics Payment submitted and directly approved.', payment, approval });
+    return res.status(201).json({ success: true, message: 'Logistics Payment submitted for approval.', payment, approval });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -3648,7 +3960,7 @@ router.delete('/logistics-payments/clear-bli', authenticateToken, async (req, re
   }
 });
 
-router.delete('/logistics-payments/:id', authenticateToken, async (req, res) => {
+router.delete('/logistics-payments/:id', authenticateToken, authorizePermission('logistics-payments', 'delete'), async (req, res) => {
   try {
     const { id } = req.params;
     const target = await LogisticsPayment.findOne({
@@ -3906,16 +4218,18 @@ router.post('/bl-invoices/:id/action', authenticateToken, async (req, res) => {
 
 // ─── CUSTOM DUTIES CRUD ROUTES ─────────────────────────────────────────────
 
-router.get('/custom-duties', optionalAuth, async (req, res) => {
+router.get('/custom-duties', authenticateToken, async (req, res) => {
   try {
-    const duties = await CustomDutyPayment.find().sort({ createdAt: -1 }).lean();
+    const visibility = await getPaymentVisibility(req);
+    if (!visibility) return res.status(403).json({ success: false, error: 'Your active user record could not be found.' });
+    const duties = await CustomDutyPayment.find(paymentOwnerFilter(visibility)).sort({ createdAt: -1 }).lean();
     return res.json({ success: true, duties, count: duties.length });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
 
-router.post('/custom-duties', authenticateToken, async (req, res) => {
+router.post('/custom-duties', authenticateToken, authorizePermission('custom-duty', 'create'), async (req, res) => {
   try {
     const { blNumber, boeNumber, dutyAmount, portCode, customAgentName, vesselName, icegateRef, remarks, documents } = req.body;
     if (!blNumber || !dutyAmount) {
@@ -3953,7 +4267,13 @@ router.post('/custom-duties', authenticateToken, async (req, res) => {
       remarks: remarks || '',
       documents: documents || [],
       approvalInstanceId: approval._id,
-      createdBy: req.user?.name || req.user?.email || 'System User'
+      createdBy: req.user?.name || req.user?.email || 'System User',
+      requestedBy: req.user?.name || req.user?.email || 'System User',
+      requestedById: req.user?.id || req.user?.email,
+      requestedByTeam: approval.requestedByTeam || null,
+      assignedApprover: approval.assignedApprover || null,
+      assignedApproverName: approval.assignedApproverName || null,
+      assignedApproverRole: approval.assignedApproverRole || null
     });
 
     return res.status(201).json({ success: true, message: 'Custom Duty payment created successfully.', duty, approval });
@@ -3962,7 +4282,7 @@ router.post('/custom-duties', authenticateToken, async (req, res) => {
   }
 });
 
-router.delete('/custom-duties/:id', authenticateToken, async (req, res) => {
+router.delete('/custom-duties/:id', authenticateToken, authorizePermission('custom-duty', 'delete'), async (req, res) => {
   try {
     const duty = await CustomDutyPayment.findOneAndDelete({ $or: [{ dutyId: req.params.id }, { _id: req.params.id }] });
     if (!duty) return res.status(404).json({ success: false, error: 'Custom Duty record not found.' });
@@ -3972,11 +4292,39 @@ router.delete('/custom-duties/:id', authenticateToken, async (req, res) => {
   }
 });
 
+router.post('/logistics-payments/:id/payout', authenticateToken, authorizePermission('logistics-payments', 'mark-paid'), async (req, res) => {
+  try {
+    const utrNumber = String(req.body.utrNumber || '').trim();
+    if (!utrNumber) return res.status(400).json({ success: false, error: 'UTR number is required.' });
+    const payment = await LogisticsPayment.findOne({
+      $or: [{ logisticsPaymentId: req.params.id }, { referenceNumber: req.params.id }, ...(mongoose.Types.ObjectId.isValid(req.params.id) ? [{ _id: req.params.id }] : [])]
+    });
+    if (!payment) return res.status(404).json({ success: false, error: 'Logistics payment not found.' });
+    if (!['approved', 'Approved', 'Approved & Dispatched'].includes(payment.status)) return res.status(409).json({ success: false, error: 'Only an approved Logistics payment can be marked paid.' });
+    payment.status = 'paid'; payment.utrNumber = utrNumber; payment.paidAt = new Date();
+    await payment.save();
+    return res.json({ success: true, message: 'Logistics payment marked as paid.', data: payment });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/custom-duties/:id/payout', authenticateToken, authorizePermission('custom-duty', 'mark-paid'), async (req, res) => {
+  try {
+    const utrNumber = String(req.body.utrNumber || '').trim();
+    if (!utrNumber) return res.status(400).json({ success: false, error: 'ICEGATE UTR/reference number is required.' });
+    const duty = await CustomDutyPayment.findOne({ $or: [{ dutyId: req.params.id }, ...(mongoose.Types.ObjectId.isValid(req.params.id) ? [{ _id: req.params.id }] : [])] });
+    if (!duty) return res.status(404).json({ success: false, error: 'Custom Duty record not found.' });
+    if (!['approved', 'Approved & Dispatched'].includes(duty.status)) return res.status(409).json({ success: false, error: 'Only an approved Custom Duty payment can be marked paid.' });
+    duty.status = 'paid'; duty.utrNumber = utrNumber; duty.paidAt = new Date();
+    await duty.save();
+    return res.json({ success: true, message: 'Custom Duty payment marked as paid.', data: duty });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
 // ─── FILE UPLOAD/DOWNLOAD ROUTES ────────────────────────────────────────────
 
 const uploadMiddleware = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
-router.post('/upload-file', optionalAuth, uploadMiddleware.single('file'), async (req, res) => {
+router.post('/upload-file', authenticateToken, uploadMiddleware.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded.' });
 
@@ -4003,7 +4351,7 @@ router.post('/upload-file', optionalAuth, uploadMiddleware.single('file'), async
   }
 });
 
-router.get('/download-file', optionalAuth, async (req, res) => {
+router.get('/download-file', authenticateToken, async (req, res) => {
   try {
     const rawTarget = req.query.fileUrl || req.query.url || req.query.name;
     if (!rawTarget) return res.status(400).json({ success: false, error: 'File path or name required.' });
@@ -4090,7 +4438,7 @@ router.get('/download-file', optionalAuth, async (req, res) => {
 
 // ─── AUDIT TRAIL ─────────────────────────────────────────────────────────────
 
-router.get('/audit/:entityId', optionalAuth, async (req, res) => {
+router.get('/audit/:entityId', authenticateToken, async (req, res) => {
   try {
     const { entityId } = req.params;
     const matcher = new RegExp(escapeRegex(entityId), 'i');
@@ -4211,7 +4559,7 @@ router.get('/audit/:entityId', optionalAuth, async (req, res) => {
 
 // ─── DASHBOARD ANALYTICS ─────────────────────────────────────────────────────
 
-router.get('/dashboard/analytics', optionalAuth, async (req, res) => {
+router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
   try {
     const appReg = /approved|dispatched|paid/i;
     const range = (req.query.range || '7d').toLowerCase();

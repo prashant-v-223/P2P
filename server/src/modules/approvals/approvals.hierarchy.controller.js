@@ -24,17 +24,28 @@ const getCurrentStepRole = (approval) => {
   }
 };
 
-const getVisibilityFilter = (user) => {
-  if (user.canSeeAllRequests || ['admin', 'superadmin'].includes(String(user.role).toLowerCase())) return {};
-  if (user.hierarchyLevel === 2 && user.team) return { requestedByTeam: user.team };
-  return { requestedById: user.id };
+const getVisibilityFilter = async (user) => {
+  if (user.canSeeAllRequests || ['admin', 'superadmin', 'system_admin', 'systemadmin', 'md'].includes(String(user.role).toLowerCase())) return {};
+  const users = await User.find({ status: 'Active' }, { id: 1, managerId: 1 }).lean();
+  const visibleIds = new Set([user.id]);
+  const queue = [user.id];
+  while (queue.length) {
+    const managerId = queue.shift();
+    for (const subordinate of users.filter((candidate) => candidate.managerId === managerId)) {
+      if (visibleIds.has(subordinate.id)) continue;
+      visibleIds.add(subordinate.id);
+      queue.push(subordinate.id);
+    }
+  }
+  return { requestedById: { $in: [...visibleIds] } };
 };
 
 export const getHierarchyPendingApprovals = async (req, res) => {
   const user = await User.findOne({ id: req.user.id, status: 'Active' }).lean();
   if (!user) return res.status(403).json({ success: false, error: 'Your active user record could not be found.' });
 
-  const requests = await Approval.find({ ...activeApprovalFilter, ...getVisibilityFilter(user) })
+  const visibility = await getVisibilityFilter(user);
+  const requests = await Approval.find({ ...activeApprovalFilter, ...visibility })
     .sort({ submittedAt: -1 })
     .lean();
 
@@ -63,7 +74,7 @@ export const getHierarchyTeamStats = async (req, res) => {
   const user = await User.findOne({ id: req.user.id, status: 'Active' }).lean();
   if (!user) return res.status(403).json({ success: false, error: 'Your active user record could not be found.' });
 
-  const visibility = getVisibilityFilter(user);
+  const visibility = await getVisibilityFilter(user);
   const [pending, total, teamSize] = await Promise.all([
     Approval.countDocuments({ ...activeApprovalFilter, ...visibility }),
     Approval.countDocuments(visibility),

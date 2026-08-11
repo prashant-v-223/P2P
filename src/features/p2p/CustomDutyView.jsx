@@ -8,6 +8,7 @@ import { SearchableSelect } from '../../components/ui/searchable-select';
 import { CustomInput } from '../../components/ui/custom-input';
 import { ShieldCheck, CheckCircle2, Plus, FileCheck2, Loader2, X, Search, Trash2 } from 'lucide-react';
 import DocumentUploader from '../../components/shared/DocumentUploader';
+import { userHasPermission } from '../../lib/permissions';
 
 export default function CustomDutyView() {
   const navigate = useNavigate();
@@ -19,7 +20,25 @@ export default function CustomDutyView() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
 
-  const canCreate = user?.role === 'admin' || user?.role === 'System Admin' || user?.role === 'finance' || user?.role === 'exim';
+  const canCreate = userHasPermission(
+    user?.role,
+    'custom-duty.create',
+    user?.permissions || user?.customPermissions
+  );
+  const canMarkPaid = userHasPermission(user?.role, 'custom-duty.mark-paid', user?.permissions || user?.customPermissions);
+
+  const handleDutyPayout = async (item) => {
+    const utrNumber = window.prompt('Enter ICEGATE UTR / payment reference number:');
+    if (!utrNumber?.trim()) return;
+    const res = await apiFetch(`/api/p2p/custom-duties/${item.dutyId}/payout`, {
+      method: 'POST',
+      body: JSON.stringify({ utrNumber: utrNumber.trim() })
+    });
+    const data = await res.json();
+    if (!res.ok) return showToast({ title: 'Payout Failed', description: data.error || 'Unable to record payout.', type: 'error' });
+    showToast({ title: 'Payment Recorded', description: data.message, type: 'success' });
+    fetchDuties();
+  };
 
   const fetchDuties = async () => {
     try {
@@ -222,17 +241,19 @@ export default function CustomDutyView() {
                     </span>
                   </td>
                   <td className="py-3.5 px-4 text-right">
-                    {item.status === 'pending' ? (
+                    {canMarkPaid && ['approved', 'Approved & Dispatched'].includes(item.status) ? (
                       <button 
-                        onClick={() => setDuties(prev => prev.map(d => d.dutyId === item.dutyId ? { ...d, status: 'paid', utrNumber: 'ICEGATE-UTR-99102' } : d))}
+                        onClick={() => handleDutyPayout(item)}
                         className="px-3.5 py-1.5 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs shadow-2xs transition cursor-pointer"
                       >
                         Execute ICEGATE Payout
                       </button>
-                    ) : (
+                    ) : item.status === 'paid' ? (
                       <span className="text-xs font-semibold text-emerald-600 flex items-center justify-end gap-1 font-mono">
                         <CheckCircle2 className="w-3.5 h-3.5" /> Paid via ICEGATE
                       </span>
+                    ) : (
+                      <span className="text-xs font-semibold text-slate-500">Awaiting approval</span>
                     )}
                   </td>
                 </tr>

@@ -21,7 +21,8 @@ import {
   GitFork,
   DollarSign,
   ChevronRight,
-  Building2
+  Building2,
+  Network
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { userCanAccessRoute, getFirstAllowedRoute } from '../../lib/permissions';
@@ -69,7 +70,8 @@ const NAV_SECTIONS = [
       { path: '/management/custom-agents', label: 'Custom Agents', icon: Shield },
       { path: '/management/logistics-providers', label: 'Logistics Providers', icon: Building2 },
       { path: '/admin/users', label: 'Users', icon: Users },
-      { path: '/admin/roles', label: 'Roles & Permissions', icon: Lock }
+      { path: '/admin/roles', label: 'Roles & Permissions', icon: Lock },
+      { path: '/admin/hierarchy-report', label: 'Hierarchy Reports', icon: Network }
     ]
   },
   {

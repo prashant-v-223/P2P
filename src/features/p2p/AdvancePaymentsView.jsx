@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import { apiFetch } from '../../services/api';
 import { ServerPagination } from '../../components/ui/server-pagination';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { CustomInput } from '../../components/ui/custom-input';
+import { useToast } from '../../components/ui/toast';
+import { userHasPermission } from '../../lib/permissions';
 import { 
   Search, 
   Eye, 
@@ -27,6 +30,9 @@ const getInitials = (name) => {
 export default function AdvancePaymentsView() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { showToast } = useToast();
+  const { user } = useSelector((state) => state.auth);
+  const canMarkPaid = userHasPermission(user?.role, 'advance-payments.mark-paid', user?.permissions || user?.customPermissions);
 
   // Read state directly from URL search params
   const currentPage = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
@@ -84,7 +90,7 @@ export default function AdvancePaymentsView() {
             reference:     item.advanceId || `ADV-${idx + 1}`,
             poNumber:      item.sapPoNumber || item.poId || '—',
             vendorName:    item.vendorName || 'Vendor',
-            requestedBy:   item.createdBy || 'Finance Team',
+            requestedBy:   item.requestedByName || item.requestedBy || item.createdBy || 'Finance Team',
             amount:        item.amount || 0,
             currency:      'INR',
             pctOfPo:       `${item.percentageOfPo || 0}.00%`,
@@ -149,6 +155,16 @@ export default function AdvancePaymentsView() {
     } catch (e) {
       console.error('Error deleting advance:', e);
     }
+  };
+
+  const handlePayout = async (reference) => {
+    const utrNumber = window.prompt('Enter bank UTR / payment reference number:');
+    if (!utrNumber?.trim()) return;
+    const res = await apiFetch(`/api/p2p/advances/${reference}/payout`, { method: 'POST', body: JSON.stringify({ utrNumber: utrNumber.trim() }) });
+    const data = await res.json();
+    if (!res.ok) return showToast({ title: 'Payout Failed', description: data.error || 'Unable to record payout.', type: 'error' });
+    showToast({ title: 'Payment Recorded', description: data.message, type: 'success' });
+    fetchAdvances();
   };
 
   return (
@@ -369,6 +385,16 @@ export default function AdvancePaymentsView() {
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </button>
+
+                          {canMarkPaid && adv.status === 'Approved' && (
+                            <button
+                              onClick={() => handlePayout(adv.reference)}
+                              title="Mark Advance as Paid"
+                              className="p-1.5 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition-colors"
+                            >
+                              <Wallet className="w-3.5 h-3.5" />
+                            </button>
+                          )}
 
                           <button
                             onClick={() => navigate(`/p2p/advance-payments/${adv.reference}/edit`)}

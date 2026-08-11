@@ -631,19 +631,6 @@ export default function UserManagementView() {
         )}
 
         <div className="flex items-center gap-2 flex-shrink-0">
-          {canManageUsers && (
-            <button
-              type="button"
-              disabled={resettingDb}
-              onClick={handleResetDatabase}
-              title="Reset all DB collections and seed exact user hierarchy"
-              className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100 transition shadow-2xs disabled:opacity-50"
-            >
-              {resettingDb ? <Loader2 className="w-4 h-4 animate-spin text-rose-600" /> : <RefreshCw className="w-4 h-4 text-rose-600" />}
-              <span>Reset & Reseed DB</span>
-            </button>
-          )}
-
           {canCreateUser ? (
             <button
               onClick={() => setIsAddUserOpen(true)}

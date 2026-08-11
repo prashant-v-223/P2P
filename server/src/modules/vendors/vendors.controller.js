@@ -211,7 +211,7 @@ export const getVendorPortalData = async (req, res) => {
       if (vendorDoc.id) keysToMatch.add(vendorDoc.id);
     }
 
-    const matchRegexes = Array.from(keysToMatch).map(k => new RegExp(escapeRegex(k), 'i'));
+    const matchRegexes = Array.from(keysToMatch).map(k => new RegExp(`^${escapeRegex(k)}$`, 'i'));
 
     // Strictly fetch Purchase Orders for this logged-in vendor
     const pos = await PurchaseOrder.find({
@@ -226,7 +226,10 @@ export const getVendorPortalData = async (req, res) => {
       $or: [
         { vendorId: { $in: matchRegexes } },
         { vendorName: { $in: matchRegexes } },
-        { createdBy: { $in: matchRegexes } }
+        { createdBy: { $in: matchRegexes } },
+        { requestedBy: { $in: matchRegexes } },
+        { requestedById: { $in: matchRegexes } },
+        { userId: { $in: matchRegexes } }
       ]
     }).sort({ createdAt: -1 }).lean().catch(() => []);
 
@@ -234,7 +237,11 @@ export const getVendorPortalData = async (req, res) => {
     const advs = await AdvancePayment.find({
       $or: [
         { vendorId: { $in: matchRegexes } },
-        { vendorName: { $in: matchRegexes } }
+        { vendorName: { $in: matchRegexes } },
+        { createdBy: { $in: matchRegexes } },
+        { requestedBy: { $in: matchRegexes } },
+        { requestedById: { $in: matchRegexes } },
+        { userId: { $in: matchRegexes } }
       ]
     }).sort({ createdAt: -1 }).lean().catch(() => []);
 

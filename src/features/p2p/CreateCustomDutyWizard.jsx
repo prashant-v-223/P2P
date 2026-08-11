@@ -66,11 +66,6 @@ export default function CreateCustomDutyWizard() {
 
         const items = Array.from(uniqueMap.values());
         setClearedBls(items);
-        if (items.length > 0) {
-          const initialId = items[0].blNumber || items[0].blId || items[0].id;
-          setSelectedBlId(initialId);
-          setSelectedBl(items[0]);
-        }
       } catch (e) {
         console.error('Error loading cleared BLs:', e);
       }
@@ -79,11 +74,9 @@ export default function CreateCustomDutyWizard() {
   }, []);
 
   const handleSelectBlChange = (val) => {
-    setSelectedBlId(val);
+    setSelectedBlId(val || '');
     const target = clearedBls.find(b => (b.blNumber || b.blId || b.id) === val);
-    if (target) {
-      setSelectedBl(target);
-    }
+    setSelectedBl(target || null);
   };
 
   const handleFileChange = (e) => {
@@ -99,6 +92,10 @@ export default function CreateCustomDutyWizard() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!selectedBlId || !selectedBl) {
+      showToast({ title: 'Validation Error', description: 'Please select a BOE / BL entry.', type: 'error' });
+      return;
+    }
     if (!dutyAmount || Number(dutyAmount) <= 0) {
       showToast({ title: 'Validation Error', description: 'Please enter total custom duty amount.', type: 'error' });
       return;
@@ -134,19 +131,17 @@ export default function CreateCustomDutyWizard() {
     }
   };
 
-  const options = clearedBls.length > 0
-    ? clearedBls.map(b => ({
-        label: `${b.boeNumber || 'BOE-9044792'} — BL: ${b.blNumber || b.blId || b.id} - ${b.vendorName || b.customAgentName || 'Logistics Vendor'}`,
-        value: b.blNumber || b.blId || b.id
-      }))
-    : [{ label: '9044792 — BL: EEE - Aquair International Freight Forwarders', value: 'EEE' }];
+  const options = clearedBls.map(b => ({
+    label: `${b.boeNumber || 'BOE unavailable'} — BL: ${b.blNumber || b.blId || b.id} - ${b.vendorName || b.customAgentName || 'Logistics Vendor'}`,
+    value: b.blNumber || b.blId || b.id
+  }));
 
   // Dynamic documents list for selected BL
   const activeDocuments = (selectedBl && Array.isArray(selectedBl.documents) && selectedBl.documents.length > 0)
     ? selectedBl.documents
     : (selectedBl?.invoiceFile
         ? [{ fileName: selectedBl.invoiceFile, docType: 'Bill of Entry Invoice' }]
-        : [{ fileName: `${selectedBl?.boeNumber || '9044792'}_RAYZON_SOLAR_CELL.pdf`, docType: 'Customs Bill of Entry' }]);
+        : []);
 
   const formatDateText = (dateVal) => {
     if (!dateVal) return 'Recently Cleared';
@@ -199,6 +194,7 @@ export default function CreateCustomDutyWizard() {
           </div>
 
           {/* DYNAMIC ORANGE DETAIL CARD */}
+          {selectedBl && (
           <div className="bg-[#fffcf7] border border-[#fdecd5] rounded-2xl p-4 space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-y-4 gap-x-2 text-xs">
               <div>
@@ -207,15 +203,15 @@ export default function CreateCustomDutyWizard() {
               </div>
               <div>
                 <p className="text-[11px] font-bold text-amber-800/80">BOE Number</p>
-                <p className="font-extrabold text-slate-900 mt-0.5">{selectedBl?.boeNumber || '9044792'}</p>
+                <p className="font-extrabold text-slate-900 mt-0.5">{selectedBl.boeNumber || '—'}</p>
               </div>
               <div>
                 <p className="text-[11px] font-bold text-amber-800/80">Vendor</p>
-                <p className="font-extrabold text-slate-900 mt-0.5 truncate">{selectedBl?.vendorName || selectedBl?.customAgentName || 'Aquair International Freight Forwarders'}</p>
+                <p className="font-extrabold text-slate-900 mt-0.5 truncate">{selectedBl.vendorName || selectedBl.customAgentName || '—'}</p>
               </div>
               <div>
                 <p className="text-[11px] font-bold text-amber-800/80">RFQ</p>
-                <p className="font-extrabold text-slate-900 mt-0.5">{selectedBl?.rfqNumber || selectedBl?.rfqId || 'RFQ-2026-0001'}</p>
+                <p className="font-extrabold text-slate-900 mt-0.5">{selectedBl.rfqNumber || selectedBl.rfqId || '—'}</p>
               </div>
               <div>
                 <p className="text-[11px] font-bold text-amber-800/80">Custom Cleared On</p>
@@ -223,7 +219,7 @@ export default function CreateCustomDutyWizard() {
               </div>
               <div>
                 <p className="text-[11px] font-bold text-amber-800/80">BL Status</p>
-                <p className="font-extrabold text-slate-900 mt-0.5">{selectedBl?.status || 'Custom Cleared'}</p>
+                <p className="font-extrabold text-slate-900 mt-0.5">{selectedBl.status || '—'}</p>
               </div>
             </div>
 
@@ -259,6 +255,7 @@ export default function CreateCustomDutyWizard() {
               </div>
             </div>
           </div>
+          )}
         </div>
 
         {/* CARD 2: PAYMENT DETAILS */}

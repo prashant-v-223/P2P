@@ -94,6 +94,8 @@ export const DEFAULT_PERMISSIONS = [
   { id: 'perm-050', key: 'roles.manage', name: 'Manage Roles', module: 'Roles & Permissions', action: 'manage', description: 'Create, edit roles and assign permissions.', type: 'System', status: 'Active' },
   { id: 'perm-051', key: 'permissions.view', name: 'View Permissions', module: 'Roles & Permissions', action: 'view-perms', description: 'View the permission registry.', type: 'System', status: 'Active' },
   { id: 'perm-052', key: 'permissions.create', name: 'Create Permissions', module: 'Roles & Permissions', action: 'create-perms', description: 'Create new permission keys.', type: 'System', status: 'Active' },
+  { id: 'perm-053', key: 'reports.view', name: 'View Hierarchy Reports', module: 'Reports', action: 'view', description: 'View advance, invoice and vendor reports within the organisation hierarchy.', type: 'System', status: 'Active' },
+  { id: 'perm-054', key: 'reports.view-all', name: 'View All Hierarchy Reports', module: 'Reports', action: 'view-all', description: 'View reports for every user and vendor across the organisation.', type: 'System', status: 'Active' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -397,6 +399,13 @@ export const DEFAULT_ROLES = [
     }
   }
 ];
+
+// Every internal role can receive a hierarchy-scoped report. Only executive
+// roles receive organisation-wide report visibility by default.
+for (const role of DEFAULT_ROLES) {
+  role.permissions.reports = ['view'];
+  if (['admin', 'md', 'cfo', 'cfo-inner', 'finance', 'accounts'].includes(role.roleName)) role.permissions.reports.push('view-all');
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // IMPORTS FOR FULL SEED

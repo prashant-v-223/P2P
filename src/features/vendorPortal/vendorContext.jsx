@@ -62,8 +62,14 @@ export const VendorProvider = ({ children }) => {
 
   const fetchPortalData = useCallback(async (vendorCode, vendorEmail) => {
     try {
-      const code = vendorCode || vendorProfile.sapVendorCode || '20000201';
+      const code = vendorCode || vendorProfile.sapVendorCode || '';
       const mail = vendorEmail || vendorProfile.email || '';
+      if (!code && !mail) {
+        setPurchaseOrders([]);
+        setInvoices([]);
+        setAdvances([]);
+        return;
+      }
       const res = await apiFetch(`/api/vendors/portal-data?vendorCode=${encodeURIComponent(code)}&email=${encodeURIComponent(mail)}`);
       const json = await res.json();
       if (res.ok && json.success) {

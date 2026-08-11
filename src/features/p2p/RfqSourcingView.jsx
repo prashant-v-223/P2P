@@ -239,8 +239,8 @@ export default function RfqSourcingView() {
                 {displayedRfqs.map((rfq, idx) => {
                   const rowNum = startIndex + idx + 1;
                   const closingDateStr = formatDate(rfq.closingDate);
-                  const vendorCount = rfq.invitedVendors?.length || 0;
-                  const quoteCount = rfq.quotes?.length || 0;
+                  const vendorCount = Number(rfq.invitedVendorsCount ?? rfq.invitedVendors?.length ?? 0);
+                  const quoteCount = Number(rfq.quotesCount ?? rfq.quotes?.length ?? 0);
                   const cargoType = rfq.cargoDetails?.cargoType || 'General';
                   const origin = rfq.cargoDetails?.portOfOrigin || '—';
                   const dest = rfq.cargoDetails?.portOfDestination || '—';

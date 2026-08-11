@@ -146,9 +146,7 @@ export default function CreateLogisticsPaymentWizard() {
     }
   };
 
-  const providerOptions = providers.length > 0
-    ? providers.map(p => ({ label: p.companyName || p.name, value: p.id || p.vendorId }))
-    : [{ label: 'Fast Forward Logistics India Privat', value: 'dhl' }];
+  const providerOptions = providers.map(p => ({ label: p.companyName || p.name, value: p.id || p.vendorId }));
 
   const blOptions = [
     { label: 'Optional link with BL entry', value: '' },

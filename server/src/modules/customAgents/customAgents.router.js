@@ -1,5 +1,6 @@
 import express from 'express';
-import { authenticateToken, optionalAuth } from '../../middleware/auth.middleware.js';
+import { authenticateToken } from '../../middleware/auth.middleware.js';
+import { authorizePermission } from '../../middleware/rbac.middleware.js';
 import {
   getCustomAgents,
   getCustomAgentById,
@@ -16,13 +17,13 @@ const router = express.Router();
 router.post('/login', customAgentLogin);
 
 // Directory view routes - allow view with optionalAuth
-router.get('/', optionalAuth, getCustomAgents);
-router.get('/:id', optionalAuth, getCustomAgentById);
+router.get('/', authenticateToken, getCustomAgents);
+router.get('/:id', authenticateToken, getCustomAgentById);
 
 // Mutation routes - allow with optionalAuth
-router.post('/', optionalAuth, createCustomAgent);
-router.put('/:id', optionalAuth, updateCustomAgent);
-router.post('/change-password', optionalAuth, customAgentChangePassword);
-router.delete('/:id', optionalAuth, deleteCustomAgent);
+router.post('/', authenticateToken, authorizePermission('custom-agents', 'manage'), createCustomAgent);
+router.put('/:id', authenticateToken, authorizePermission('custom-agents', 'manage'), updateCustomAgent);
+router.post('/change-password', authenticateToken, customAgentChangePassword);
+router.delete('/:id', authenticateToken, authorizePermission('custom-agents', 'manage'), deleteCustomAgent);
 
 export default router;

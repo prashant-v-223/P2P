@@ -31,6 +31,8 @@ const advancePaymentSchema = new mongoose.Schema({
   adjustedAmount: { type: Number, default: 0 },
   adjustmentInvoiceId: { type: String },
   createdBy: { type: String, default: 'Finance Team' },
+  createdByType: { type: String, enum: ['user', 'vendor'], default: 'user', index: true },
+  createdByVendorId: { type: String, default: '', index: true },
   requestedBy: { type: String, default: '' },
   requestedById: { type: String, default: '', index: true },
   userId: { type: String, default: '', index: true },

@@ -7,6 +7,7 @@ import DocumentUploader from '../../components/shared/DocumentUploader';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { ServerPagination } from '../../components/ui/server-pagination';
 import { useToast } from '../../components/ui/toast';
+import { userHasPermission } from '../../lib/permissions';
 
 export default function LogisticsPaymentsView() {
   const navigate = useNavigate();
@@ -26,7 +27,24 @@ export default function LogisticsPaymentsView() {
   const [deletingBli, setDeletingBli] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
 
-  const canCreate = user?.role === 'admin' || user?.role === 'System Admin' || user?.role === 'finance' || user?.role === 'exim' || user?.role === 'logistics';
+  const canCreate = userHasPermission(
+    user?.role,
+    'logistics-payments.create',
+    user?.permissions || user?.customPermissions
+  );
+  const canMarkPaid = userHasPermission(user?.role, 'logistics-payments.mark-paid', user?.permissions || user?.customPermissions);
+
+  const handlePayout = async (payment, refId) => {
+    const utrNumber = window.prompt('Enter bank UTR / payment reference number:');
+    if (!utrNumber?.trim()) return;
+    const res = await apiFetch(`/api/p2p/logistics-payments/${refId}/payout`, {
+      method: 'POST', body: JSON.stringify({ utrNumber: utrNumber.trim() })
+    });
+    const data = await res.json();
+    if (!res.ok) return showToast({ title: 'Payout Failed', description: data.error || 'Unable to record payout.', type: 'error' });
+    showToast({ title: 'Payment Recorded', description: data.message, type: 'success' });
+    fetchPayments();
+  };
 
   const fetchPayments = async () => {
     try {
@@ -229,12 +247,9 @@ export default function LogisticsPaymentsView() {
                       </td>
                       <td className="py-4 px-4 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          {status.toLowerCase().includes('approved') ? (
+                          {canMarkPaid && status.toLowerCase().includes('approved') ? (
                             <button
-                              onClick={() => {
-                                setPayments(prev => prev.map(item => (item.referenceNumber === refId || item.id === refId) ? { ...item, status: 'Paid', utrNumber: 'UTR-LOG-8091' } : item));
-                                showToast({ title: 'Treasury Payout Recorded', description: `Recorded payment payout for ${refId}`, type: 'success' });
-                              }}
+                              onClick={() => handlePayout(p, refId)}
                               className="px-3 py-1.5 rounded-lg bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-[11px] cursor-pointer shadow-2xs transition"
                             >
                               Record Payout

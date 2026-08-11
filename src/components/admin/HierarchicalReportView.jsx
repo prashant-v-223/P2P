@@ -137,9 +137,14 @@ export default function HierarchicalReportView() {
   const formatCurrency = (amt) => {
     return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amt || 0);
   };
+  const totalAvailableBalance = Math.max(0, (data?.summary?.totalPoValue || 0) - (data?.summary?.totalPoCommittedAmount || 0));
 
   const rows = data?.rows || [];
   const tree = data?.tree || [];
+  const vendorRows = (data?.vendorRows || []).filter((vendor) =>
+    !search.trim() || [vendor.vendorName, vendor.vendorCode, vendor.vendorType, ...(vendor.requesters || [])]
+      .some((value) => String(value || '').toLowerCase().includes(search.toLowerCase().trim()))
+  );
 
   const filteredRows = rows.filter((r) => {
     const matchSearch = !search.trim() || [r.userName, r.userEmail, r.userRole, r.department, r.managerName]
@@ -152,40 +157,43 @@ export default function HierarchicalReportView() {
     <div className="flex h-[calc(100dvh-5.5rem)] min-h-0 w-full flex-col gap-4 overflow-hidden pb-4 font-sans text-slate-800">
       
       {/* ── Summary Bar ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
         <div className="rounded-xl border border-teal-200 bg-white p-3 shadow-2xs">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Users in Scope</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Payment Requests</span>
             <UsersIcon className="h-4 w-4 text-teal-600" />
           </div>
-          <p className="mt-1 text-xl font-extrabold text-teal-900">{data?.summary?.totalUsers || 0}</p>
+          <p className="mt-1 text-xl font-extrabold text-teal-900">{rows.reduce((sum, row) => sum + row.totalRecords, 0)}</p>
+          <p className="text-[10px] text-slate-400">{data?.summary?.totalUsers || 0} users in {data?.currentUser?.reportScope || 'self'} scope</p>
         </div>
 
         <div className="rounded-xl border border-emerald-200 bg-white p-3 shadow-2xs">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Verified Records</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Linked PO Value</span>
             <ShieldCheck className="h-4 w-4 text-emerald-600" />
           </div>
-          <p className="mt-1 text-xl font-extrabold text-emerald-800">{data?.summary?.totalVerifiedRecords || 0}</p>
+          <p className="mt-1 text-lg font-extrabold text-emerald-800">{formatCurrency(data?.summary?.totalPoValue)}</p>
         </div>
 
         <div className="rounded-xl border border-amber-200 bg-white p-3 shadow-2xs">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Pending Advance QTs</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Paid</span>
             <AlertCircle className="h-4 w-4 text-amber-600" />
           </div>
           <p className="mt-1 text-xl font-extrabold text-amber-700">
-            {data?.summary?.totalPendingAdvanceCount || 0} ({formatCurrency(data?.summary?.totalPendingAdvanceAmount)})
+            {formatCurrency(data?.summary?.totalPaidAmount)}
           </p>
         </div>
 
         <div className="rounded-xl border border-blue-200 bg-white p-3 shadow-2xs">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Invoice Adv. Adjusted</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Approved / Payable</span>
             <Receipt className="h-4 w-4 text-blue-600" />
           </div>
-          <p className="mt-1 text-xl font-extrabold text-blue-900">{formatCurrency(data?.summary?.totalInvoiceAdvanceAdjusted)}</p>
+          <p className="mt-1 text-lg font-extrabold text-blue-900">{formatCurrency(data?.summary?.totalApprovedAmount)}</p>
         </div>
+        <div className="rounded-xl border border-amber-200 bg-white p-3 shadow-2xs"><span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Pending Approval</span><p className="mt-1 text-lg font-extrabold text-amber-700">{formatCurrency(data?.summary?.totalPendingAmount)}</p></div>
+        <div className="rounded-xl border border-cyan-200 bg-cyan-50/40 p-3 shadow-2xs"><span className="text-[10px] font-bold uppercase tracking-wider text-cyan-700">Available Balance</span><p className="mt-1 text-lg font-extrabold text-cyan-900">{formatCurrency(totalAvailableBalance)}</p></div>
       </div>
 
       {/* ── Control Bar & View Switcher ── */}
@@ -212,6 +220,17 @@ export default function HierarchicalReportView() {
             >
               <Network className="h-3.5 w-3.5" />
               Hierarchy Tree
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setViewMode('vendors')}
+              className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-bold transition ${
+                viewMode === 'vendors' ? 'bg-white text-teal-700 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Building2 className="h-3.5 w-3.5" />
+              Vendor Report ({data?.summary?.totalVendors || 0})
             </button>
           </div>
         </div>
@@ -247,6 +266,28 @@ export default function HierarchicalReportView() {
             <Loader2 className="h-5 w-5 animate-spin text-teal-700" />
             <span>Loading hierarchical report...</span>
           </div>
+        ) : viewMode === 'vendors' ? (
+          <div className="flex-1 overflow-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead className="sticky top-0 bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200 z-10">
+                <tr><th className="px-3 py-3">Vendor</th><th className="px-3 py-3">Created By</th><th className="px-3 py-3 text-center">Records</th><th className="px-3 py-3 text-right">Advances</th><th className="px-3 py-3 text-right">Invoices</th><th className="px-3 py-3 text-right">Pending</th><th className="px-3 py-3 text-right">Paid</th><th className="px-3 py-3 text-center">Action</th></tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {vendorRows.length === 0 ? <tr><td colSpan={8} className="py-12 text-center text-slate-400">No vendor payment records found.</td></tr> : vendorRows.map((vendor) => (
+                  <tr key={vendor.vendorId} className="hover:bg-slate-50/80">
+                    <td className="px-3 py-2.5"><span className="block font-bold text-slate-900">{vendor.vendorName}</span><span className="text-[10px] text-slate-500">{vendor.vendorCode || 'No code'} · {vendor.vendorType || 'Vendor'}</span></td>
+                    <td className="px-3 py-2.5"><div className="flex flex-wrap gap-1">{vendor.requesters.map((name) => <span key={name} className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium">{name}</span>)}</div></td>
+                    <td className="px-3 py-2.5 text-center font-bold">{vendor.totalRecords}</td>
+                    <td className="px-3 py-2.5 text-right font-semibold">{formatCurrency(vendor.advanceTotal)}</td>
+                    <td className="px-3 py-2.5 text-right font-semibold">{formatCurrency(vendor.invoiceTotal)}</td>
+                    <td className="px-3 py-2.5 text-right font-semibold text-amber-700">{formatCurrency(vendor.pendingTotal)}</td>
+                    <td className="px-3 py-2.5 text-right font-semibold text-emerald-700">{formatCurrency(vendor.paidTotal)}</td>
+                    <td className="px-3 py-2.5 text-center"><button type="button" onClick={() => setSelectedUserRecords({ userName: vendor.vendorName, userRole: 'Vendor Report', department: vendor.vendorType || 'Vendor', records: vendor.records })} className="rounded px-2 py-1 text-[10px] font-bold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200">Inspect ({vendor.totalRecords})</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : viewMode === 'tree' ? (
           <div className="flex-1 overflow-auto p-4">
             {tree.length === 0 ? (
@@ -262,12 +303,12 @@ export default function HierarchicalReportView() {
                 <tr>
                   <th className="px-3 py-3">User & Role</th>
                   <th className="px-3 py-3">Reporting Line</th>
-                  <th className="px-3 py-3 text-center">Verified / Total</th>
-                  <th className="px-3 py-3 text-right">Not-Approved Advance QTs</th>
-                  <th className="px-3 py-3 text-right">PO Total Amount</th>
-                  <th className="px-3 py-3 text-right">Invoice Adv. Adjusted</th>
-                  <th className="px-3 py-3">Vendor Requirements</th>
-                  <th className="px-3 py-3 text-center">Turnaround</th>
+                  <th className="px-3 py-3 text-center">Requests</th>
+                  <th className="px-3 py-3 text-right">Advances</th>
+                  <th className="px-3 py-3 text-right">Invoices / Other</th>
+                  <th className="px-3 py-3 text-right">Paid</th>
+                  <th className="px-3 py-3 text-right">Pending</th>
+                  <th className="px-3 py-3 text-right">PO / Balance</th>
                   <th className="px-3 py-3 text-center">Actions</th>
                 </tr>
               </thead>
@@ -298,48 +339,17 @@ export default function HierarchicalReportView() {
 
                       <td className="px-3 py-2.5 text-center">
                         <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-200">
-                          {r.verifiedRecordsCount} / {r.totalRecords}
+                          {r.totalRecords}
                         </span>
                       </td>
 
-                      <td className="px-3 py-2.5 text-right font-medium text-amber-700">
-                        {r.pendingNotApprovedAdvanceCount > 0 ? (
-                          <span>{r.pendingNotApprovedAdvanceCount} ({formatCurrency(r.pendingNotApprovedAdvanceAmount)})</span>
-                        ) : (
-                          <span className="text-slate-400">0</span>
-                        )}
-                      </td>
-
                       <td className="px-3 py-2.5 text-right font-semibold text-slate-800">
-                        {formatCurrency(r.poTotalAmount)}
+                        {formatCurrency(r.advancePaymentTotal)}
                       </td>
-
-                      <td className="px-3 py-2.5 text-right font-bold text-teal-700">
-                        {formatCurrency(r.invoiceAdvanceAdjustedTotal)}
-                      </td>
-
-                      <td className="px-3 py-2.5">
-                        {r.vendorRequirements && r.vendorRequirements.length > 0 ? (
-                          <div className="flex flex-wrap gap-1 max-w-[200px]">
-                            {r.vendorRequirements.slice(0, 2).map((v, i) => (
-                              <span key={i} className="truncate max-w-[140px] rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-700">
-                                {v}
-                              </span>
-                            ))}
-                            {r.vendorRequirements.length > 2 && (
-                              <span className="rounded bg-slate-200 px-1 py-0.5 text-[9px] font-bold text-slate-600">
-                                +{r.vendorRequirements.length - 2}
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-slate-400 text-[10px]">None</span>
-                        )}
-                      </td>
-
-                      <td className="px-3 py-2.5 text-center font-medium text-slate-600">
-                        {r.avgTurnaroundHours ? `${r.avgTurnaroundHours} hrs` : 'N/A'}
-                      </td>
+                      <td className="px-3 py-2.5 text-right font-semibold text-slate-800"><span className="block">Inv: {formatCurrency(r.invoicePaymentTotal)}</span><span className="text-[9px] text-slate-400">Logistics {formatCurrency(r.logisticsPaymentTotal)} · Duty {formatCurrency(r.customDutyTotal)}</span></td>
+                      <td className="px-3 py-2.5 text-right font-bold text-emerald-700">{formatCurrency(r.paidAmount)}</td>
+                      <td className="px-3 py-2.5 text-right"><span className="block font-bold text-amber-700">{formatCurrency((r.approvedAmount || 0) + (r.pendingAmount || 0))}</span><span className="text-[9px] text-slate-400">approved + pending</span></td>
+                      <td className="px-3 py-2.5 text-right"><span className="block font-semibold text-slate-700">{formatCurrency(r.poTotalAmount)}</span><span className="block font-bold text-cyan-700">Bal: {formatCurrency(r.availableBalance)}</span></td>
 
                       <td className="px-3 py-2.5 text-center">
                         <button
@@ -386,6 +396,11 @@ export default function HierarchicalReportView() {
                         )}
                       </div>
                       <p className="mt-1 text-[11px] text-slate-500">PO: {rec.poNumber} · Vendor: {rec.vendorName}</p>
+                      {rec.createdByName && (
+                        <p className={`mt-0.5 text-[10px] font-semibold ${rec.createdByType === 'vendor' ? 'text-violet-700' : 'text-slate-500'}`}>
+                          Created by {rec.createdByType === 'vendor' ? 'Vendor' : 'User'}: {rec.createdByName}
+                        </p>
+                      )}
                     </div>
 
                     <div className="text-right">
