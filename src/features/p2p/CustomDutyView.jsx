@@ -72,12 +72,21 @@ export default function CustomDutyView() {
     async function loadClearedBls() {
       try {
         const res = await apiFetch('/api/p2p/customs-agent/assigned');
-        const json = await res.json();
-        if (res.ok && json.assignments) {
-          setClearedBls(json.assignments);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.assignments) {
+            setClearedBls(json.assignments);
+            return;
+          }
+        }
+        // Fallback for internal staff/admin view
+        const fallbackRes = await apiFetch('/api/p2p/exim/bl-entries');
+        if (fallbackRes.ok) {
+          const fallbackJson = await fallbackRes.json();
+          setClearedBls(fallbackJson.data || fallbackJson.blEntries || []);
         }
       } catch (e) {
-        console.error(e);
+        console.error('Failed to load cleared BLs:', e);
       }
     }
     loadClearedBls();

@@ -1,6 +1,34 @@
+import fs from 'fs';
+import path from 'path';
+
 // Load environment values before importing modules that read process.env.
 if (typeof process.loadEnvFile === 'function') {
-  process.loadEnvFile();
+  try {
+    process.loadEnvFile();
+  } catch (e) {
+    // Fallback if .env is missing or invalid
+  }
+}
+
+// Fallback .env file loader for Node environments without process.loadEnvFile
+const envPath = path.join(process.cwd(), '.env');
+if (fs.existsSync(envPath)) {
+  try {
+    const envContent = fs.readFileSync(envPath, 'utf8');
+    envContent.split('\n').forEach((line) => {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+        const [key, ...valueParts] = trimmed.split('=');
+        const k = key.trim();
+        const v = valueParts.join('=').trim().replace(/^["']|["']$/g, '');
+        if (k && !process.env[k]) {
+          process.env[k] = v;
+        }
+      }
+    });
+  } catch (e) {
+    console.warn('[ENV] Failed to parse .env file:', e.message);
+  }
 }
 
 const [{ default: app }, { config }, { connectDB }, { startSapScheduler }] = await Promise.all([
@@ -12,7 +40,7 @@ const [{ default: app }, { config }, { connectDB }, { startSapScheduler }] = awa
 
 const startServer = (portToTry) => {
   const server = app.listen(portToTry, '0.0.0.0', () => {
-    console.log(`Rayzon P2P Enterprise Modular Server running on http://localhost:${portToTry}`);
+    console.log(`Rayzon P2P Enterprise Modular Server running on http://0.0.0.0:${portToTry}`);
   });
 
   server.on('error', (err) => {
@@ -25,9 +53,10 @@ const startServer = (portToTry) => {
   });
 };
 
-startServer(Number(config.port) || 5000);
+startServer(Number(config.port) || 5050);
 
 // Keep the API available while MongoDB connects or the fallback store activates.
 void connectDB().then((connected) => {
   if (connected) startSapScheduler();
 });
+

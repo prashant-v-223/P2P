@@ -14,61 +14,6 @@ const buildAgentQuery = (id) => {
   return { $or: filter };
 };
 
-// Seed default custom agents with hashed passwords
-export const seedDefaultCustomAgents = async () => {
-  try {
-    const count = await CustomAgent.countDocuments();
-    if (count > 0) return;
-
-    const defaultPassword = await CustomAgent.hashPassword('Agent@2026');
-
-    await CustomAgent.insertMany([
-      {
-        agentId: 'CHA-001',
-        agencyName: 'Fast Forward Logistics India',
-        licenceNumber: 'FFLIL-2024-001',
-        portLocation: 'NHAVA SHEVA, MUNDRA',
-        contactPerson: 'Magnesh Phapale',
-        phone: '+91 98765 43210',
-        email: 'magnesh@fflindia.com',
-        address: 'Mumbai, Maharashtra',
-        passwordHash: defaultPassword,
-        status: 'Active',
-        portalAccessEnabled: true
-      },
-      {
-        agentId: 'CHA-002',
-        agencyName: 'Aquair International Freight Forwarders',
-        licenceNumber: 'AIFF-2023-045',
-        portLocation: 'NHAVA SHEVA, MUMBAI PORT',
-        contactPerson: 'Customs Manager',
-        phone: '+91 22 2345 6789',
-        email: 'customs@aquairintl.com',
-        address: 'Navi Mumbai, Maharashtra',
-        passwordHash: defaultPassword,
-        status: 'Active',
-        portalAccessEnabled: true
-      },
-      {
-        agentId: 'CHA-003',
-        agencyName: 'Babaji Shivram Clearing & Carriers',
-        licenceNumber: 'BSCC-2022-089',
-        portLocation: 'MUNDRA, KANDLA',
-        contactPerson: 'Clearing Manager',
-        phone: '+91 99 8877 6655',
-        email: 'clearing@babajishivram.in',
-        address: 'Gandhidham, Gujarat',
-        passwordHash: defaultPassword,
-        status: 'Active',
-        portalAccessEnabled: true
-      }
-    ]);
-
-    console.log('[CUSTOM AGENT SEED SUCCESS] Initialized default CHA accounts in MongoDB.');
-  } catch (err) {
-    console.warn('[CUSTOM AGENT SEED WARN]', err.message);
-  }
-};
 
 // GET all custom agents
 export const getCustomAgents = async (req, res) => {

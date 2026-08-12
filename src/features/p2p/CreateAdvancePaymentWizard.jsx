@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
@@ -9,11 +9,22 @@ import {
   Search, Check, Upload, X, FileText, Loader2, AlertCircle,
   ChevronRight, Building2, IndianRupee, Percent, ArrowLeft, Send,
   ShieldCheck, Banknote, TrendingUp, Info, CheckCircle2, Clock,
-  Receipt, ChevronDown, Home, Package, CreditCard, Truck, Briefcase,
-  User, LogOut, Settings, Bell, Menu
+  Receipt, DollarSign, Globe
 } from 'lucide-react';
 
 const fmt = (n) => (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const getCurrencySymbol = (curr) => {
+  const code = String(curr || '').trim().toUpperCase();
+  switch (code) {
+    case 'USD': return '$';
+    case 'EUR': return '€';
+    case 'GBP': return '£';
+    case 'JPY': return '¥';
+    case 'AED': return 'AED ';
+    default: return '₹';
+  }
+};
 
 const STEPS = [
   { id: 1, label: 'Select PO', icon: Building2 },
@@ -24,6 +35,11 @@ const STEPS = [
 
 export default function CreateAdvancePaymentWizard() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const urlPoId = useMemo(() => {
+    return (searchParams.get('poId') || searchParams.get('poNumber') || searchParams.get('po') || '').trim();
+  }, [searchParams]);
+
   const { showToast } = useToast();
   const { user } = useSelector((s) => s.auth);
 
@@ -44,10 +60,34 @@ export default function CreateAdvancePaymentWizard() {
   const [sgstPct, setSgstPct] = useState('');
   const [igstPct, setIgstPct] = useState('');
   const [documents, setDocuments] = useState([]);
-  const [dragging, setDragging] = useState(false);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [dynamicWorkflow, setDynamicWorkflow] = useState(null);
+
+  // Multi-currency & FX Rate state
+  const [fxRates, setFxRates] = useState({ USD: 83.5, EUR: 90.0, GBP: 105.0, INR: 1 });
+  const [customFxRate, setCustomFxRate] = useState('');
+
+  useEffect(() => {
+    apiFetch('/api/exchange-rates')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.rates) {
+          const rateMap = {};
+          data.rates.forEach(r => { rateMap[r.currency] = Number(r.rate) || 1; });
+          setFxRates(prev => ({ ...prev, ...rateMap }));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const poCurrency = selectedPo?.currency || 'INR';
+  const currSymbol = getCurrencySymbol(poCurrency);
+
+  const activeFxRate = useMemo(() => {
+    if (customFxRate && Number(customFxRate) > 0) return Number(customFxRate);
+    return fxRates[poCurrency] || (poCurrency === 'USD' ? 83.5 : poCurrency === 'EUR' ? 90.0 : 1);
+  }, [customFxRate, fxRates, poCurrency]);
 
   // Normalize raw PO API response into the shape used by the wizard
   const normalizePos = (data = []) => data.map(p => ({
@@ -72,12 +112,14 @@ export default function CreateAdvancePaymentWizard() {
       if (String(query).trim()) params.set('q', String(query).trim());
       const res = await apiFetch(`/api/p2p/purchase-orders?${params.toString()}`);
       const json = await res.json();
-      // Ignore stale responses from earlier keystrokes
       if (requestId !== searchRequestId.current) return;
       const normalized = normalizePos(json.data || []);
       setLivePos(normalized);
-      // Clear the selected PO if it no longer appears in the search results
       setSelectedPo(prev => {
+        if (urlPoId) {
+          const match = normalized.find(p => String(p.poNumber).toLowerCase() === urlPoId.toLowerCase());
+          if (match) return match;
+        }
         if (prev && !normalized.some(p => p.poNumber === prev.poNumber)) return null;
         return prev;
       });
@@ -88,14 +130,16 @@ export default function CreateAdvancePaymentWizard() {
     } finally {
       if (requestId === searchRequestId.current) setLoadingPos(false);
     }
-  }, []);
+  }, [urlPoId]);
 
-  // Load initial open POs on mount
   useEffect(() => {
-    fetchPos('');
-  }, [fetchPos]);
+    if (urlPoId) {
+      fetchPos(urlPoId);
+    } else {
+      fetchPos('');
+    }
+  }, [fetchPos, urlPoId]);
 
-  // Debounced server-side search as the user types in the search box
   useEffect(() => {
     const timer = setTimeout(() => {
       fetchPos(searchPo);
@@ -104,12 +148,16 @@ export default function CreateAdvancePaymentWizard() {
   }, [searchPo, fetchPos]);
 
   const filteredPos = useMemo(() => {
-    if (!searchPo.trim()) return livePos.slice(0, 8);
+    if (!searchPo.trim()) {
+      if (selectedPo && !livePos.slice(0, 8).some(p => p.poNumber === selectedPo.poNumber)) {
+        return [selectedPo, ...livePos.filter(p => p.poNumber !== selectedPo.poNumber)].slice(0, 8);
+      }
+      return livePos.slice(0, 8);
+    }
     return livePos;
-  }, [searchPo, livePos]);
+  }, [searchPo, livePos, selectedPo]);
 
   const poValue = selectedPo?.totalAmount || 0;
-  const advancePaid = selectedPo?.advancePaid || 0;
   const availableBalance = selectedPo ? Number(selectedPo.remainingAdvanceAmount) : 0;
 
   const calculatedAmount = useMemo(() => {
@@ -122,6 +170,10 @@ export default function CreateAdvancePaymentWizard() {
     return amountMode === 'pct' ? Number(pctValue) || 0 : (calculatedAmount / availableBalance) * 100;
   }, [selectedPo, availableBalance, amountMode, pctValue, calculatedAmount]);
 
+  const amountINR = useMemo(() => {
+    return calculatedAmount * activeFxRate;
+  }, [calculatedAmount, activeFxRate]);
+
   const remainingAfter = availableBalance - calculatedAmount;
   const cgstAmount = withGst && gstType === 'intra' ? calculatedAmount * (Number(cgstPct) / 100) : 0;
   const sgstAmount = withGst && gstType === 'intra' ? calculatedAmount * (Number(sgstPct) / 100) : 0;
@@ -130,7 +182,7 @@ export default function CreateAdvancePaymentWizard() {
   const grandTotal = calculatedAmount + totalGstAmount;
 
   useEffect(() => {
-    const amt = grandTotal || calculatedAmount || 0;
+    const amt = (grandTotal || calculatedAmount || 0) * activeFxRate;
     let active = true;
     apiFetch(`/api/p2p/workflows/preview?module=Advance Payment&amount=${amt}`)
       .then(res => res.json())
@@ -138,32 +190,58 @@ export default function CreateAdvancePaymentWizard() {
         if (active) {
           if (data.success && data.workflow) {
             setDynamicWorkflow(data.workflow);
-          } else {
-            // Silently fail - workflow preview is optional
-            console.log('[Workflow Preview] Not available:', data.error || 'No workflow data');
           }
         }
       })
       .catch((err) => {
-        // Silently handle errors - workflow preview is not critical
         console.log('[Workflow Preview] Failed to fetch:', err.message);
       });
     return () => { active = false; };
-  }, [grandTotal, calculatedAmount]);
+  }, [grandTotal, calculatedAmount, activeFxRate]);
 
   const validate = (step) => {
     const e = {};
-    if (step === 1 && !selectedPo) e.po = 'Please select a Purchase Order.';
-    if (step === 2 && calculatedAmount <= 0) e.amount = 'Amount must be greater than ₹0.';
-    if (step === 2 && calculatedAmount > availableBalance) e.amount = `Exceeds available balance ₹${fmt(availableBalance)}.`;
-    if (step === 2 && (!reason.trim() || reason.trim().length < 10)) e.reason = 'Please enter a reason (min 10 chars).';
-    if (step === 3 && documents.length === 0) e.docs = 'At least one supporting document is required.';
+    if (step === 1 && !selectedPo) {
+      e.po = 'Please select a Purchase Order.';
+      showToast({ type: 'error', title: 'PO Selection Required', description: 'Select a Purchase Order before proceeding.' });
+    }
+    if (step === 2 && calculatedAmount <= 0) {
+      e.amount = `Amount must be greater than ${currSymbol}0.`;
+      showToast({ type: 'error', title: 'Invalid Amount', description: `Advance amount must be greater than ${currSymbol}0.` });
+    }
+    if (step === 2 && calculatedAmount > availableBalance) {
+      e.amount = `Exceeds available balance ${currSymbol}${fmt(availableBalance)}.`;
+      showToast({ type: 'error', title: 'Amount Exceeded', description: `Advance amount exceeds PO balance of ${currSymbol}${fmt(availableBalance)}.` });
+    }
+    if (step === 2 && (!reason.trim() || reason.trim().length < 10)) {
+      e.reason = 'Please enter a reason (min 10 chars).';
+      showToast({ type: 'error', title: 'Reason Required', description: 'Enter a detailed reason for the advance request (min 10 chars).' });
+    }
+    if (step === 3 && documents.length === 0) {
+      e.docs = 'At least one supporting document is required.';
+      showToast({ type: 'error', title: 'Document Required', description: 'Upload at least one supporting document before submitting.' });
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   };
 
-  const goNext = () => { if (validate(currentStep)) setCurrentStep(s => Math.min(s + 1, 4)); };
-  const goBack = () => { setErrors({}); setCurrentStep(s => Math.max(s - 1, 1)); };
+  const handleSelectPo = (p) => {
+    setSelectedPo(p);
+    setErrors(prev => ({ ...prev, po: null }));
+  };
+
+  const goNext = () => {
+    if (validate(currentStep)) {
+      const nextStep = Math.min(currentStep + 1, 4);
+      setCurrentStep(nextStep);
+    }
+  };
+
+  const goBack = () => {
+    setErrors({});
+    const prevStep = Math.max(currentStep - 1, 1);
+    setCurrentStep(prevStep);
+  };
 
   const handleFilesSelected = (newFiles) => {
     setDocuments(prev => [...prev, ...newFiles]);
@@ -179,16 +257,28 @@ export default function CreateAdvancePaymentWizard() {
     if (!validate(3)) { setCurrentStep(3); return; }
 
     setSaving(true);
+
     try {
       const res = await apiFetch('/api/p2p/advances/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          poNumber: selectedPo.poNumber, vendorName: selectedPo.supplierName,
-          vendorCode: selectedPo.supplierId, amount: calculatedAmount, percentageOfPo: calculatedPct,
-          currency: selectedPo.currency,
-          cgst: cgstAmount, sgst: sgstAmount, igst: igstAmount, totalGst: totalGstAmount,
-          grandTotal, paymentMode, bankName, remarks: reason,
+          poNumber: selectedPo.poNumber,
+          vendorName: selectedPo.supplierName,
+          vendorCode: selectedPo.supplierId,
+          amount: calculatedAmount,
+          amountINR,
+          fxRate: activeFxRate,
+          percentageOfPo: calculatedPct,
+          currency: poCurrency,
+          cgst: cgstAmount,
+          sgst: sgstAmount,
+          igst: igstAmount,
+          totalGst: totalGstAmount,
+          grandTotal,
+          paymentMode,
+          bankName,
+          remarks: reason,
           requestedBy: user?.name || user?.email || 'Finance Team'
         }),
       });
@@ -224,14 +314,14 @@ export default function CreateAdvancePaymentWizard() {
             showToast({
               type: 'warning',
               title: 'Advance Payment Submitted',
-              description: `${advanceId} created but documents failed to upload. You can add them later.`,
+              description: `${advanceId} created, but document upload failed.`,
               duration: 5000
             });
           } else {
             showToast({
               type: 'success',
-              title: 'Advance Payment Submitted',
-              description: `${advanceId} with ${docJson.data?.uploaded?.length || documents.length} document(s) sent for approval.`
+              title: 'Advance Payment Submitted!',
+              description: `${advanceId} (${poCurrency} ${currSymbol}${fmt(grandTotal)}) sent for approval with ${docJson.data?.uploaded?.length || documents.length} document(s).`
             });
           }
         } catch (docError) {
@@ -239,15 +329,15 @@ export default function CreateAdvancePaymentWizard() {
           showToast({
             type: 'warning',
             title: 'Advance Payment Submitted',
-            description: `${advanceId} created but documents failed to upload. You can add them later.`,
+            description: `${advanceId} created but documents failed to upload.`,
             duration: 5000
           });
         }
       } else {
         showToast({
           type: 'success',
-          title: 'Advance Payment Submitted',
-          description: `${advanceId} sent for Procurement Head approval.`
+          title: 'Advance Payment Submitted!',
+          description: `${advanceId} (${poCurrency} ${currSymbol}${fmt(grandTotal)}) sent for approval.`
         });
       }
 
@@ -275,7 +365,7 @@ export default function CreateAdvancePaymentWizard() {
           </div>
           {selectedPo && (
             <span className="text-[10px] font-extrabold bg-teal-100 text-[#0d7676] px-2 py-0.5 rounded-full font-mono">
-              {selectedPo.currency || 'INR'}
+              {poCurrency}
             </span>
           )}
         </div>
@@ -293,14 +383,27 @@ export default function CreateAdvancePaymentWizard() {
 
               <div className="grid grid-cols-2 gap-2.5">
                 <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-200">
-                  <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">PO Total</p>
-                  <p className="font-mono font-extrabold text-slate-800 text-sm mt-0.5">₹{fmt(poValue)}</p>
+                  <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">PO Total ({poCurrency})</p>
+                  <p className="font-mono font-extrabold text-slate-800 text-sm mt-0.5">{currSymbol}{fmt(poValue)}</p>
                 </div>
                 <div className="bg-teal-50/70 rounded-xl p-2.5 border border-teal-200">
-                  <p className="text-[10px] text-[#0d7676] font-extrabold uppercase tracking-wider">Available</p>
-                  <p className="font-mono font-extrabold text-[#0d7676] text-sm mt-0.5">₹{fmt(availableBalance)}</p>
+                  <p className="text-[10px] text-[#0d7676] font-extrabold uppercase tracking-wider">Available ({poCurrency})</p>
+                  <p className="font-mono font-extrabold text-[#0d7676] text-sm mt-0.5">{currSymbol}{fmt(availableBalance)}</p>
                 </div>
               </div>
+
+              {poCurrency !== 'INR' && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-[11px] space-y-1">
+                  <div className="flex justify-between font-semibold text-slate-600">
+                    <span>FX Rate ({poCurrency} → INR):</span>
+                    <span className="font-mono text-teal-700">₹{activeFxRate}</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-slate-800">
+                    <span>Available in INR:</span>
+                    <span className="font-mono text-teal-800">₹{fmt(availableBalance * activeFxRate)}</span>
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <div className="py-5 text-center text-slate-400">
@@ -314,22 +417,28 @@ export default function CreateAdvancePaymentWizard() {
             <div className="border-t border-slate-100 pt-3 space-y-2">
               <div className="flex justify-between items-center text-xs">
                 <span className="text-slate-600 font-medium">Advance Amount</span>
-                <span className="font-mono font-extrabold text-teal-700">₹{fmt(calculatedAmount)}</span>
+                <span className="font-mono font-extrabold text-teal-700">{currSymbol}{fmt(calculatedAmount)}</span>
               </div>
+              {poCurrency !== 'INR' && (
+                <div className="flex justify-between items-center text-[11px] bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-100">
+                  <span className="text-teal-700 font-medium">INR Equivalent</span>
+                  <span className="font-mono font-bold text-teal-800">₹{fmt(amountINR)}</span>
+                </div>
+              )}
               {totalGstAmount > 0 && (
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-slate-600 font-medium">GST Breakdown</span>
-                  <span className="font-mono font-extrabold text-amber-600">+₹{fmt(totalGstAmount)}</span>
+                  <span className="font-mono font-extrabold text-amber-600">+{currSymbol}{fmt(totalGstAmount)}</span>
                 </div>
               )}
               <div className="flex justify-between items-center bg-[#0d7676]/10 px-3 py-2 rounded-xl border border-teal-200">
                 <span className="text-xs font-extrabold text-[#0d7676]">Grand Total</span>
-                <span className="font-mono font-extrabold text-[#0d7676] text-sm">₹{fmt(grandTotal)}</span>
+                <span className="font-mono font-extrabold text-[#0d7676] text-sm">{currSymbol}{fmt(grandTotal)}</span>
               </div>
               <div className="flex justify-between items-center text-xs pt-0.5">
                 <span className="text-slate-500 font-medium">Remaining Balance</span>
                 <span className={`font-mono font-extrabold ${remainingAfter < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                  ₹{fmt(remainingAfter)}
+                  {currSymbol}{fmt(remainingAfter)}
                 </span>
               </div>
             </div>
@@ -385,7 +494,7 @@ export default function CreateAdvancePaymentWizard() {
       <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3 flex gap-2.5">
         <Info className="w-4 h-4 shrink-0 text-sky-600 mt-0.5" />
         <p className="text-[11px] text-sky-800 leading-snug font-semibold">
-          Advance payment is capped at the PO value. Submissions trigger automated hierarchy approval routing.
+          Multi-currency payment requests auto-convert to INR using live FX rates for threshold approval routing.
         </p>
       </div>
     </aside>
@@ -393,7 +502,6 @@ export default function CreateAdvancePaymentWizard() {
 
   return (
     <div className="min-h-screen bg-slate-50/90 font-sans text-slate-800 pb-8 text-left">
-      {/* ── Main Container Optimized for Laptop Use ── */}
       <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4">
 
         {/* Top Action Bar */}
@@ -432,7 +540,12 @@ export default function CreateAdvancePaymentWizard() {
                 <button
                   key={step.id}
                   type="button"
-                  onClick={() => { if (step.id < currentStep) { setErrors({}); setCurrentStep(step.id); } }}
+                  onClick={() => {
+                    if (step.id < currentStep) {
+                      setErrors({});
+                      setCurrentStep(step.id);
+                    }
+                  }}
                   className={`relative flex flex-col items-center gap-1 z-10 ${step.id < currentStep ? 'cursor-pointer' : 'cursor-default'}`}
                 >
                   <div className={`
@@ -465,12 +578,11 @@ export default function CreateAdvancePaymentWizard() {
                   </div>
                   <div>
                     <h2 className="font-bold text-slate-900 text-base">Select Purchase Order</h2>
-                    <p className="text-sm text-slate-400">Search and select the PO to raise an advance against</p>
+                    <p className="text-sm text-slate-400">Search and select the PO to raise an advance against (supports USD, EUR, GBP, INR)</p>
                   </div>
                 </div>
 
                 <div className="p-6 space-y-4">
-                  {/* Search */}
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-1.5">
                       Search Purchase Order <span className="text-rose-500">*</span>
@@ -504,8 +616,8 @@ export default function CreateAdvancePaymentWizard() {
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-[10px] font-bold text-teal-700 uppercase tracking-wider">Available</p>
-                        <p className="font-mono font-bold text-teal-700 text-base">₹{fmt(availableBalance)}</p>
+                        <p className="text-[10px] font-bold text-teal-700 uppercase tracking-wider">Available ({poCurrency})</p>
+                        <p className="font-mono font-bold text-teal-700 text-base">{currSymbol}{fmt(availableBalance)}</p>
                       </div>
                     </div>
                   )}
@@ -533,10 +645,11 @@ export default function CreateAdvancePaymentWizard() {
                         filteredPos.map((p) => {
                           const avail = Math.max(0, p.totalAmount - (p.advancePaid || 0));
                           const isSel = selectedPo?.poNumber === p.poNumber;
+                          const sym = getCurrencySymbol(p.currency);
                           return (
                             <button
                               key={p.poNumber}
-                              onClick={() => { setSelectedPo(p); setErrors(prev => ({ ...prev, po: null })); }}
+                              onClick={() => handleSelectPo(p)}
                               className={`w-full px-4 py-3.5 flex items-center justify-between text-left transition-all border-l-4 ${isSel
                                 ? 'bg-teal-50/60 border-l-teal-500'
                                 : 'hover:bg-slate-50/80 border-l-transparent'
@@ -549,6 +662,9 @@ export default function CreateAdvancePaymentWizard() {
                                     }`}>
                                     {p.status}
                                   </span>
+                                  <span className="text-[10px] font-extrabold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-mono">
+                                    {p.currency || 'INR'}
+                                  </span>
                                   {isSel && (
                                     <span className="text-[10px] font-bold bg-teal-600 text-white px-2.5 py-0.5 rounded-full uppercase">
                                       Selected
@@ -560,8 +676,8 @@ export default function CreateAdvancePaymentWizard() {
                                 </p>
                               </div>
                               <div className="text-right shrink-0 ml-4">
-                                <p className="font-mono font-bold text-sm text-slate-800">₹{fmt(avail)}</p>
-                                <p className="text-[10px] text-slate-400">{p.currency}</p>
+                                <p className="font-mono font-bold text-sm text-slate-800">{sym}{fmt(avail)}</p>
+                                <p className="text-[10px] text-slate-400 font-semibold">{p.currency || 'INR'}</p>
                               </div>
                             </button>
                           );
@@ -586,28 +702,28 @@ export default function CreateAdvancePaymentWizard() {
             {/* ════ STEP 2: PAYMENT DETAILS ════ */}
             {currentStep === 2 && (
               <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-                <div className="px-6 py-2 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-white flex items-center gap-3">
+                <div className="px-6 py-3 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-white flex items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center border border-teal-100">
                     <IndianRupee className="w-4 h-4" />
                   </div>
                   <div>
-                    <h2 className="font-bold text-slate-900 text-base">Payment Details</h2>
-                    <p className="text-sm text-slate-400">Set the advance amount and payment information</p>
+                    <h2 className="font-bold text-slate-900 text-base">Payment Details ({poCurrency})</h2>
+                    <p className="text-sm text-slate-400">Set advance amount and currency breakdown</p>
                   </div>
                   <div className="ml-auto flex items-center gap-2 bg-teal-50 border border-teal-200 px-3 py-1.5 rounded-xl">
                     <span className="text-[10px] font-bold text-teal-700 uppercase">PO</span>
                     <span className="font-mono font-bold text-sm text-slate-800">{selectedPo?.poNumber}</span>
                     <span className="text-teal-300">·</span>
-                    <span className="font-mono font-bold text-sm text-teal-700">₹{fmt(availableBalance)}</span>
+                    <span className="font-mono font-bold text-sm text-teal-700">{currSymbol}{fmt(availableBalance)} {poCurrency}</span>
                   </div>
                 </div>
 
                 <div className="p-6 space-y-5">
-
-                  {/* Amount */}
+                  
+                  {/* Amount Inputs */}
                   <div className="space-y-3">
                     <label className="text-sm font-bold text-slate-700 uppercase tracking-wider block">
-                      Advance Amount <span className="text-rose-500">*</span>
+                      Advance Amount ({poCurrency}) <span className="text-rose-500">*</span>
                     </label>
 
                     <div className="flex items-center gap-2 flex-wrap">
@@ -616,7 +732,11 @@ export default function CreateAdvancePaymentWizard() {
                         <button
                           key={pct}
                           type="button"
-                          onClick={() => { setAmountMode('pct'); setPctValue(pct.toString()); setErrors(p => ({ ...p, amount: null })); }}
+                          onClick={() => {
+                            setAmountMode('pct');
+                            setPctValue(pct.toString());
+                            setErrors(p => ({ ...p, amount: null }));
+                          }}
                           className={`px-3.5 py-1.5 rounded-xl text-sm font-bold border-2 transition-all ${amountMode === 'pct' && Number(pctValue) === pct
                             ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
                             : 'bg-white text-slate-600 border-slate-200 hover:border-teal-400 hover:shadow-sm'
@@ -628,7 +748,7 @@ export default function CreateAdvancePaymentWizard() {
                     </div>
 
                     <div className="grid lg:grid-cols-2 gap-5">
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         <div className="flex rounded-xl border-2 border-slate-200 overflow-hidden">
                           <button
                             type="button"
@@ -644,12 +764,12 @@ export default function CreateAdvancePaymentWizard() {
                             className={`flex-1 py-2.5 text-sm font-bold transition-all flex items-center justify-center gap-2 ${amountMode === 'amount' ? 'bg-teal-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
                               }`}
                           >
-                            <IndianRupee className="w-4 h-4" /> Amount
+                            <span>{currSymbol}</span> Amount ({poCurrency})
                           </button>
                         </div>
                         <div className="relative">
                           <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-base font-bold text-slate-400">
-                            {amountMode === 'pct' ? '%' : '₹'}
+                            {amountMode === 'pct' ? '%' : currSymbol}
                           </span>
                           <input
                             type="number"
@@ -670,6 +790,7 @@ export default function CreateAdvancePaymentWizard() {
                           </p>
                         )}
 
+
                         {/* Reason */}
                         <div>
                           <label className="block text-sm font-bold text-slate-700 mb-1.5">
@@ -678,28 +799,32 @@ export default function CreateAdvancePaymentWizard() {
                           <textarea
                             value={reason}
                             onChange={(e) => { setReason(e.target.value); setErrors(p => ({ ...p, reason: null })); }}
-                            rows={1}
-                            placeholder="e.g. Supplier requires 20% advance before shipment as per PO payment terms…"
+                            rows={2}
+                            placeholder="e.g. Vendor requires 20% advance before shipment as per PO payment terms…"
                             className={inp(errors.reason) + ' resize-none'}
                           />
-                          <div className="flex items-center justify-between mt-1.5">
-                            {errors.reason ? (
-                              <p className="text-sm text-rose-600 font-semibold flex items-center gap-1.5">
-                                <AlertCircle className="w-4 h-4" /> {errors.reason}
-                              </p>
-                            ) : null}
-                          </div>
+                          {errors.reason && (
+                            <p className="text-sm text-rose-600 font-semibold mt-1 flex items-center gap-1.5">
+                              <AlertCircle className="w-4 h-4" /> {errors.reason}
+                            </p>
+                          )}
                         </div>
                       </div>
 
                       {/* Live calc box */}
                       <div className="bg-gradient-to-br from-teal-50/80 to-emerald-50/80 rounded-xl border-2 border-teal-200 p-5 space-y-3 shadow-sm">
                         <div className="flex justify-between items-center">
-                          <span className="text-sm font-semibold text-slate-600">Requesting</span>
-                          <span className="font-mono font-bold text-teal-700 text-lg">₹{fmt(calculatedAmount)}</span>
+                          <span className="text-sm font-semibold text-slate-600">Requesting ({poCurrency})</span>
+                          <span className="font-mono font-bold text-teal-700 text-lg">{currSymbol}{fmt(calculatedAmount)}</span>
                         </div>
+                        {poCurrency !== 'INR' && (
+                          <div className="flex justify-between items-center text-xs border-b border-teal-200/60 pb-2">
+                            <span className="font-semibold text-slate-600">INR Equivalent</span>
+                            <span className="font-mono font-bold text-teal-800">₹{fmt(amountINR)}</span>
+                          </div>
+                        )}
                         <div className="flex justify-between items-center">
-                          <span className="text-sm font-semibold text-slate-600">Of available</span>
+                          <span className="text-sm font-semibold text-slate-600">Of available PO balance</span>
                           <span className="font-mono font-bold text-slate-700 text-base">{calculatedPct.toFixed(1)}%</span>
                         </div>
                         <div className="h-2.5 rounded-full bg-teal-100 overflow-hidden">
@@ -709,15 +834,14 @@ export default function CreateAdvancePaymentWizard() {
                           />
                         </div>
                         <div className="flex justify-between items-center border-t-2 border-teal-200 pt-3">
-                          <span className="text-sm font-semibold text-slate-600">Remaining</span>
+                          <span className="text-sm font-semibold text-slate-600">Remaining Balance ({poCurrency})</span>
                           <span className={`font-mono font-bold text-base ${remainingAfter < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
-                            ₹{fmt(remainingAfter)}
+                            {currSymbol}{fmt(remainingAfter)}
                           </span>
                         </div>
                       </div>
                     </div>
                   </div>
-
 
                   {/* Payment mode + Bank */}
                   <div className="grid lg:grid-cols-2 gap-5">
@@ -727,7 +851,7 @@ export default function CreateAdvancePaymentWizard() {
                         options={[
                           { label: 'NEFT', value: 'NEFT' },
                           { label: 'RTGS', value: 'RTGS' },
-                          { label: 'SWIFT', value: 'SWIFT' },
+                          { label: 'SWIFT (Foreign Wire)', value: 'SWIFT' },
                           { label: 'Cheque', value: 'Cheque' },
                           { label: 'Cash', value: 'Cash' },
                           { label: 'Bank Transfer', value: 'Bank Transfer' }
@@ -746,18 +870,17 @@ export default function CreateAdvancePaymentWizard() {
                         type="text"
                         value={bankName}
                         onChange={(e) => setBankName(e.target.value)}
-                        placeholder="e.g. HDFC Bank…"
+                        placeholder="e.g. HDFC Bank / Citibank…"
                         className={inp(false) + ' py-2.5'}
                       />
                     </div>
                   </div>
 
                   {/* GST */}
-                  <div className={`rounded-xl border-2 transition-all ${withGst ? 'border-amber-300 bg-gradient-to-br from-amber-50/80 to-orange-50/80' : 'border-slate-200 bg-white'
-                    }`}>
+                  <div className={`rounded-xl border-2 transition-all ${withGst ? 'border-amber-300 bg-gradient-to-br from-amber-50/80 to-orange-50/80' : 'border-slate-200 bg-white'}`}>
                     <button
                       type="button"
-                      onClick={() => setWithGst(v => !v)}
+                      onClick={() => setWithGst(prev => !prev)}
                       className="w-full flex items-center justify-between px-5 py-3.5"
                     >
                       <div className="flex items-center gap-3">
@@ -767,10 +890,8 @@ export default function CreateAdvancePaymentWizard() {
                           <p className="text-xs text-slate-500 mt-0.5">Toggle if this advance includes GST</p>
                         </div>
                       </div>
-                      <div className={`w-12 h-7 rounded-full transition-all relative ${withGst ? 'bg-amber-500' : 'bg-slate-300'
-                        }`}>
-                        <div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-md transition-all ${withGst ? 'left-[calc(100%-24px)]' : 'left-1'
-                          }`} />
+                      <div className={`w-12 h-7 rounded-full transition-all relative ${withGst ? 'bg-amber-500' : 'bg-slate-300'}`}>
+                        <div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-md transition-all ${withGst ? 'left-[calc(100%-24px)]' : 'left-1'}`} />
                       </div>
                     </button>
                     {withGst && (
@@ -832,7 +953,7 @@ export default function CreateAdvancePaymentWizard() {
                         {totalGstAmount > 0 && (
                           <div className="flex items-center justify-between text-sm bg-amber-100 rounded-xl px-4 py-2.5 border-2 border-amber-200">
                             <span className="font-bold text-amber-900">Total GST</span>
-                            <span className="font-mono font-bold text-amber-700 text-base">+₹{fmt(totalGstAmount)}</span>
+                            <span className="font-mono font-bold text-amber-700 text-base">+{currSymbol}{fmt(totalGstAmount)}</span>
                           </div>
                         )}
                       </div>
@@ -920,22 +1041,20 @@ export default function CreateAdvancePaymentWizard() {
                   </div>
                 </div>
 
-                <div className="p-6 space-y-2">
+                <div className="p-6 space-y-4">
                   {/* PO + Vendor */}
                   <div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">Purchase Order</p>
-                    <div className="grid grid-cols-2 gap-2">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">Purchase Order Details</p>
+                    <div className="grid grid-cols-2 gap-2.5">
                       {[
                         { label: 'PO Number', value: selectedPo?.poNumber, mono: true },
                         { label: 'Vendor', value: selectedPo?.supplierName, mono: false },
-                        { label: 'PO Value', value: `₹${fmt(poValue)}`, mono: true },
-                        { label: 'Available', value: `₹${fmt(availableBalance)}`, mono: true, hi: true },
+                        { label: `PO Value (${poCurrency})`, value: `${currSymbol}${fmt(poValue)}`, mono: true },
+                        { label: `Available (${poCurrency})`, value: `${currSymbol}${fmt(availableBalance)}`, mono: true, hi: true },
                       ].map(({ label, value, mono, hi }) => (
-                        <div key={label} className={`rounded-xl p-2 border ${hi ? 'bg-teal-50/80 border-teal-200' : 'bg-slate-50/80 border-slate-200'
-                          }`}>
+                        <div key={label} className={`rounded-xl p-3 border ${hi ? 'bg-teal-50/80 border-teal-200' : 'bg-slate-50/80 border-slate-200'}`}>
                           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{label}</p>
-                          <p className={`text-sm font-bold mt-0.5 ${mono ? 'font-mono' : ''} ${hi ? 'text-teal-700' : 'text-slate-800'
-                            }`}>
+                          <p className={`text-sm font-bold mt-0.5 ${mono ? 'font-mono' : ''} ${hi ? 'text-teal-700' : 'text-slate-800'}`}>
                             {value}
                           </p>
                         </div>
@@ -947,28 +1066,34 @@ export default function CreateAdvancePaymentWizard() {
 
                   {/* Payment */}
                   <div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">Payment</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">Payment Details ({poCurrency})</p>
                     <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 text-sm overflow-hidden">
                       <div className="flex justify-between px-4 py-3">
                         <span className="text-slate-600 font-medium">Advance Amount</span>
-                        <span className="font-mono font-bold">₹{fmt(calculatedAmount)} <span className="text-slate-400 font-normal">({calculatedPct.toFixed(1)}%)</span></span>
+                        <span className="font-mono font-bold">{currSymbol}{fmt(calculatedAmount)} <span className="text-slate-400 font-normal">({calculatedPct.toFixed(1)}%)</span></span>
                       </div>
+                      {poCurrency !== 'INR' && (
+                        <div className="flex justify-between px-4 py-3 bg-teal-50/70">
+                          <span className="text-teal-900 font-bold">INR Equivalent (Rate: 1 {poCurrency} = ₹{activeFxRate})</span>
+                          <span className="font-mono font-bold text-teal-800">₹{fmt(amountINR)} INR</span>
+                        </div>
+                      )}
                       {withGst && (
                         <>
                           <div className="flex justify-between px-4 py-3 bg-amber-50/60">
-                            <span className="text-slate-600 font-medium">GST</span>
-                            <span className="font-mono font-bold text-amber-700">+₹{fmt(totalGstAmount)}</span>
+                            <span className="text-slate-600 font-medium">GST Breakdown</span>
+                            <span className="font-mono font-bold text-amber-700">+{currSymbol}{fmt(totalGstAmount)}</span>
                           </div>
                           <div className="flex justify-between px-4 py-3 bg-slate-50">
                             <span className="font-bold text-slate-700">Grand Total</span>
-                            <span className="font-mono font-bold text-slate-900">₹{fmt(grandTotal)}</span>
+                            <span className="font-mono font-bold text-slate-900">{currSymbol}{fmt(grandTotal)}</span>
                           </div>
                         </>
                       )}
                       <div className="flex justify-between px-4 py-3">
                         <span className="text-slate-600 font-medium">Remaining Balance</span>
                         <span className={`font-mono font-bold ${remainingAfter < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                          ₹{fmt(remainingAfter)}
+                          {currSymbol}{fmt(remainingAfter)}
                         </span>
                       </div>
                       <div className="flex justify-between px-4 py-3">
@@ -1049,7 +1174,7 @@ export default function CreateAdvancePaymentWizard() {
             )}
           </div>
 
-          {/* ── Sidebar ── */}
+          {/* Sidebar */}
           <Sidebar />
         </div>
       </div>

@@ -94,7 +94,7 @@ export default function AdvancePaymentsView() {
             vendorName:    item.vendorName || 'Vendor',
             requestedBy:   item.requestedByName || item.requestedBy || item.createdBy || 'Finance Team',
             amount:        item.amount || 0,
-            currency:      'INR',
+            currency:      item.currency || 'INR',
             pctOfPo:       `${item.percentageOfPo || 0}.00%`,
             mode:          item.paymentMode || 'NEFT',
             status: {
@@ -152,10 +152,13 @@ export default function AdvancePaymentsView() {
     if (!window.confirm(`Are you sure you want to delete advance "${reference}"?`)) return;
     setAdvances(prev => prev.filter(a => a.reference !== reference));
     try {
-      await apiFetch(`/api/p2p/advances/${reference}`, { method: 'DELETE' });
+      const res = await apiFetch(`/api/p2p/advances/${reference}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Delete failed.');
+      showToast({ type: 'success', title: 'Advance Deleted', description: `${reference} was removed.` });
       fetchAdvances();
     } catch (e) {
-      console.error('Error deleting advance:', e);
+      showToast({ type: 'error', title: 'Delete Failed', description: e.message });
+      fetchAdvances();
     }
   };
 
@@ -396,7 +399,7 @@ export default function AdvancePaymentsView() {
                       </td>
 
                       <td className="py-3.5 px-4 text-right font-mono font-extrabold text-slate-900">
-                        {adv.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })} INR
+                        {adv.amount.toLocaleString(adv.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })} {adv.currency}
                       </td>
 
                       <td className="py-3.5 px-4 text-center font-mono font-semibold text-slate-600">

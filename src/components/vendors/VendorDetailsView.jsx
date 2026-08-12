@@ -25,7 +25,8 @@ import {
   User,
   ShieldCheck,
   Lock,
-  Globe
+  Globe,
+  Copy
 } from 'lucide-react';
 
 import { ServerPagination } from '../ui/server-pagination';
@@ -45,6 +46,27 @@ export default function VendorDetailsView() {
   // Password Modal State
   const [passModalOpen, setPassModalOpen] = useState(false);
   const [modalPassword, setModalPassword] = useState('');
+
+  const copyToClipboard = (text, label) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setToastMessage(`${label} copied to clipboard!`);
+    setTimeout(() => setToastMessage(''), 3000);
+  };
+
+  const formatPoAmount = (amountVal) => {
+    if (!amountVal) return '—';
+    const str = String(amountVal).trim();
+    const matches = str.match(/^([A-Z]{3}|\$|₹|€|£)?\s*([\d,.]+)/i);
+    if (!matches) return str;
+    const currency = matches[1] || '';
+    const num = parseFloat(matches[2].replace(/,/g, ''));
+    if (isNaN(num)) return str;
+    const formattedNum = (currency.toUpperCase() === 'INR' || currency === '₹')
+      ? num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return `${currency} ${formattedNum}`.trim();
+  };
 
   const fetchVendorDetails = async () => {
     try {
@@ -170,38 +192,36 @@ export default function VendorDetailsView() {
                 {vendor.vendorType || 'Domestic'}
               </span>
             </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              SAP Vendor Code: <span className="font-mono font-bold text-[#0d7676]">{vendor.sapVendorCode}</span>
+            <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5">
+              <span>SAP Vendor Code:</span>
+              <span className="font-mono font-bold text-[#0d7676] bg-teal-50 px-2 py-0.5 rounded border border-teal-200">{vendor.sapVendorCode || '—'}</span>
+              {vendor.sapVendorCode && (
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(vendor.sapVendorCode, 'SAP Vendor Code')}
+                  className="p-1 text-slate-400 hover:text-teal-700 transition-colors"
+                  title="Copy SAP Code"
+                >
+                  <Copy className="w-3 h-3" />
+                </button>
+              )}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2.5">
           <RecordDbInfoDrawer entityId={vendor?.id || vendor?.sapVendorCode || id} entityType="Vendor" recordData={vendor} />
-          <Button variant="outline" size="sm" onClick={() => navigate(`/admin/vendors/${vendor.id || id}/edit`)} className="text-xs font-bold">
+          <Button size="sm" onClick={() => navigate(`/admin/vendors/${vendor.id || id}/edit`)} className="bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs">
             <Pencil className="w-3.5 h-3.5 mr-1" />
-            Edit
+            Edit Profile
           </Button>
           <Button variant="outline" size="sm" onClick={handleGeneratePassword} loading={actionLoading} className="border-amber-300 text-amber-800 hover:bg-amber-50 text-xs font-bold">
             <KeyRound className="w-3.5 h-3.5 text-amber-600 mr-1" />
             Generate Password
           </Button>
-          <Button variant="destructive" size="sm" onClick={handleDeleteVendor} loading={actionLoading} className="text-xs font-bold">
-            <Trash2 className="w-3.5 h-3.5 mr-1" />
-            Deactivate
-          </Button>
         </div>
       </div>
 
-      {/* Universal Dynamic Approval Workflow Stepper Component */}
-      <UniversalApprovalWorkflowCard
-        referenceId={vendor.sapVendorCode || vendor.id || id}
-        recordType="Vendor Account"
-        vendorName={vendor.companyName}
-        amountFormatted={vendor.sapVendorCode ? `Code: ${vendor.sapVendorCode}` : ''}
-        poRef={vendor.sapVendorCode}
-        onStatusChange={fetchVendorDetails}
-      />
 
       {/* 4 Summary Stat Metric Cards Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -344,7 +364,7 @@ export default function VendorDetailsView() {
                               {po.type}
                             </span>
                           </td>
-                          <td className="py-3.5 px-6 font-mono font-bold text-slate-900">{po.amount}</td>
+                          <td className="py-3.5 px-6 font-mono font-bold text-slate-900">{formatPoAmount(po.amount)}</td>
                           <td className="py-3.5 px-6">
                             <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-bold border border-emerald-200">
                               {po.status}
@@ -375,7 +395,10 @@ export default function VendorDetailsView() {
           {/* Recent Payments Card */}
           <Card className="border-slate-200">
             <CardHeader className="p-5 border-b border-slate-100">
-              <CardTitle className="text-sm font-bold">Recent Payments</CardTitle>
+              <CardTitle className="text-sm font-bold flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-[#0d7676]" />
+                Recent Payments
+              </CardTitle>
             </CardHeader>
             <CardContent className="p-10 text-center text-slate-400 text-xs font-semibold">
               No payment records available yet.
@@ -403,36 +426,62 @@ export default function VendorDetailsView() {
             </CardHeader>
 
             <CardContent className="p-5 space-y-4">
-              <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-xl space-y-1">
-                <p className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  Portal Access Active
+              <div className={`p-3 border rounded-xl space-y-1 ${
+                vendor.portalAccessEnabled 
+                  ? 'bg-emerald-50/80 border-emerald-200' 
+                  : 'bg-slate-50 border-slate-200'
+              }`}>
+                <p className={`text-xs font-bold flex items-center gap-1.5 ${
+                  vendor.portalAccessEnabled ? 'text-emerald-900' : 'text-slate-700'
+                }`}>
+                  <CheckCircle2 className={`w-4 h-4 ${vendor.portalAccessEnabled ? 'text-emerald-600' : 'text-slate-400'}`} />
+                  {vendor.portalAccessEnabled ? 'Portal Access Active' : 'Portal Access Disabled'}
                 </p>
-                <p className="text-[11px] text-emerald-700">Vendor can log in to submit invoices & track status.</p>
+                <p className={`text-[11px] ${vendor.portalAccessEnabled ? 'text-emerald-700' : 'text-slate-500'}`}>
+                  {vendor.portalAccessEnabled ? 'Vendor can log in to submit invoices & track status.' : 'Vendor portal login is currently restricted.'}
+                </p>
               </div>
 
               <div className="space-y-3 text-xs">
                 <div>
                   <span className="text-slate-400 text-[10px] uppercase font-bold block mb-1">Login URL</span>
-                  <div className="relative">
-                    <Globe className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
+                  <div className="relative flex items-center">
+                    <Globe className="w-3.5 h-3.5 absolute left-2.5 text-slate-400" />
                     <input
                       readOnly
                       value={vendor.loginUrl || '/vendor/login'}
-                      className="w-full pl-8 p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-800"
+                      className="w-full pl-8 pr-8 p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-800"
                     />
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(vendor.loginUrl || '/vendor/login', 'Login URL')}
+                      className="absolute right-2 text-slate-400 hover:text-teal-700 transition-colors p-1"
+                      title="Copy Login URL"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
 
                 <div>
                   <span className="text-slate-400 text-[10px] uppercase font-bold block mb-1">Login Email</span>
-                  <div className="relative">
-                    <Mail className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
+                  <div className="relative flex items-center">
+                    <Mail className="w-3.5 h-3.5 absolute left-2.5 text-slate-400" />
                     <input
                       readOnly
                       value={vendor.email || 'vendor@rayzonsolar.one'}
-                      className="w-full pl-8 p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-800"
+                      className="w-full pl-8 pr-8 p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-800"
                     />
+                    {vendor.email && (
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(vendor.email, 'Login Email')}
+                        className="absolute right-2 text-slate-400 hover:text-teal-700 transition-colors p-1"
+                        title="Copy Email"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -440,10 +489,14 @@ export default function VendorDetailsView() {
                   <Button 
                     onClick={handleTogglePortalAccess} 
                     loading={actionLoading}
-                    variant={vendor.portalAccessEnabled ? "destructive" : "emerald"}
-                    className="w-full text-xs font-bold"
+                    variant={vendor.portalAccessEnabled ? "outline" : "emerald"}
+                    className={`w-full text-xs font-bold ${
+                      vendor.portalAccessEnabled 
+                        ? 'border-slate-300 text-slate-700 hover:bg-slate-100' 
+                        : ''
+                    }`}
                   >
-                    {vendor.portalAccessEnabled ? 'Deactivate Access' : 'Enable Access'}
+                    {vendor.portalAccessEnabled ? 'Deactivate Portal Access' : 'Enable Portal Access'}
                   </Button>
 
                   <Button 
@@ -466,9 +519,19 @@ export default function VendorDetailsView() {
                     <span>Last Updated</span>
                     <span className="font-bold text-slate-800">29 Jul 2026</span>
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex justify-between items-center">
                     <span>Account ID</span>
-                    <span className="font-mono font-bold text-[#0d7676]">#{vendor.id || id}</span>
+                    <div className="flex items-center gap-1">
+                      <span className="font-mono font-bold text-[#0d7676]">#{vendor.id || id}</span>
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(vendor.id || id, 'Account ID')}
+                        className="text-slate-400 hover:text-teal-700 transition-colors p-0.5"
+                        title="Copy Account ID"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

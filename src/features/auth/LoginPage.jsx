@@ -41,24 +41,62 @@ export default function LoginPage() {
           </>
         ) : (
           <>
-        <label className="block text-sm font-semibold text-slate-700">Work email <span className="text-rose-500" aria-hidden="true">*</span>
-          <div className="relative mt-2"><Mail className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" /><Input type="email" className="pl-10" maxLength={120} autoComplete="email" placeholder="name@rayzon.one" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
-        </label>
-        <label className="block text-sm font-semibold text-slate-700">
-          <span className="flex items-center justify-between"><span>Password <span className="text-rose-500" aria-hidden="true">*</span></span><button type="button" onClick={() => setForgotOpen(true)} className="text-sm font-semibold text-teal-700 hover:text-teal-900">Forgot password?</button></span>
-          <div className="relative mt-2">
-            <Lock className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400" />
-            <Input type={showPassword ? 'text' : 'password'} className="bg-slate-50 pl-10 pr-11" minLength={8} maxLength={128} autoComplete="current-password" placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-            <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-2.5 top-2.5 rounded-lg bg-white p-1.5 text-slate-500 shadow-sm hover:text-teal-700" aria-label="Toggle password visibility">
-              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
-          </div>
-        </label>
-        <label className="flex cursor-pointer items-center gap-2.5 text-sm text-slate-600">
-          <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} className="h-4 w-4 rounded border-slate-300 accent-teal-700" />
-          Keep me signed in
-        </label>
-        <Button size="lg" className="w-full" loading={loading}>Sign in <ArrowRight className="h-4 w-4" /></Button>
+            <Input
+              label="Work email"
+              required
+              type="email"
+              leftIcon={Mail}
+              maxLength={120}
+              autoComplete="email"
+              placeholder="name@rayzon.one"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-bold text-slate-700">
+                  Password <span className="text-rose-500" aria-hidden="true">*</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setForgotOpen(true)}
+                  className="text-xs font-semibold text-teal-700 hover:text-teal-900"
+                >
+                  Forgot password?
+                </button>
+              </div>
+              <Input
+                type={showPassword ? 'text' : 'password'}
+                leftIcon={Lock}
+                rightElement={
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="p-1 text-slate-400 hover:text-teal-700 transition-colors focus:outline-none"
+                    aria-label="Toggle password visibility"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4 text-teal-600" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                }
+                minLength={8}
+                maxLength={128}
+                autoComplete="current-password"
+                placeholder="Enter your password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
+
+            <label className="flex cursor-pointer items-center gap-2.5 text-xs text-slate-600 font-medium pt-1">
+              <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} className="h-4 w-4 rounded border-slate-300 accent-teal-700" />
+              Keep me signed in
+            </label>
+
+            <Button size="lg" className="w-full bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold" loading={loading}>
+              Sign in <ArrowRight className="h-4 w-4 ml-1" />
+            </Button>
           </>
         )}
       </form>

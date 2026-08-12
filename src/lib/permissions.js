@@ -95,9 +95,7 @@ export const ROLE_PERMISSIONS = {
     'rfq.view',
     'sap.view',
     'users.view',
-    'workflows.view',
-    'roles.view',
-    'permissions.view'
+    'workflows.view'
   ],
 
   'logistics': [
@@ -124,10 +122,8 @@ export const ROLE_PERMISSIONS = {
     'vendors.view',
     'workflows.view',
     'users.view',
-    'roles.view',
     'sap.view',
-    'custom-agents.view',
-    'permissions.view'
+    'custom-agents.view'
   ],
 
   'procurement': [
@@ -146,9 +142,7 @@ export const ROLE_PERMISSIONS = {
     'users.view',
     'sap.view',
     'custom-agents.view',
-    'logistics-providers.view',
-    'roles.view',
-    'permissions.view'
+    'logistics-providers.view'
   ],
 
   'procurement_head': [
@@ -169,9 +163,7 @@ export const ROLE_PERMISSIONS = {
     'logistics-providers.view',
     'workflows.view',
     'users.view',
-    'sap.view',
-    'roles.view',
-    'permissions.view'
+    'sap.view'
   ]
 };
 

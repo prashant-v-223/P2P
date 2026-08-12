@@ -19,9 +19,13 @@ import DocumentUploader from '../../components/shared/DocumentUploader';
 import RecordDbInfoDrawer from '../../components/common/RecordDbInfoDrawer';
 import UniversalApprovalWorkflowCard from '../../components/common/UniversalApprovalWorkflowCard';
 
-const formatCurrency = (val) => {
-  if (val === undefined || val === null) return '₹0.00';
+const formatCurrency = (val, currency = 'INR') => {
+  if (val === undefined || val === null) return `${currency === 'USD' ? '$' : '₹'}0.00`;
   const num = Number(val) || 0;
+  const curr = String(currency || 'INR').toUpperCase();
+  if (curr === 'USD') return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (curr === 'EUR') return `€${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (curr === 'GBP') return `£${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   return `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
@@ -234,15 +238,7 @@ export default function InvoicePaymentDetailView() {
         </div>
       </div>
 
-      {/* Universal Dynamic Approval Workflow Stepper Component */}
-      <UniversalApprovalWorkflowCard
-        referenceId={invoice.invoicePaymentId}
-        recordType="Invoice Payment"
-        vendorName={invoice.vendorName}
-        amountFormatted={`₹${(invoice.netPayable || 0).toLocaleString('en-IN')}`}
-        poRef={invoice.sapPoNumber || invoice.poId}
-        onStatusChange={fetchInvoice}
-      />
+
 
       {/* ─── STATUS BANNERS ─────────────────────────────────────────────── */}
       {isDraft && (
@@ -377,37 +373,44 @@ export default function InvoicePaymentDetailView() {
             <div className="divide-y divide-slate-100 text-sm font-medium text-slate-700">
               <div className="py-3 flex items-center justify-between">
                 <span className="text-slate-600">Invoice Amount</span>
-                <span className="font-mono font-bold text-slate-900 text-base">{formatCurrency(invoice.grossAmount || 2467980)}</span>
+                <span className="font-mono font-bold text-slate-900 text-base">{formatCurrency(invoice.grossAmount || 0, invoice.currency)}</span>
               </div>
 
               <div className="py-3 flex items-center justify-between">
                 <span className="text-slate-600">CGST</span>
-                <span className="font-mono text-slate-600">{formatCurrency(invoice.cgstAmount || 0)}</span>
+                <span className="font-mono text-slate-600">{formatCurrency(invoice.cgstAmount || 0, invoice.currency)}</span>
               </div>
 
               <div className="py-3 flex items-center justify-between">
                 <span className="text-slate-600">SGST</span>
-                <span className="font-mono text-slate-600">{formatCurrency(invoice.sgstAmount || 0)}</span>
+                <span className="font-mono text-slate-600">{formatCurrency(invoice.sgstAmount || 0, invoice.currency)}</span>
               </div>
 
               <div className="py-3 flex items-center justify-between">
                 <span className="text-slate-600">IGST</span>
-                <span className="font-mono text-slate-600">{formatCurrency(invoice.igstAmount || 0)}</span>
+                <span className="font-mono text-slate-600">{formatCurrency(invoice.igstAmount || 0, invoice.currency)}</span>
               </div>
 
               <div className="py-3 flex items-center justify-between">
                 <span className="text-slate-600">TDS ({invoice.tdsPercentage || 0.00}%)</span>
-                <span className="font-mono text-rose-600 font-semibold">- {formatCurrency(invoice.tdsAmount || 0)}</span>
+                <span className="font-mono text-rose-600 font-semibold">- {formatCurrency(invoice.tdsAmount || 0, invoice.currency)}</span>
               </div>
 
               <div className="py-3 flex items-center justify-between">
                 <span className="text-slate-600">Advance Adjusted</span>
-                <span className="font-mono text-amber-700 font-semibold">- {formatCurrency(invoice.advanceAdjusted || 0)}</span>
+                <span className="font-mono text-amber-700 font-semibold">- {formatCurrency(invoice.advanceAdjusted || 0, invoice.currency)}</span>
               </div>
 
               <div className="py-4 flex items-center justify-between bg-gradient-to-r from-teal-50 to-teal-100/50 px-4 rounded-xl mt-2 border-2 border-teal-200">
-                <span className="font-extrabold text-slate-900 text-base">Net Payable</span>
-                <span className="font-mono font-extrabold text-teal-800 text-xl">{formatCurrency(invoice.netPayable || 2467980)}</span>
+                <div>
+                  <span className="font-extrabold text-slate-900 text-base block">Net Payable</span>
+                  {invoice.currency && invoice.currency !== 'INR' && (
+                    <span className="text-[11px] font-semibold text-teal-700 block font-mono">
+                      (INR Equiv: ₹{(invoice.amountINR || ((invoice.netPayable || 0) * (invoice.fxRate || 83.5))).toLocaleString('en-IN')})
+                    </span>
+                  )}
+                </div>
+                <span className="font-mono font-extrabold text-teal-800 text-xl">{formatCurrency(invoice.netPayable || 0, invoice.currency)}</span>
               </div>
             </div>
           </div>
@@ -432,6 +435,16 @@ export default function InvoicePaymentDetailView() {
 
         {/* RIGHT COLUMN (1/3 Width) */}
         <div className="space-y-5">
+
+          {/* Universal Dynamic Approval Workflow Stepper Component */}
+          <UniversalApprovalWorkflowCard
+            referenceId={invoice.invoicePaymentId}
+            recordType="Invoice Payment"
+            vendorName={invoice.vendorName}
+            amountFormatted={formatCurrency(invoice.netPayable || 0, invoice.currency)}
+            poRef={invoice.sapPoNumber || invoice.poId}
+            onStatusChange={fetchInvoice}
+          />
 
           {/* Card 2: Net Payable Highlight Box */}
           <div className="bg-gradient-to-br from-[#0f4c4c] to-[#0d7676] text-white p-6 rounded-2xl shadow-lg space-y-2 border border-teal-900/20">

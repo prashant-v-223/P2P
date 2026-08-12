@@ -52,17 +52,17 @@ export const apiFetch = async (url, options = {}) => {
 
     if (res.status === 404 && url.startsWith('/api') && isLocalHost) {
       try {
-        const directRes5001 = await fetch(`http://127.0.0.1:5001${url}`, requestOptions);
-        if (directRes5001.ok || directRes5001.status < 400) return directRes5001;
+        const directRes5050 = await fetch(`http://127.0.0.1:5050${url}`, requestOptions);
+        if (directRes5050.ok || directRes5050.status < 400) return directRes5050;
       } catch (e) {}
     }
   } catch (netErr) {
     networkError = netErr;
     if (isLocalHost && url.startsWith('/api')) {
       try {
-        const directRes5001 = await fetch(`http://127.0.0.1:5001${url}`, requestOptions);
-        if (directRes5001.ok || directRes5001.status < 400) return directRes5001;
-        res = directRes5001;
+        const directRes5050 = await fetch(`http://127.0.0.1:5050${url}`, requestOptions);
+        if (directRes5050.ok || directRes5050.status < 400) return directRes5050;
+        res = directRes5050;
       } catch (e) {}
     }
   }

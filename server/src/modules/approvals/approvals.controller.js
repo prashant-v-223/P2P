@@ -77,7 +77,7 @@ function isRoleMatchingStep(userRole, targetStepRole, allowAdminOverride = true)
 }
 
 // ── Strict Active-Step Role & Assigned Approver Matching ──────────────────────────
-function isApprovalForRole(approval, roleFilter, userId = null) {
+export function isApprovalForRole(approval, roleFilter, userId = null) {
   const roles = Array.isArray(roleFilter) ? roleFilter : [roleFilter];
 
   // 1. System Admins can view all requests
@@ -638,16 +638,41 @@ export const processApprovalAction = async (req, res) => {
       } catch (e) {
         console.error('[Approvals] Sync InvoicePayment failed:', e.message);
       }
-    } else if (approval.type === 'RFQ Vendor Award') {
+    } else if (['Logistics Payment', 'BL Freight Invoice', 'Logistics Payments'].includes(approval.type)) {
+      try {
+        const { LogisticsPayment } = await import('../../models/LogisticsPayment.js');
+        const refId = approval.referenceId || approval.id;
+        await LogisticsPayment.findOneAndUpdate(
+          { $or: [{ logisticsPaymentId: refId }, { referenceNumber: refId }] },
+          { status: terminalMap(newStatus), currentStep: nextStepIndex + 1 }
+        );
+      } catch (e) {
+        console.error('[Approvals] Sync LogisticsPayment failed:', e.message);
+      }
+    } else if (['Custom Duty', 'Customs Duty'].includes(approval.type)) {
+      try {
+        const { CustomDutyPayment } = await import('../../models/CustomDutyPayment.js');
+        const refId = approval.referenceId || approval.id;
+        await CustomDutyPayment.findOneAndUpdate(
+          { $or: [{ dutyId: refId }, { _id: refId.match(/^[0-9a-fA-F]{24}$/) ? refId : null }] },
+          { status: terminalMap(newStatus) }
+        );
+      } catch (e) {
+        console.error('[Approvals] Sync CustomDutyPayment failed:', e.message);
+      }
+    } else if (['RFQ Vendor Award', 'Freight RFQ', 'RFQ'].includes(approval.type)) {
       try {
         const { RfqHeader, RfqQuote } = await import('../../models/RfqLogistics.js');
-        // Look up via transactionSnapshot.rfqId (most reliable) or awardApprovalId
-        const rfqId = approval.transactionSnapshot?.rfqId;
-        const rfq = await RfqHeader.findOne(
-          rfqId
-            ? { $or: [{ rfqId }, { awardApprovalId: approval.id }] }
-            : { awardApprovalId: approval.id }
-        );
+        // Look up via transactionSnapshot.rfqId (most reliable), referenceNumber, or awardApprovalId
+        const rfqId = approval.transactionSnapshot?.rfqId || approval.referenceNumber || approval.id;
+        const rfq = await RfqHeader.findOne({
+          $or: [
+            { rfqId },
+            { rfqNumber: rfqId },
+            { awardApprovalId: approval.id },
+            { awardApprovalId: rfqId }
+          ]
+        });
         if (rfq) {
           if (newStatus === 'Approved & Dispatched') {
             // Newly approved allocations for this specific approval cycle

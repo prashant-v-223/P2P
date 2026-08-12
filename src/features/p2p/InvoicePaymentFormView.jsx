@@ -61,6 +61,22 @@ export default function InvoicePaymentFormView() {
   const [invoiceAmount, setInvoiceAmount] = useState('');
   const [grnNo, setGrnNo] = useState('');
   const [remarks, setRemarks] = useState('');
+  const [fxRates, setFxRates] = useState({ USD: 83.5, EUR: 90.0, GBP: 105.0, INR: 1 });
+
+  useEffect(() => {
+    apiFetch('/api/exchange-rates')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.rates) {
+          const rateMap = {};
+          data.rates.forEach(r => { rateMap[r.currency] = Number(r.rate) || 1; });
+          setFxRates(prev => ({ ...prev, ...rateMap }));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const activeFxRate = fxRates[currency] || (currency === 'USD' ? 83.5 : currency === 'EUR' ? 90.0 : 1);
 
   // GST, TDS & Adjustments
   const [invoiceType, setInvoiceType] = useState('With GST');
@@ -271,6 +287,7 @@ export default function InvoicePaymentFormView() {
         dueDate: calculateDueDate(),
         grossAmount: Number(invoiceAmount) || 0,
         currency,
+        fxRate: activeFxRate,
         grnQuantity: 0,
         gstAmount: (Number(cgstAmount) || 0) + (Number(sgstAmount) || 0) + (Number(igstAmount) || 0),
         tdsAmount: ((Number(invoiceAmount) || 0) * numTdsPct) / 100,
@@ -710,6 +727,12 @@ export default function InvoicePaymentFormView() {
               />
               {selectedPoObj && !isEditMode && (
                 <p className="text-[10px] text-slate-500">Remaining: {currency} {Number(selectedPoObj.remainingInvoiceAmount || 0).toLocaleString('en-IN')}</p>
+              )}
+              {currency !== 'INR' && Number(invoiceAmount) > 0 && (
+                <div className="mt-1.5 p-2 bg-teal-50/90 border border-teal-200 rounded-lg text-[11px] flex items-center justify-between font-mono">
+                  <span className="text-teal-700 font-semibold">1 {currency} = ₹{activeFxRate}</span>
+                  <span className="text-teal-900 font-extrabold">INR Equivalent: ₹{((Number(invoiceAmount) || 0) * activeFxRate).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                </div>
               )}
             </div>
 

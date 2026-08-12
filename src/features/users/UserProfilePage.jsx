@@ -42,7 +42,9 @@ export default function UserProfilePage() {
   const [profile, setProfile] = useState({ name: '', email: '', department: '' });
   const [profileState, setProfileState] = useState({ saving: false, error: '', success: '' });
   const [passwords, setPasswords] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
-  const [showPasswords, setShowPasswords] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [passwordState, setPasswordState] = useState({ saving: false, error: '', success: '' });
   const [sessionState, setSessionState] = useState({ saving: false, success: '' });
   const [twoFactorOpen, setTwoFactorOpen] = useState(false);
@@ -154,8 +156,19 @@ export default function UserProfilePage() {
 
   const changePassword = async (event) => {
     event.preventDefault();
+    if (!passwords.currentPassword) {
+      setPasswordState({ saving: false, error: 'Current password is required.', success: '' });
+      showToast({ type: 'error', title: 'Current password required', description: 'Please enter your current password.' });
+      return;
+    }
+    if (passwords.newPassword.length < 8) {
+      setPasswordState({ saving: false, error: 'New password must be at least 8 characters long.', success: '' });
+      showToast({ type: 'error', title: 'Password too short', description: 'New password must be at least 8 characters long.' });
+      return;
+    }
     if (passwords.newPassword !== passwords.confirmPassword) {
       setPasswordState({ saving: false, error: 'New passwords do not match.', success: '' });
+      showToast({ type: 'error', title: 'Passwords do not match', description: 'Confirm password must match new password.' });
       return;
     }
     setPasswordState({ saving: true, error: '', success: '' });
@@ -170,8 +183,8 @@ export default function UserProfilePage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to change password.');
       setPasswords({ currentPassword: '', newPassword: '', confirmPassword: '' });
-      showToast({ title: 'Password updated', description: 'Other active sessions were signed out.' });
-      setPasswordState({ saving: false, error: '', success: data.message });
+      showToast({ type: 'success', title: 'Password updated', description: 'Your password was updated successfully.' });
+      setPasswordState({ saving: false, error: '', success: data.message || 'Password updated successfully.' });
     } catch (error) {
       showToast({ type: 'error', title: 'Password was not updated', description: error.message });
       setPasswordState({ saving: false, error: error.message, success: '' });
@@ -247,30 +260,39 @@ export default function UserProfilePage() {
             {profileState.success && <Notice>{profileState.success}</Notice>}
             
             <div className="grid gap-3.5 sm:grid-cols-2">
-              <label className="block text-xs font-semibold text-slate-700">
-                Full name <span className="text-rose-500">*</span>
-                <div className="relative mt-1.5">
-                  <User className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                  <Input className="pl-10" maxLength={80} autoComplete="name" placeholder="Enter full name" value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} required />
-                </div>
-              </label>
+              <Input
+                label="Full name"
+                required
+                leftIcon={User}
+                maxLength={80}
+                autoComplete="name"
+                placeholder="Enter full name"
+                value={profile.name}
+                onChange={(e) => setProfile({ ...profile, name: e.target.value })}
+              />
 
-              <label className="block text-xs font-semibold text-slate-700">
-                Work email <span className="text-rose-500">*</span>
-                <div className="relative mt-1.5">
-                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                  <Input className="pl-10" type="email" maxLength={120} autoComplete="email" placeholder="name@rayzon.one" value={profile.email} onChange={(e) => setProfile({ ...profile, email: e.target.value })} required />
-                </div>
-              </label>
+              <Input
+                label="Work email"
+                required
+                type="email"
+                leftIcon={Mail}
+                maxLength={120}
+                autoComplete="email"
+                placeholder="name@rayzon.one"
+                value={profile.email}
+                onChange={(e) => setProfile({ ...profile, email: e.target.value })}
+              />
             </div>
 
-            <label className="block text-xs font-semibold text-slate-700">
-              Department
-              <div className="relative mt-1.5">
-                <Building2 className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                <Input className="pl-10" maxLength={80} autoComplete="organization-title" placeholder="Enter department" value={profile.department} onChange={(e) => setProfile({ ...profile, department: e.target.value })} />
-              </div>
-            </label>
+            <Input
+              label="Department"
+              leftIcon={Building2}
+              maxLength={80}
+              autoComplete="organization-title"
+              placeholder="Enter department"
+              value={profile.department}
+              onChange={(e) => setProfile({ ...profile, department: e.target.value })}
+            />
 
             <div className="flex justify-end border-t border-slate-100 pt-3">
               <Button loading={profileState.saving} className="bg-[#0d7676] hover:bg-[#0f766e]">Save profile</Button>
@@ -284,22 +306,104 @@ export default function UserProfilePage() {
             {passwordState.error && <Notice type="error">{passwordState.error}</Notice>}
             {passwordState.success && <Notice>{passwordState.success}</Notice>}
             
-            {[
-              ['currentPassword', 'Current password'],
-              ['newPassword', 'New password'],
-              ['confirmPassword', 'Confirm new password']
-            ].map(([key, label]) => (
-              <label key={key} className="block text-xs font-semibold text-slate-700">
-                {label} <span className="text-rose-500">*</span>
-                <div className="relative mt-1.5">
-                  <LockKeyhole className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                  <Input className="pl-10 pr-11" type={showPasswords ? 'text' : 'password'} minLength={8} maxLength={128} autoComplete={key === 'currentPassword' ? 'current-password' : 'new-password'} placeholder={key === 'currentPassword' ? 'Enter current password' : key === 'newPassword' ? 'Enter new password' : 'Confirm new password'} value={passwords[key]} onChange={(e) => setPasswords({ ...passwords, [key]: e.target.value })} required />
-                  <button type="button" onClick={() => setShowPasswords(!showPasswords)} className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:text-slate-700" aria-label="Toggle password visibility">
-                    {showPasswords ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            {/* Current Password */}
+            <Input
+              label="Current password"
+              required
+              type={showCurrentPassword ? 'text' : 'password'}
+              leftIcon={LockKeyhole}
+              rightElement={
+                <button
+                  type="button"
+                  onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                  className="p-1 text-slate-400 hover:text-slate-700 transition-colors focus:outline-none"
+                  aria-label="Toggle current password visibility"
+                >
+                  {showCurrentPassword ? <EyeOff className="h-4 w-4 text-teal-600" /> : <Eye className="h-4 w-4" />}
+                </button>
+              }
+              autoComplete="current-password"
+              placeholder="Enter current password"
+              value={passwords.currentPassword}
+              onChange={(e) => {
+                setPasswords({ ...passwords, currentPassword: e.target.value });
+                if (passwordState.error) setPasswordState({ ...passwordState, error: '' });
+              }}
+            />
+
+            {/* New Password */}
+            <div className="space-y-1">
+              <Input
+                label="New password"
+                required
+                type={showNewPassword ? 'text' : 'password'}
+                leftIcon={LockKeyhole}
+                rightElement={
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    className="p-1 text-slate-400 hover:text-slate-700 transition-colors focus:outline-none"
+                    aria-label="Toggle new password visibility"
+                  >
+                    {showNewPassword ? <EyeOff className="h-4 w-4 text-teal-600" /> : <Eye className="h-4 w-4" />}
                   </button>
+                }
+                minLength={8}
+                maxLength={128}
+                autoComplete="new-password"
+                placeholder="Enter new password (min 8 characters)"
+                value={passwords.newPassword}
+                onChange={(e) => {
+                  setPasswords({ ...passwords, newPassword: e.target.value });
+                  if (passwordState.error) setPasswordState({ ...passwordState, error: '' });
+                }}
+              />
+              {passwords.newPassword.length > 0 && (
+                <div className="flex items-center justify-between text-[11px] px-1">
+                  <span className={passwords.newPassword.length >= 8 ? 'text-emerald-600 font-bold' : 'text-amber-600 font-medium'}>
+                    {passwords.newPassword.length >= 8 ? '✓ Minimum 8 characters met' : `${passwords.newPassword.length}/8 characters`}
+                  </span>
                 </div>
-              </label>
-            ))}
+              )}
+            </div>
+
+            {/* Confirm New Password */}
+            <div className="space-y-1">
+              <Input
+                label="Confirm new password"
+                required
+                type={showConfirmPassword ? 'text' : 'password'}
+                leftIcon={LockKeyhole}
+                rightElement={
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="p-1 text-slate-400 hover:text-slate-700 transition-colors focus:outline-none"
+                    aria-label="Toggle confirm password visibility"
+                  >
+                    {showConfirmPassword ? <EyeOff className="h-4 w-4 text-teal-600" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                }
+                minLength={8}
+                maxLength={128}
+                autoComplete="new-password"
+                placeholder="Confirm new password"
+                value={passwords.confirmPassword}
+                onChange={(e) => {
+                  setPasswords({ ...passwords, confirmPassword: e.target.value });
+                  if (passwordState.error) setPasswordState({ ...passwordState, error: '' });
+                }}
+              />
+              {passwords.confirmPassword.length > 0 && (
+                <div className="text-[11px] px-1">
+                  {passwords.newPassword === passwords.confirmPassword ? (
+                    <span className="text-emerald-600 font-bold">✓ Passwords match</span>
+                  ) : (
+                    <span className="text-rose-600 font-medium font-mono">⚠ Passwords do not match</span>
+                  )}
+                </div>
+              )}
+            </div>
 
             <div className="flex justify-end border-t border-slate-100 pt-3">
               <Button loading={passwordState.saving} className="bg-[#0d7676] hover:bg-[#0f766e]">Update password</Button>

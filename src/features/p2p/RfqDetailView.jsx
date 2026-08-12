@@ -585,17 +585,19 @@ export default function RfqDetailView() {
               ) : null)}
             </div>
           </div>
-          {/* Universal Dynamic Approval Workflow Stepper Component */}
-          <UniversalApprovalWorkflowCard
-            referenceId={rfq.awardApprovalId || rfq.rfqId || rfq.rfqNumber || id}
-            recordType="Freight RFQ"
-            vendorName={rfq.title}
-            amountFormatted={`${normalizedTotalContainers} Containers`}
-            poRef={rfq.linkedPoId}
-            onStatusChange={() => {
-              loadRfq();
-            }}
-          />
+          {/* Universal Dynamic Approval Workflow Stepper Component — Hidden when fully awarded & approved */}
+          {!(rfq.status === 'awarded' || (normalizedAllocatedContainers > 0 && normalizedAllocatedContainers === normalizedTotalContainers && !normalizedIsPendingApproval && normalizedInApprovalContainers === 0)) && (
+            <UniversalApprovalWorkflowCard
+              referenceId={rfq.awardApprovalId || rfq.rfqId || rfq.rfqNumber || id}
+              recordType="RFQ Vendor Award"
+              vendorName={rfq.title}
+              amountFormatted={`${normalizedTotalContainers} Containers`}
+              poRef={rfq.linkedPoId}
+              onStatusChange={() => {
+                loadRfq();
+              }}
+            />
+          )}
           {/* Card: Cargo & Shipment */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
             <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-100">
@@ -709,7 +711,7 @@ export default function RfqDetailView() {
   {/* Content Area with improved styling */}
   {activeTab === 'quotes' && (
     <div className="overflow-x-auto">
-      <table className="w-full text-left text-xs border-collapse">
+      <table className="w-full min-w-[960px] text-left text-xs border-collapse">
         <thead className="border-b border-slate-200 bg-slate-50/90 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
           <tr>
             <th className="px-4 py-3.5">Vendor</th>

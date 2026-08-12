@@ -446,17 +446,17 @@ const getInitials = (name) => {
 
                       {/* INVOICE AMT */}
                       <td className="py-3 px-3.5 text-right font-mono font-extrabold text-slate-900">
-                        {(inv.grossAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })} INR
+                        {(inv.grossAmount || 0).toLocaleString(inv.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })} {inv.currency || 'INR'}
                       </td>
 
                       {/* TDS */}
                       <td className="py-3 px-3.5 text-center font-mono text-slate-500">
-                        {inv.tdsAmount ? `${inv.tdsAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })} INR` : <span className="text-slate-300">—</span>}
+                        {inv.tdsAmount ? `${inv.tdsAmount.toLocaleString(inv.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })} ${inv.currency || 'INR'}` : <span className="text-slate-300">—</span>}
                       </td>
 
                       {/* NET PAYABLE */}
                       <td className="py-3 px-3.5 text-right font-mono font-extrabold text-slate-900">
-                        {(inv.netPayable || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })} INR
+                        {(inv.netPayable || 0).toLocaleString(inv.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })} {inv.currency || 'INR'}
                       </td>
 
                       {/* 3-WAY MATCH */}

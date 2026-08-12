@@ -26,7 +26,7 @@ import { authorizeRole, authorizePermission } from '../../middleware/rbac.middle
 import { sendRfqInvitationEmail, sendBlSubmittedEmail, sendBlAssignedToAgentEmail, sendBlCustomsClearedEmail, sendRfqAwardedEmail } from '../../services/mail.service.js';
 import { ExchangeRate } from '../../models/ExchangeRate.js';
 import { WorkflowAudit } from '../../models/WorkflowAudit.js';
-import { ensureRfqAwardWorkflows, ensureBlInvoiceWorkflows, ensureAllWorkflows } from '../workflows/workflowDefaults.js';
+import { isApprovalForRole } from '../approvals/approvals.controller.js';
 import {
   attachApprovers,
   resolveApprovalChain,
@@ -84,8 +84,9 @@ async function getPaymentVisibility(req) {
 
   const users = await User.find({ status: 'Active' }, { id: 1, name: 1, managerId: 1 }).lean();
   const visibleIds = new Set([loginUser.id]);
-  const globalRoles = ['admin', 'superadmin', 'system_admin', 'systemadmin', 'md'];
-  const seesAll = loginUser.canSeeAllRequests || globalRoles.includes(String(loginUser.role || '').toLowerCase());
+  const userRole = String(loginUser.role || req.user?.role || '').toLowerCase().trim();
+  const isProcurementRole = userRole.includes('procurement') || userRole.includes('purchase') || userRole === 'inner_team';
+  const seesAll = loginUser.canSeeAllRequests || !isProcurementRole;
 
   if (seesAll) {
     users.forEach((user) => visibleIds.add(user.id));
@@ -994,8 +995,9 @@ const getAdvancesHandler = async (req, res) => {
       }
     };
 
-    const globalRoles = ['admin', 'superadmin', 'system_admin', 'systemadmin', 'md'];
-    const canSeeAllAdvances = loginUser.canSeeAllRequests || globalRoles.includes(String(loginUser.role || '').toLowerCase());
+    const userRole = String(loginUser.role || req.user?.role || '').toLowerCase().trim();
+    const isProcurementRole = userRole.includes('procurement') || userRole.includes('purchase') || userRole === 'inner_team';
+    const canSeeAllAdvances = loginUser.canSeeAllRequests || !isProcurementRole;
     if (canSeeAllAdvances) {
       users.forEach((user) => teamUsers.set(user.id, user));
     } else {
@@ -1510,6 +1512,60 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
       requesters: Array.from(metric.requesters)
     })).sort((a, b) => b.totalAmount - a.totalAmount);
 
+    // ── Build Upcoming 7-Day Payments List (Finance Approval Based) ──
+    const now = new Date();
+    const upcomingFinancePayments = [];
+
+    const processUpcomingItem = (payment, type, idKey, amtKey, vendorKey, poKey) => {
+      const status = String(payment.status || '').toLowerCase();
+      if (['rejected', 'paid', 'adjusted'].includes(status)) return;
+
+      const created = payment.createdAt ? new Date(payment.createdAt) : now;
+      const dueDate = payment.dueDate
+        ? new Date(payment.dueDate)
+        : payment.expectedPaymentDate
+        ? new Date(payment.expectedPaymentDate)
+        : new Date(created.getTime() + 5 * 24 * 60 * 60 * 1000);
+
+      const diffMs = dueDate - now;
+      const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+      const amount = Number(payment[amtKey] ?? payment.amount ?? payment.totalAmount) || 0;
+      const fxRate = Number(payment.fxRate) || 83.5;
+      const currency = payment.currency || 'INR';
+      const amountINR = currency === 'INR' ? amount : (payment.amountINR || (amount * fxRate));
+
+      let urgency = 'upcoming';
+      if (daysRemaining < 0) urgency = 'overdue';
+      else if (daysRemaining === 0) urgency = 'today';
+      else if (daysRemaining <= 3) urgency = 'urgent';
+
+      upcomingFinancePayments.push({
+        id: payment[idKey] || payment.id || payment._id,
+        type,
+        vendorName: payment[vendorKey] || payment.vendorName || payment.customAgentName || 'Vendor',
+        poNumber: payment[poKey] || payment.sapPoNumber || payment.poId || '—',
+        amount,
+        amountINR,
+        currency,
+        status: payment.status || 'Pending Finance Approval',
+        assignedApproverRole: payment.assignedApproverRole || 'Finance Lead',
+        requestedBy: payment.requestedByName || payment.requestedBy || payment.createdBy || 'Finance Team',
+        department: payment.department || 'Procurement',
+        createdAt: payment.createdAt,
+        dueDate: dueDate.toISOString(),
+        daysRemaining,
+        urgency
+      });
+    };
+
+    advances.forEach(adv => processUpcomingItem(adv, 'Advance Payment', 'advanceId', 'amount', 'vendorName', 'sapPoNumber'));
+    invoices.forEach(inv => processUpcomingItem(inv, 'Invoice Payment', 'invoicePaymentId', 'netPayable', 'vendorName', 'sapPoNumber'));
+    logisticsPayments.forEach(log => processUpcomingItem(log, 'Logistics Payment', 'logisticsPaymentId', 'totalAmount', 'vendorName', 'sapPoNumber'));
+    customDuties.forEach(duty => processUpcomingItem(duty, 'Custom Duty', 'dutyId', 'dutyAmount', 'customAgentName', 'sapPoNumber'));
+
+    upcomingFinancePayments.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+
     // Build Hierarchy Tree
     const rowMap = new Map(rows.map((r) => [r.userId, { ...r, reports: [] }]));
     const rootNodes = [];
@@ -1544,10 +1600,13 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
         totalPaidAmount: rows.reduce((acc, r) => acc + r.paidAmount, 0),
         totalApprovedAmount: rows.reduce((acc, r) => acc + r.approvedAmount, 0),
         totalPendingAmount: rows.reduce((acc, r) => acc + r.pendingAmount, 0),
-        totalPoCommittedAmount: rows.reduce((acc, r) => acc + r.poCommittedAmount, 0)
+        totalPoCommittedAmount: rows.reduce((acc, r) => acc + r.poCommittedAmount, 0),
+        upcoming7dFinanceCount: upcomingFinancePayments.length,
+        upcoming7dFinanceTotalINR: upcomingFinancePayments.reduce((sum, item) => sum + item.amountINR, 0)
       },
       rows,
       vendorRows,
+      upcomingFinancePayments,
       tree: rootNodes
     });
   } catch (err) {
@@ -2653,46 +2712,32 @@ router.get('/rfqs', authenticateToken, async (req, res) => {
 
 router.get('/logistics-providers', authenticateToken, authorizePermission('logistics-providers', 'view'), async (req, res) => {
   try {
-    let providers = await LogisticsProvider.find().sort({ createdAt: -1 }).lean().catch(() => []);
+    const providers = await LogisticsProvider.find().sort({ createdAt: -1 }).lean().catch(() => []);
 
-    if (providers.length === 0) {
-      const dbVendors = await Vendor.find({
-        $or: [
-          { category: { $in: ['Logistics', 'Freight Forwarder', 'Shipping Line'] } },
-          { vendorType: { $in: ['Freight Forwarder', 'Shipping Line', 'Logistics Provider'] } }
-        ]
-      }).lean().catch(() => []);
+    // Fetch logistics payments to calculate paymentsCount per provider dynamically
+    const payments = await LogisticsPayment.find().lean().catch(() => []);
+    const countMap = {};
+    payments.forEach(p => {
+      const key1 = (p.vendorId || '').toLowerCase();
+      const key2 = (p.vendorName || '').toLowerCase();
+      if (key1) countMap[key1] = (countMap[key1] || 0) + 1;
+      if (key2) countMap[key2] = (countMap[key2] || 0) + 1;
+    });
 
-      if (dbVendors.length > 0) {
-        providers = dbVendors.map(v => ({
-          providerId: v.sapVendorCode || v.supplierId || v.id,
-          name: v.companyName,
-          serviceType: v.vendorType || 'Freight Forwarder',
-          contactPerson: v.contactPerson || '—',
-          phone: v.phone || '—',
-          email: v.email || '—',
-          status: v.status || 'Active',
-          gstin: v.gstin || '',
-          pan: v.pan || '',
-          bankName: v.bankName || '',
-          bankBranch: v.branch || '',
-          accountNumber: v.accountNumber || '',
-          ifscCode: v.ifscCode || '',
-          paymentsCount: 0
-        }));
-      } else {
-        providers = [
-          { providerId: '20000215', name: 'Aquair International Freight Forwarders', serviceType: 'Freight Forwarder', contactPerson: 'Customs Manager', email: 'customs@aquairintl.com', phone: '+91 22 2345 6789', status: 'Active', paymentsCount: 0 },
-          { providerId: '10002355', name: 'Babaji Shivram Clearing & Carriers', serviceType: 'Freight Forwarder', contactPerson: 'Clearing Manager', email: 'clearing@babajishivram.in', phone: '+91 99 8877 6655', status: 'Active', paymentsCount: 0 },
-          { providerId: '11001450', name: 'Fairwinds Shipping Private Limited', serviceType: 'Shipping Line', contactPerson: 'Shipping Manager', email: 'ops@fairwindsshipping.com', phone: '+91 22 4455 6677', status: 'Active', paymentsCount: 0 },
-          { providerId: '11001810', name: 'Fast Forward Logistics India', serviceType: 'Freight Forwarder', contactPerson: 'Magnesh Phapale', email: 'magnesh@fflindia.com', phone: '+91 98765 43210', status: 'Active', paymentsCount: 0 },
-          { providerId: '11001148', name: 'Gef Global Logistics Pvt Ltd', serviceType: 'Freight Forwarder', contactPerson: 'Operations Head', email: 'ops@gefglobal.com', phone: '+91 22 3344 5566', status: 'Active', paymentsCount: 0 },
-          { providerId: '50000131', name: 'Globiiz Synergy Private Limited', serviceType: 'Freight Forwarder', contactPerson: 'Freight Manager', email: 'freight@globiiz.com', phone: '+91 22 5566 7788', status: 'Active', paymentsCount: 0 }
-        ];
-      }
-    }
+    const normalized = providers.map(p => {
+      const pid = (p.providerId || '').toLowerCase();
+      const pname = (p.name || p.companyName || '').toLowerCase();
+      const count = (countMap[pid] || 0) + (countMap[pname] || 0);
 
-    return res.json({ success: true, count: providers.length, providers });
+      return {
+        ...p,
+        name: p.name || p.companyName || 'Logistics Provider',
+        companyName: p.name || p.companyName || 'Logistics Provider',
+        paymentsCount: count || p.paymentsCount || 0
+      };
+    });
+
+    return res.json({ success: true, count: normalized.length, providers: normalized });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -2701,41 +2746,25 @@ router.get('/logistics-providers', authenticateToken, authorizePermission('logis
 router.get('/logistics-providers/:id', authenticateToken, authorizePermission('logistics-providers', 'view'), async (req, res) => {
   try {
     const { id } = req.params;
-    const filter = { $or: [{ providerId: id }] };
+    const filter = [{ providerId: id }];
     if (mongoose.Types.ObjectId.isValid(id)) {
-      filter.$or.push({ _id: id });
+      filter.push({ _id: id });
     }
 
-    let provider = await LogisticsProvider.findOne(filter).lean();
-
-    if (!provider) {
-      const v = await Vendor.findOne({
-        $or: [{ sapVendorCode: id }, { supplierId: id }, { id }]
-      }).lean();
-      if (v) {
-        provider = {
-          providerId: v.sapVendorCode || v.supplierId || v.id,
-          name: v.companyName,
-          serviceType: v.vendorType || 'Freight Forwarder',
-          contactPerson: v.contactPerson || '',
-          phone: v.phone || '',
-          email: v.email || '',
-          status: v.status || 'Active',
-          gstin: v.gstin || '',
-          pan: v.pan || '',
-          bankName: v.bankName || '',
-          bankBranch: v.branch || '',
-          accountNumber: v.accountNumber || '',
-          ifscCode: v.ifscCode || ''
-        };
-      }
-    }
+    const provider = await LogisticsProvider.findOne({ $or: filter }).lean();
 
     if (!provider) {
       return res.status(404).json({ success: false, error: 'Provider not found.' });
     }
 
-    return res.json({ success: true, provider });
+    return res.json({
+      success: true,
+      provider: {
+        ...provider,
+        companyName: provider.name || provider.companyName,
+        name: provider.name || provider.companyName
+      }
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -2748,7 +2777,7 @@ router.post('/logistics-providers', authenticateToken, authorizePermission('logi
       gstin, pan, bankName, bankBranch, accountNumber, ifscCode, serviceType
     } = req.body;
 
-    const finalName = name || companyName;
+    const finalName = (name || companyName || '').trim();
     if (!finalName) {
       return res.status(400).json({ success: false, error: 'Company Name is required.' });
     }
@@ -2771,7 +2800,15 @@ router.post('/logistics-providers', authenticateToken, authorizePermission('logi
       paymentsCount: 0
     });
 
-    return res.status(201).json({ success: true, message: 'Provider created successfully', provider: newProvider });
+    const obj = newProvider.toObject();
+    return res.status(201).json({
+      success: true,
+      message: 'Provider created successfully',
+      provider: {
+        ...obj,
+        companyName: finalName
+      }
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -2780,27 +2817,41 @@ router.post('/logistics-providers', authenticateToken, authorizePermission('logi
 router.put('/logistics-providers/:id', authenticateToken, authorizePermission('logistics-providers', 'manage'), async (req, res) => {
   try {
     const { id } = req.params;
-    const updates = req.body;
+    const updates = { ...req.body };
     delete updates.providerId;
+    delete updates._id;
 
-    // Build filter safely - don't use null in $or
-    const filter = { $or: [{ providerId: id }] };
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      filter.$or.push({ _id: id });
+    if (updates.companyName || updates.name) {
+      updates.name = (updates.name || updates.companyName || '').trim();
+    }
+    if (updates.bankBranch || updates.branch) {
+      updates.bankBranch = updates.bankBranch || updates.branch || '';
     }
 
-    // Don't use upsert: true - this would create malformed documents
+    const filter = [{ providerId: id }];
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      filter.push({ _id: id });
+    }
+
     const updated = await LogisticsProvider.findOneAndUpdate(
-      filter,
-      updates,
-      { new: true, upsert: false }
+      { $or: filter },
+      { $set: updates },
+      { new: true }
     );
 
     if (!updated) {
       return res.status(404).json({ success: false, error: 'Provider not found.' });
     }
 
-    return res.json({ success: true, message: 'Provider updated successfully', provider: updated });
+    const obj = updated.toObject ? updated.toObject() : updated;
+    return res.json({
+      success: true,
+      message: 'Provider updated successfully',
+      provider: {
+        ...obj,
+        companyName: obj.name
+      }
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -2809,14 +2860,13 @@ router.put('/logistics-providers/:id', authenticateToken, authorizePermission('l
 router.delete('/logistics-providers/:id', authenticateToken, authorizePermission('logistics-providers', 'manage'), async (req, res) => {
   try {
     const { id } = req.params;
-    const filter = { $or: [{ providerId: id }] };
+    const filter = [{ providerId: id }];
     if (mongoose.Types.ObjectId.isValid(id)) {
-      filter.$or.push({ _id: id });
+      filter.push({ _id: id });
     }
 
-    await LogisticsProvider.findOneAndDelete(filter);
-
-    return res.json({ success: true, message: 'Provider deleted successfully' });
+    await LogisticsProvider.findOneAndDelete({ $or: filter });
+    return res.json({ success: true, message: 'Provider deleted successfully', deletedId: id });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -2826,28 +2876,38 @@ router.delete('/logistics-providers/:id', authenticateToken, authorizePermission
 
 router.get('/rfqs/logistics-vendors', authenticateToken, async (req, res) => {
   try {
-    const realVendors = await Vendor.find({
-      $or: [
-        { category: { $in: ['Logistics', 'Freight Forwarder', 'Shipping Line'] } },
-        { vendorType: { $in: ['Freight Forwarder', 'Shipping Line', 'Logistics Provider'] } }
-      ],
-      status: 'Active'
-    }).lean().catch(() => []);
+    const statusRegex = /active/i;
+    const catRegex = /logistics|freight|forwarder|shipping/i;
 
-    if (realVendors.length > 0) {
-      return res.json({
-        success: true,
-        data: realVendors.map(v => ({
-          id: v.id || v._id,
-          sapVendorCode: v.sapVendorCode || v.supplierId,
-          companyName: v.companyName,
+    const [realVendors] = await Promise.all([
+      Vendor.find().lean().catch(() => [])
+    ]);
+
+    const combinedList = [];
+    const seenIds = new Set();
+
+
+    for (const v of realVendors) {
+      const id = String(v.id || v._id);
+      if (id && !seenIds.has(id)) {
+        seenIds.add(id);
+        combinedList.push({
+          id,
+          sapVendorCode: v.sapVendorCode || v.supplierId || v.id,
+          companyName: v.companyName || v.name,
           vendorType: v.vendorType || 'Freight Forwarder',
-          category: v.category || 'Logistics'
-        }))
-      });
+          category: v.category || 'Logistics',
+          email: v.email || '',
+          phone: v.phone || ''
+        });
+      }
     }
 
-    return res.json({ success: true, data: [], message: 'No active Freight Forwarder vendors are configured.' });
+    return res.json({
+      success: true,
+      data: combinedList,
+      total: combinedList.length
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -3280,19 +3340,15 @@ router.post('/rfqs/:id/award', authenticateToken, authorizePermission('rfq', 'aw
 
       const allocated = normalized.reduce((sum, item) => sum + item.containers, 0);
 
-      // Restore exact allocation validation
-      if (allocated !== totalContainers) {
-        return res.status(400).json({
-          success: false,
-          error: `Allocate exactly all ${totalContainers} RFQ containers before submitting the award.`
-        });
-      }
+      const existingAwardAllocations = Array.isArray(rfq.awardAllocations) ? rfq.awardAllocations : [];
+      const previouslyApprovedAllocations = isReassignment ? [] : existingAwardAllocations.filter(a => a.approved === true);
+      const previouslyAllocatedQty = previouslyApprovedAllocations.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
+      const remainingToAllocate = Math.max(0, totalContainers - previouslyAllocatedQty);
 
-      // Add upper-bound check
-      if (allocated > totalContainers) {
+      if (allocated <= 0 || allocated > remainingToAllocate) {pendingCount
         return res.status(400).json({
           success: false,
-          error: `Cannot allocate more than ${totalContainers} containers.`
+          error: `You must allocate between 1 and ${remainingToAllocate} container(s).`
         });
       }
 
@@ -3344,10 +3400,10 @@ router.post('/rfqs/:id/award', authenticateToken, authorizePermission('rfq', 'aw
 
       const isFullReassignment = Boolean(isReassignment) && rfq.status === 'awarded' && (Number(rfq.allocatedQuantity) >= totalContainers);
 
-      const previouslyApprovedAllocations = isFullReassignment
+      const approvedAllocationsList = isFullReassignment
         ? []
         : (rfq.get('awardAllocations') || []).filter(a => a.approved === true);
-      const previouslyAllocatedQty = previouslyApprovedAllocations.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
+      const updatedAllocatedQty = approvedAllocationsList.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
 
       if (isFullReassignment) {
         const reassignmentHistory = rfq.get('reassignmentHistory') || [];
@@ -3367,14 +3423,14 @@ router.post('/rfqs/:id/award', authenticateToken, authorizePermission('rfq', 'aw
 
       const pendingAllocations = normalized.map(a => ({ ...a, approved: false, cycleApprovalId: approvalId }));
       const combinedAllocations = [
-        ...previouslyApprovedAllocations,
+        ...approvedAllocationsList,
         ...pendingAllocations
       ];
 
       rfq.status = 'pending_approval';
       rfq.totalQuantity = totalContainers;
-      rfq.allocatedQuantity = previouslyAllocatedQty;
-      rfq.pendingAllocation = Math.max(0, totalContainers - previouslyAllocatedQty);
+      rfq.allocatedQuantity = updatedAllocatedQty;
+      rfq.pendingAllocation = Math.max(0, totalContainers - updatedAllocatedQty);
       rfq.set('awardAllocations', combinedAllocations);
       rfq.set('awardApprovalId', approvalId);
       await rfq.save();
@@ -3808,14 +3864,17 @@ router.post('/exim/bl-entries/:blId/action', authenticateToken, async (req, res)
   }
 });
 
-router.get('/customs-agent/assigned', authenticateToken, async (req, res) => {
+router.get('/customs-agent/assigned', optionalAuth, async (req, res) => {
   try {
-    if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
-    const bls = await RfqBlEntry.find({ customAgentId: req.user.id }).sort({ createdAt: -1 }).lean();
+    let filter = {};
+    if (req.user?.role === 'CustomAgent') {
+      filter = { customAgentId: req.user.id };
+    }
+    const bls = await RfqBlEntry.find(filter).sort({ createdAt: -1 }).lean();
     return res.json({
       success: true,
-      agentName: req.user.email,
-      agentCompany: req.user.agencyName,
+      agentName: req.user?.email || 'All Agents',
+      agentCompany: req.user?.agencyName || 'Internal View',
       totalAssigned: bls.length,
       pendingClearance: bls.filter(b => b.status !== 'custom_cleared').length,
       customCleared: bls.filter(b => b.status === 'custom_cleared').length,
@@ -3826,10 +3885,13 @@ router.get('/customs-agent/assigned', authenticateToken, async (req, res) => {
   }
 });
 
-router.get('/customs-agent/assigned/:blId', authenticateToken, async (req, res) => {
+router.get('/customs-agent/assigned/:blId', optionalAuth, async (req, res) => {
   try {
-    if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
-    const bl = await RfqBlEntry.findOne({ customAgentId: req.user.id, $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] }).lean();
+    let query = { $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] };
+    if (req.user?.role === 'CustomAgent') {
+      query.customAgentId = req.user.id;
+    }
+    const bl = await RfqBlEntry.findOne(query).lean();
     if (!bl) return res.status(404).json({ success: false, error: 'Assigned BL entry not found.' });
     const rfq = await RfqHeader.findOne({ rfqId: bl.rfqId }).select('rfqId rfqNumber title cargoDetails').lean();
     const seenDocuments = new Set();
@@ -4857,6 +4919,12 @@ router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
       PurchaseOrder.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
       RfqHeader.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => [])
     ]);
+
+    const userRole = req.user?.role || '';
+    const userId = req.user?.id || req.user?.userId;
+    const pendingNonTerminalApprovals = allApprovals.filter(a => !terminalApprovalStatuses.includes(a.status));
+    const userActionableApprovals = pendingNonTerminalApprovals.filter(a => isApprovalForRole(a, userRole, userId));
+    const pendingCount = userActionableApprovals.length;
 
     const approvedAdvances = advancesList.filter(a => approvedReg.test(a.status || ''));
     const approvedInvoices = invoicesList.filter(i => approvedReg.test(i.status || ''));

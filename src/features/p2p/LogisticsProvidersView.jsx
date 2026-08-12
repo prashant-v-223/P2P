@@ -39,32 +39,38 @@ export default function LogisticsProvidersView() {
   const handleToggleStatus = async (provider) => {
     try {
       const nextStatus = provider.status === 'Active' ? 'Inactive' : 'Active';
-      const id = provider._id || provider.id || provider.providerId;
+      const id = provider._id || provider.providerId || provider.id;
       const res = await apiFetch(`/api/p2p/logistics-providers/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: nextStatus })
       });
-      if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
         showToast({ title: 'Status updated', description: `Provider is now ${nextStatus}`, type: 'success' });
         fetchProviders();
+      } else {
+        showToast({ type: 'error', title: 'Error updating status', description: data.error || 'Failed to update status' });
       }
     } catch (err) {
-      showToast({ type: 'error', title: 'Error updating status' });
+      showToast({ type: 'error', title: 'Error updating status', description: err.message });
     }
   };
 
   const handleDelete = async (provider) => {
-    const id = provider._id || provider.id || provider.providerId;
-    if (!window.confirm(`Are you sure you want to delete "${provider.name}"?`)) return;
+    const id = provider._id || provider.providerId || provider.id;
+    if (!window.confirm(`Are you sure you want to delete "${provider.name || provider.companyName}"?`)) return;
     try {
       const res = await apiFetch(`/api/p2p/logistics-providers/${id}`, { method: 'DELETE' });
-      if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
         showToast({ title: 'Provider deleted', type: 'success' });
         fetchProviders();
+      } else {
+        showToast({ type: 'error', title: 'Error deleting provider', description: data.error || 'Failed to delete provider' });
       }
     } catch (err) {
-      showToast({ type: 'error', title: 'Error deleting provider' });
+      showToast({ type: 'error', title: 'Error deleting provider', description: err.message });
     }
   };
 
@@ -226,7 +232,7 @@ export default function LogisticsProvidersView() {
                             )}
                           </button>
                           <button
-                            onClick={() => navigate(`${p.providerId || p._id}/edit`)}
+                            onClick={() => navigate(`${p._id || p.providerId}/edit`)}
                             title="Edit Provider"
                             className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition-colors"
                           >

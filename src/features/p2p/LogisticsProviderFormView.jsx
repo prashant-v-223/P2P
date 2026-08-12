@@ -78,10 +78,15 @@ export default function LogisticsProviderFormView() {
       const url = isEdit ? `/api/p2p/logistics-providers/${id}` : '/api/p2p/logistics-providers';
       const method = isEdit ? 'PUT' : 'POST';
 
+      const payload = {
+        ...form,
+        name: form.companyName
+      };
+
       const res = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form)
+        body: JSON.stringify(payload)
       });
 
       const json = await res.json();
@@ -91,7 +96,11 @@ export default function LogisticsProviderFormView() {
           description: isEdit ? 'Logistics Provider updated.' : 'Logistics Provider created.',
           type: 'success'
         });
-        navigate(-1);
+        if (window.history.length > 2) {
+          navigate(-1);
+        } else {
+          navigate('/management/logistics-providers');
+        }
       } else {
         showToast({ title: 'Error', description: json.error || 'Failed to save provider.', type: 'error' });
       }

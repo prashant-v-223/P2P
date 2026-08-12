@@ -73,10 +73,19 @@ export default function CreateCustomDutyWizard() {
     loadClearedBls();
   }, []);
 
+  const [boeNumber, setBoeNumber] = useState('');
+  const [portCode, setPortCode] = useState('INNHAV (Nhava Sheva)');
+
   const handleSelectBlChange = (val) => {
     setSelectedBlId(val || '');
     const target = clearedBls.find(b => (b.blNumber || b.blId || b.id) === val);
     setSelectedBl(target || null);
+    if (target) {
+      setBoeNumber(target.boeNumber || `BOE-${val.slice(-6)}`);
+      setPortCode(target.portCode || 'INNHAV (Nhava Sheva)');
+    } else {
+      setBoeNumber('');
+    }
   };
 
   const handleFileChange = (e) => {
@@ -108,9 +117,9 @@ export default function CreateCustomDutyWizard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           blNumber: selectedBl?.blNumber || selectedBl?.blId || selectedBlId,
-          boeNumber: selectedBl?.boeNumber || `BOE-${selectedBlId}`,
+          boeNumber: boeNumber.trim() || selectedBl?.boeNumber || `BOE-${selectedBlId}`,
           dutyAmount: Number(dutyAmount),
-          portCode: selectedBl?.portCode || 'INNHAV (Nhava Sheva)',
+          portCode: portCode.trim() || selectedBl?.portCode || 'INNHAV (Nhava Sheva)',
           customAgentName: selectedBl?.vendorName || selectedBl?.customAgentName || 'Fast Forward Logistics India Privat',
           remarks,
           documents: files.map(f => ({ name: f.name, size: f.size, storage: 's3' }))
@@ -132,7 +141,9 @@ export default function CreateCustomDutyWizard() {
   };
 
   const options = clearedBls.map(b => ({
-    label: `${b.boeNumber || 'BOE unavailable'} — BL: ${b.blNumber || b.blId || b.id} - ${b.vendorName || b.customAgentName || 'Logistics Vendor'}`,
+    label: b.boeNumber
+      ? `BOE: ${b.boeNumber} — BL: ${b.blNumber || b.blId || b.id} (${b.vendorName || b.customAgentName || 'Logistics Vendor'})`
+      : `BL: ${b.blNumber || b.blId || b.id} — ${b.vendorName || b.customAgentName || 'Logistics Vendor'}`,
     value: b.blNumber || b.blId || b.id
   }));
 
@@ -192,6 +203,23 @@ export default function CreateCustomDutyWizard() {
               placeholder="Search by BOE number or BL number..."
             />
           </div>
+
+          {selectedBlId && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+              <CustomInput
+                label="Bill of Entry (BOE) Number"
+                value={boeNumber}
+                onChange={(e) => setBoeNumber(e.target.value)}
+                placeholder="Enter or confirm BOE Number (e.g. BOE-2026-9904)"
+              />
+              <CustomInput
+                label="Port of Discharge / Port Code"
+                value={portCode}
+                onChange={(e) => setPortCode(e.target.value)}
+                placeholder="e.g. INNHAV (Nhava Sheva)"
+              />
+            </div>
+          )}
 
           {/* DYNAMIC ORANGE DETAIL CARD */}
           {selectedBl && (

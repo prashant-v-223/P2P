@@ -1,5 +1,5 @@
 export const config = {
-  port: Number(process.env.PORT) || 5001,
+  port: Number(process.env.PORT) || 5050,
   jwtAccessSecret: process.env.JWT_ACCESS_SECRET || 'rayzon_access_token_secret_15m_2026',
   jwtAccessExpiresIn: '15m',
   jwtRefreshSecret: process.env.JWT_REFRESH_SECRET || 'rayzon_refresh_token_secret_7d_2026',

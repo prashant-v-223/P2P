@@ -50,8 +50,9 @@ export const authorizePermission = (moduleKey, action) => {
       return res.status(401).json({ success: false, error: 'Unauthorized user' });
     }
 
-    // System Admin / admin role — full bypass
-    if (req.user.role === 'System Admin' || req.user.role === 'admin') {
+    const userRoleClean = String(req.user.role || '').toLowerCase().replace(/[\s_-]+/g, '');
+    // System Admin / Admin / Superadmin / MD role — full bypass
+    if (['systemadmin', 'admin', 'superadmin', 'md'].includes(userRoleClean)) {
       return next();
     }
 
@@ -60,7 +61,12 @@ export const authorizePermission = (moduleKey, action) => {
       const effectiveRoles = await getEffectiveRoles(req.user);
 
       // Check permission across all effective roles
-      const roleRecords = await Role.find({ roleName: { $in: effectiveRoles } }).lean();
+      const roleRecords = await Role.find({ 
+        $or: [
+          { roleName: { $in: effectiveRoles } },
+          { id: { $in: effectiveRoles } }
+        ] 
+      }).lean();
 
       if (process.env.NODE_ENV === 'development') {
         console.log(`[RBAC DEBUG] Checking permission: ${action} on ${moduleKey}`);
@@ -70,8 +76,8 @@ export const authorizePermission = (moduleKey, action) => {
 
       const hasPermission = roleRecords.some((role) => {
         const modulePerms = role?.permissions?.[moduleKey] || [];
-        return modulePerms.includes(action) || modulePerms.includes('manage') || modulePerms.includes('*');
-      });
+        return modulePerms.includes(action) || modulePerms.includes('manage') || modulePerms.includes('*') || (action === 'view' && modulePerms.length > 0);
+      }) || (effectiveRoles.length > 0 && action === 'view'); // Allow viewing if user has an assigned active role
 
       if (!hasPermission) {
         return res.status(403).json({

@@ -86,6 +86,26 @@ function getStepFromStatus(type, status = '') {
   return idx === -1 ? 0 : idx;
 }
 
+const getApprovalDetailUrl = (approval) => {
+  if (!approval) return '/approvals';
+  const type = String(approval.type || '').toLowerCase();
+  const refId = approval.referenceId || approval.transactionSnapshot?.rfqId || approval.id;
+
+  if (type.includes('invoice')) {
+    return `/p2p/invoice-payments/${refId}`;
+  }
+  if (type.includes('rfq') || type.includes('freight')) {
+    return `/admin/rfqs/${refId}`;
+  }
+  if (type.includes('custom') || type.includes('duty')) {
+    return `/p2p/custom-duty`;
+  }
+  if (type.includes('logistics')) {
+    return `/p2p/logistics-payments`;
+  }
+  return `/p2p/advance-payments/${refId}`;
+};
+
 const formatSubmitted = (value) => {
   if (!value) return 'Recently submitted';
   return new Intl.DateTimeFormat('en-IN', {
@@ -97,9 +117,14 @@ const formatSubmitted = (value) => {
   }).format(new Date(value));
 };
 
-const formatCurrency = (amount) => {
-  if (!amount && amount !== 0) return '₹ 0.00';
+const formatCurrency = (amount, currency = 'INR', amountFormatted = '') => {
+  if (amountFormatted) return amountFormatted;
+  if (!amount && amount !== 0) return `${currency === 'USD' ? '$' : '₹'} 0.00`;
   const val = typeof amount === 'string' ? parseFloat(amount.replace(/[^0-9.-]+/g, '')) || 0 : amount;
+  const curr = String(currency || 'INR').toUpperCase();
+  if (curr === 'USD') return `$${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (curr === 'EUR') return `€${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (curr === 'GBP') return `£${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(val);
 };
 
@@ -473,7 +498,7 @@ export default function PendingApprovalsView() {
                           <FileText className="h-4 w-4" />
                         </div>
                         <Link
-                          to={`/p2p/advance-payments/${approval.id}`}
+                          to={getApprovalDetailUrl(approval)}
                           className="font-mono text-base font-extrabold text-slate-900 transition-colors hover:text-teal-700"
                         >
                           {approval.id}
@@ -515,7 +540,7 @@ export default function PendingApprovalsView() {
                       <div>
                         <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Amount</span>
                         <span className="block font-mono text-base font-extrabold text-slate-900">
-                          {formatCurrency(approval.amountINR || approval.amountOriginal || 0)}
+                          {approval.amountFormatted || formatCurrency(approval.amountOriginal || approval.amountINR, approval.currency, approval.amountFormatted)}
                         </span>
                       </div>
                       <div>
@@ -534,7 +559,7 @@ export default function PendingApprovalsView() {
                           <span className="block font-medium text-slate-700">{formatSubmitted(approval.submittedAt)}</span>
                         </div>
                         <Link
-                          to={`/p2p/advance-payments/${approval.id}`}
+                          to={getApprovalDetailUrl(approval)}
                           className="flex shrink-0 items-center gap-1 text-xs font-bold text-teal-700 hover:text-teal-800 hover:underline"
                         >
                           Details <ChevronRight className="h-3.5 w-3.5" />

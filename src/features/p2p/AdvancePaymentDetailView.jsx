@@ -284,16 +284,6 @@ export default function AdvancePaymentDetailView() {
         </div>
       </div>
 
-      {/* Universal Dynamic Approval Workflow Stepper Component */}
-      <UniversalApprovalWorkflowCard
-        referenceId={id}
-        recordType="Advance Payment"
-        vendorName={advance?.vendorName || approval?.vendorName}
-        amountFormatted={advance?.amount ? `₹${advance.amount.toLocaleString('en-IN')}` : approval?.amountINR}
-        poRef={advance?.sapPoNumber || advance?.poId}
-        onStatusChange={fetchData}
-      />
-
       {/* ─── BANNERS ────────────────────────────────────────────────────── */}
       {isRejected && (
         <div className="p-4 rounded-2xl border-2 border-rose-300 bg-rose-50 flex items-start gap-3">
@@ -373,8 +363,8 @@ export default function AdvancePaymentDetailView() {
               {[
                 { label: 'PO NUMBER',        value: advance?.sapPoNumber || advance?.poId || '—', mono: true },
                 { label: 'VENDOR',           value: advance?.vendorName || '—' },
-                { label: 'PO VALUE',         value: `INR ${(0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, mono: true },
-                { label: 'REQUESTED AMOUNT', value: `INR ${(advance?.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, mono: true, highlight: true },
+                { label: 'CURRENCY',         value: advance?.currency || 'INR', mono: true },
+                { label: 'REQUESTED AMOUNT', value: `${advance?.currency || 'INR'} ${(advance?.amount || 0).toLocaleString(advance?.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })}${advance?.currency && advance.currency !== 'INR' ? ` (₹${(advance?.amountINR || (advance.amount * (advance.fxRate || 83.5))).toLocaleString('en-IN')})` : ''}`, mono: true, highlight: true },
                 { label: '% OF PO',          value: `${advance?.percentageOfPo || 0}%`, mono: true },
                 { label: 'PAYMENT MODE',     value: advance?.paymentMode || 'NEFT' },
                 { label: 'REQUESTED BY',     value: advance?.requestedByName || advance?.requestedBy || advance?.createdBy || 'Finance Team' },
@@ -416,6 +406,16 @@ export default function AdvancePaymentDetailView() {
 
         {/* RIGHT — Actions + Timeline */}
         <div className="lg:col-span-4 space-y-4">
+
+          {/* Universal Dynamic Approval Workflow Stepper Component */}
+          <UniversalApprovalWorkflowCard
+            referenceId={id}
+            recordType="Advance Payment"
+            vendorName={advance?.vendorName || approval?.vendorName}
+            amountFormatted={advance?.amount ? `${advance?.currency || 'INR'} ${advance.amount.toLocaleString(advance?.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })}${advance?.currency && advance.currency !== 'INR' ? ` (₹${(advance?.amountINR || (advance.amount * (advance.fxRate || 83.5))).toLocaleString('en-IN')})` : ''}` : approval?.amountINR}
+            poRef={advance?.sapPoNumber || advance?.poId}
+            onStatusChange={fetchData}
+          />
 
           {/* ── Edit Card (draft or returned only) ───────────────────── */}
           {(isDraft || isReturned) && (

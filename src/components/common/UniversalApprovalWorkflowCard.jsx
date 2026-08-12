@@ -15,15 +15,12 @@ function formatRoleTitle(roleKey = '') {
   return roleKey.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
-// Helper: Check if user can act on a step
-function canRoleActOnStep(userRoleInput, stepRoleInput) {
+// Helper: Check if user's actual role matches step requirement
+function isExactRoleMatch(userRoleInput, stepRoleInput) {
   if (!userRoleInput || !stepRoleInput) return false;
   
   const u = String(userRoleInput).toLowerCase().replace(/[\s_-]+/g, '_').trim();
   const s = String(stepRoleInput).toLowerCase().replace(/[\s_-]+/g, '_').trim();
-
-  // Admins can act on any step
-  if (['admin', 'systemadmin', 'system_admin', 'superadmin', 'md'].some(r => u.includes(r))) return true;
 
   if (u === s) return true;
 
@@ -49,6 +46,17 @@ function canRoleActOnStep(userRoleInput, stepRoleInput) {
   if (s.includes('logistics') && u.includes('logistics')) return true;
 
   return false;
+}
+
+// Helper: Check if user can act on a step
+function canRoleActOnStep(userRoleInput, stepRoleInput) {
+  if (!userRoleInput || !stepRoleInput) return false;
+  const u = String(userRoleInput).toLowerCase().replace(/[\s_-]+/g, '_').trim();
+
+  // Admins can act on any step
+  if (['admin', 'systemadmin', 'system_admin', 'superadmin', 'md'].some(r => u.includes(r))) return true;
+
+  return isExactRoleMatch(userRoleInput, stepRoleInput);
 }
 
 export default function UniversalApprovalWorkflowCard({ 
@@ -152,46 +160,48 @@ export default function UniversalApprovalWorkflowCard({
 
     // Check if user is the requester
     const isRequester = 
-      approvalData.requestedById === userId ||
-      approvalData.requestedById === userEmail ||
-      approvalData.requestedBy === userEmail ||
-      approvalData.requestedBy === currentUser.name;
+      Boolean(userId && approvalData.requestedById === userId) ||
+      Boolean(userEmail && (approvalData.requestedById === userEmail || approvalData.requestedBy === userEmail)) ||
+      Boolean(currentUser.name && approvalData.requestedBy === currentUser.name);
 
-    // Check if user is the assigned approver
-    const isApprover = 
-      approvalData.assignedApprover === userId ||
-      approvalData.assignedApproverId === userId ||
-      approvalData.assignedApproverEmail === userEmail ||
-      approvalData.assignedApproverName === currentUser.name;
+    // Check if user is explicitly assigned as approver
+    const isExplicitApprover = 
+      Boolean(userId && (approvalData.assignedApprover === userId || approvalData.assignedApproverId === userId)) ||
+      Boolean(userEmail && approvalData.assignedApproverEmail === userEmail) ||
+      Boolean(currentUser.name && approvalData.assignedApproverName === currentUser.name);
 
     // Check if user is admin (can view and act on everything)
-    const isAdmin = ['admin', 'system_admin', 'systemadmin', 'super_admin']
-      .some(role => userRole?.toLowerCase().includes(role));
+    const isAdmin = ['admin', 'system_admin', 'systemadmin', 'super_admin', 'md']
+      .some(role => userRole?.toLowerCase().replace(/[\s_-]+/g, '_').includes(role));
 
-    // Check if user can view this approval
-    const canView = isAdmin || isRequester || isApprover;
+    // Parse steps to check current active step role
+    const currentStepNum = approvalData.currentStep || 1;
+    let steps = [];
+    try {
+      steps = typeof approvalData.workflowSteps === 'string' 
+        ? JSON.parse(approvalData.workflowSteps) 
+        : (approvalData.workflowSteps || []);
+    } catch (_) {
+      steps = [];
+    }
+    
+    const activeStepObj = steps.find(s => s.step === currentStepNum);
+    const activeRoleKey = activeStepObj?.roleKey || activeStepObj?.roleName || '';
+    
+    const isRoleMatch = activeRoleKey ? canRoleActOnStep(userRole, activeRoleKey) : false;
 
-    // Check if user can act on current step
+    // Any authenticated user who can access the record page can view the workflow timeline
+    const canView = true;
+
+    const isTerminal = ['Approved & Dispatched', 'Rejected', 'Returned for changes'].includes(approvalData.status);
+    
+    // Approvers can act on current step if step is active and role matches or is explicit approver
     let canAct = false;
-    if (canView && !isRequester) {
-      // Don't allow requester to act on their own request unless admin
-      const currentStepNum = approvalData.currentStep || 1;
-      let steps = [];
-      try {
-        steps = typeof approvalData.workflowSteps === 'string' 
-          ? JSON.parse(approvalData.workflowSteps) 
-          : (approvalData.workflowSteps || []);
-      } catch (_) {
-        steps = [];
-      }
-      
-      const activeStepObj = steps.find(s => s.step === currentStepNum);
-      const activeRoleKey = activeStepObj?.roleKey || activeStepObj?.roleName || '';
-      
-      const isTerminal = ['Approved & Dispatched', 'Rejected', 'Returned for changes'].includes(approvalData.status);
-      
-      if (!isTerminal && activeRoleKey) {
-        canAct = isAdmin || canRoleActOnStep(userRole, activeRoleKey);
+    if (!isTerminal) {
+      if (isAdmin) {
+        canAct = true;
+      } else if (!isRequester) {
+        canAct = isExplicitApprover || isRoleMatch;
       }
     }
 
@@ -199,7 +209,7 @@ export default function UniversalApprovalWorkflowCard({
       canView,
       canAct,
       isRequester,
-      isApprover
+      isApprover: isExplicitApprover || isRoleMatch
     });
   };
 
@@ -338,12 +348,16 @@ export default function UniversalApprovalWorkflowCard({
             h.step === stepNum || (stepNum === 1 && h.action === 'approve')
           );
 
-          // Check if this step is assigned to the current user
+          // Check if current user is an Admin
+          const isAdmin = ['admin', 'system_admin', 'systemadmin', 'super_admin', 'md']
+            .some(role => currentUser?.role?.toLowerCase().replace(/[\s_-]+/g, '_').includes(role));
+
+          // Check if this step is assigned to the current user (exact role match or explicit assignee)
           const isAssignedToMe = 
-            approval.assignedApprover === currentUser?.id ||
-            approval.assignedApproverId === currentUser?.id ||
-            approval.assignedApproverEmail === currentUser?.email ||
-            approval.assignedApproverName === currentUser?.name;
+            Boolean(currentUser?.id && (approval.assignedApprover === currentUser.id || approval.assignedApproverId === currentUser.id)) ||
+            Boolean(currentUser?.email && approval.assignedApproverEmail === currentUser.email) ||
+            Boolean(currentUser?.name && approval.assignedApproverName === currentUser.name) ||
+            (activeRoleKey ? isExactRoleMatch(currentUser?.role, activeRoleKey) : false);
 
           return (
             <div key={idx} className="relative z-10 flex items-start gap-4 group">
@@ -368,11 +382,15 @@ export default function UniversalApprovalWorkflowCard({
                   <div>
                     <h4 className="text-sm font-bold text-slate-900 leading-snug">
                       {st.title || `Step ${stepNum} Approval`}
-                      {isAssignedToMe && isActive && (
+                      {isAssignedToMe && isActive ? (
                         <span className="ml-2 text-[10px] font-bold text-[#0d7676] bg-[#0d7676]/10 px-2 py-0.5 rounded-full">
                           YOU
                         </span>
-                      )}
+                      ) : isAdmin && isActive ? (
+                        <span className="ml-2 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                          ADMIN OVERRIDE
+                        </span>
+                      ) : null}
                     </h4>
                     <p className="text-xs font-semibold text-slate-500">
                       {formatRoleTitle(st.roleName || st.roleKey)}
@@ -430,7 +448,11 @@ export default function UniversalApprovalWorkflowCard({
                       <MessageSquare className="w-3.5 h-3.5 text-slate-400" />
                       <span>
                         Assigned to: <strong>{approval.assignedApproverName || formatRoleTitle(activeRoleKey)}</strong>
-                        {isAssignedToMe && <span className="ml-1 text-[#0d7676]">(You)</span>}
+                        {isAssignedToMe ? (
+                          <span className="ml-1 text-[#0d7676] font-bold">(You)</span>
+                        ) : isAdmin ? (
+                          <span className="ml-1 text-amber-700 font-semibold">(Admin Override)</span>
+                        ) : null}
                       </span>
                     </div>
 
@@ -459,11 +481,11 @@ export default function UniversalApprovalWorkflowCard({
                         />
 
                         {/* Action Buttons */}
-                        <div className="flex items-center gap-2 pt-1 flex-wrap">
+                        <div className="flex items-center gap-2 pt-1">
                           <button
                             onClick={() => initiateAction('approve')}
                             disabled={Boolean(submittingAction)}
-                            className="px-5 py-2.5 rounded-xl bg-[#00895a] hover:bg-[#00734b] text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition active:scale-95 disabled:opacity-50"
+                            className="flex-1 px-3 py-2 rounded-xl bg-[#00895a] hover:bg-[#00734b] text-white font-bold text-xs flex items-center justify-center gap-1 shadow-sm transition active:scale-95 disabled:opacity-50"
                           >
                             {submittingAction === 'approve' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
                             Approve
@@ -471,7 +493,7 @@ export default function UniversalApprovalWorkflowCard({
                           <button
                             onClick={() => initiateAction('return')}
                             disabled={Boolean(submittingAction)}
-                            className="px-5 py-2.5 rounded-xl bg-[#f59e0b] hover:bg-[#d97706] text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition active:scale-95 disabled:opacity-50"
+                            className="flex-1 px-3 py-2 rounded-xl bg-[#f59e0b] hover:bg-[#d97706] text-white font-bold text-xs flex items-center justify-center gap-1 shadow-sm transition active:scale-95 disabled:opacity-50"
                           >
                             {submittingAction === 'return' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
                             Return
@@ -479,7 +501,7 @@ export default function UniversalApprovalWorkflowCard({
                           <button
                             onClick={() => initiateAction('reject')}
                             disabled={Boolean(submittingAction)}
-                            className="px-5 py-2.5 rounded-xl bg-[#e11d48] hover:bg-[#be123c] text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition active:scale-95 disabled:opacity-50"
+                            className="flex-1 px-3 py-2 rounded-xl bg-[#e11d48] hover:bg-[#be123c] text-white font-bold text-xs flex items-center justify-center gap-1 shadow-sm transition active:scale-95 disabled:opacity-50"
                           >
                             {submittingAction === 'reject' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <XCircle className="w-3.5 h-3.5" />}
                             Reject

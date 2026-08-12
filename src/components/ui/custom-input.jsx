@@ -42,7 +42,7 @@ export const CustomInput = forwardRef(({
   };
 
   return (
-    <div className={cn('w-full font-sans space-y-1.5', containerClassName, className)}>
+    <div className={cn('w-full font-sans', label ? 'space-y-1.5' : '', containerClassName)}>
       {label && (
         <label className="block text-xs font-bold text-slate-700">
           {label} {required && <span className="text-rose-500">*</span>}
@@ -51,13 +51,13 @@ export const CustomInput = forwardRef(({
 
       <div className="relative flex items-center w-full">
         {LeftIcon && (
-          <div className="absolute left-3 flex items-center pointer-events-none text-slate-400">
+          <div className="absolute left-3.5 flex items-center pointer-events-none text-slate-400 z-10">
             <LeftIcon className={cn('shrink-0', isSm ? 'w-3.5 h-3.5' : 'w-4 h-4')} />
           </div>
         )}
 
         {leftElement && (
-          <div className="absolute left-3 flex items-center shrink-0">
+          <div className="absolute left-3.5 flex items-center shrink-0 z-10">
             {leftElement}
           </div>
         )}
@@ -80,6 +80,7 @@ export const CustomInput = forwardRef(({
             sizeClasses,
             paddingLeftClass,
             paddingRightClass,
+            className,
             inputClassName
           )}
           {...props}

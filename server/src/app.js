@@ -1,3 +1,4 @@
+import fs from 'fs';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -59,8 +60,31 @@ app.all('/api/*', (req, res) => {
   res.status(404).json({ success: false, error: `Route ${req.originalUrl} not found.` });
 });
 
+// Serve static frontend files (React SPA) if dist directory exists
+const distDir = path.join(process.cwd(), 'dist');
+if (fs.existsSync(distDir)) {
+  app.use(express.static(distDir));
+
+  // Client-side SPA Routing Catch-All Handler
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) {
+      return next();
+    }
+    // Prevent fallback HTML for missing static assets (js, css, png, etc.)
+    if (path.extname(req.path)) {
+      return res.status(404).send('Asset not found');
+    }
+    res.sendFile(path.join(distDir, 'index.html'), (err) => {
+      if (err && !res.headersSent) {
+        res.status(500).send('Error loading application');
+      }
+    });
+  });
+}
+
 // Global Error Handler Middleware
 app.use(errorHandler);
 
 export default app;
+
 

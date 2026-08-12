@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useSelector } from 'react-redux';
 import {
   Check, KeyRound, Lock, Pencil, Plus, Save, Search, ShieldCheck,
-  Trash2, Users, X
+  Trash2, Users, X, Eye
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../ui/toast';
@@ -13,6 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui
 import { FieldError } from '../ui/field-error';
 import { ServerPagination } from '../ui/server-pagination';
 import { SearchableSelect } from '../ui/searchable-select';
+import { userHasPermission } from '../../lib/permissions';
 
 const emptyRole = { roleName: '', description: '', status: 'Active' };
 const emptyPermission = { key: '', name: '', module: '', description: '', status: 'Active' };
@@ -186,6 +188,7 @@ function ManageDialog({ type, record, onClose, onSaved }) {
 }
 
 export default function RolesAndPermissionsView() {
+  const { user } = useSelector((state) => state.auth || {});
   const { showToast } = useToast();
   const confirm = useConfirm();
   const [activeModule, setActiveModule] = useState('roles');
@@ -196,6 +199,11 @@ export default function RolesAndPermissionsView() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [dialog, setDialog] = useState(null);
+
+  const userRole = user?.role || '';
+  const roleNorm = String(userRole).toLowerCase().replace(/[\s_-]+/g, '');
+  const isAdmin = ['admin', 'systemadmin', 'superadmin', 'system admin'].includes(roleNorm);
+  const canManageRoles = isAdmin || userHasPermission(userRole, 'roles.manage', user?.permissions);
 
   const loadData = async () => {
     setLoading(true);
@@ -255,7 +263,7 @@ export default function RolesAndPermissionsView() {
   }, [filteredPermissions, permPage, permPageSize]);
 
   const togglePermission = (moduleKey, action) => {
-    if (!selectedRole) return;
+    if (!canManageRoles || !selectedRole) return;
     const current = selectedRole.permissions?.[moduleKey] || [];
     const next = current.includes(action) ? current.filter((item) => item !== action) : [...current, action];
     setRoles((items) => items.map((role) => role.id === selectedRole.id
@@ -264,14 +272,14 @@ export default function RolesAndPermissionsView() {
   };
 
   const saveMatrix = async () => {
-    if (!selectedRole) return;
+    if (!canManageRoles || !selectedRole) return;
     setSaving(true);
     try {
       await requestJson(`/api/roles/${selectedRole.id}/permissions`, {
         method: 'PUT',
         body: JSON.stringify({ permissions: selectedRole.permissions })
       });
-      showToast({ title: 'Permissions saved', description: `${selectedRole.roleName} access was updated in MongoDB.` });
+      showToast({ type: 'success', title: 'Permissions saved', description: `${selectedRole.roleName} access permissions were updated.` });
       await loadData();
     } catch (error) {
       showToast({ type: 'error', title: 'Permissions not saved', description: error.message });
@@ -281,6 +289,7 @@ export default function RolesAndPermissionsView() {
   };
 
   const removeRecord = async (type, record) => {
+    if (!canManageRoles) return;
     const approved = await confirm({
       title: `Delete ${type}?`,
       description: `${type === 'role' ? record.roleName : record.key} will be permanently removed. Assigned users or system records are protected.`,
@@ -289,7 +298,7 @@ export default function RolesAndPermissionsView() {
     if (!approved) return;
     try {
       await requestJson(`/api/${type === 'role' ? 'roles' : 'permissions'}/${record.id}`, { method: 'DELETE' });
-      showToast({ title: `${type === 'role' ? 'Role' : 'Permission'} deleted`, description: 'Database records and assignments were updated.' });
+      showToast({ type: 'success', title: `${type === 'role' ? 'Role' : 'Permission'} deleted`, description: 'Database records and assignments were updated.' });
       if (record.id === selectedRoleId) setSelectedRoleId(null);
       await loadData();
     } catch (error) {
@@ -299,7 +308,7 @@ export default function RolesAndPermissionsView() {
 
   const dialogSaved = async (message) => {
     setDialog(null);
-    showToast({ title: message, description: 'The change was stored in MongoDB.' });
+    showToast({ type: 'success', title: message || 'Role Saved Successfully', description: 'The change was stored in database.' });
     await loadData();
   };
 
@@ -320,9 +329,15 @@ export default function RolesAndPermissionsView() {
           ))}
         </div>
 
-        <Button onClick={() => setDialog({ type: activeModule === 'roles' ? 'role' : 'permission' })} className="bg-[#0d7676] hover:bg-[#0a5c5c] text-white font-bold text-xs px-3.5">
-          <Plus className="h-4 w-4 mr-1" /> New {activeModule === 'roles' ? 'role' : 'permission'}
-        </Button>
+        {canManageRoles ? (
+          <Button onClick={() => setDialog({ type: activeModule === 'roles' ? 'role' : 'permission' })} className="bg-[#0d7676] hover:bg-[#0a5c5c] text-white font-bold text-xs px-3.5">
+            <Plus className="h-4 w-4 mr-1" /> New {activeModule === 'roles' ? 'role' : 'permission'}
+          </Button>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs font-bold">
+            <Eye className="w-3.5 h-3.5" /> View Only Mode
+          </span>
+        )}
       </div>
 
       {loading ? (
@@ -344,10 +359,12 @@ export default function RolesAndPermissionsView() {
                   <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-slate-500">{role.description || 'No description provided.'}</p>
                   <div className="mt-2 flex items-center justify-between">
                     <Badge variant={role.type === 'System' ? 'secondary' : 'emerald'}>{role.type || 'Custom'}</Badge>
-                    <span className="flex gap-1">
-                      <span onClick={(event) => { event.stopPropagation(); setDialog({ type: 'role', record: role }); }} className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-teal-700"><Pencil className="h-3.5 w-3.5" /></span>
-                      {role.type !== 'System' && <span onClick={(event) => { event.stopPropagation(); removeRecord('role', role); }} className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-rose-600"><Trash2 className="h-3.5 w-3.5" /></span>}
-                    </span>
+                    {canManageRoles && (
+                      <span className="flex gap-1">
+                        <span onClick={(event) => { event.stopPropagation(); setDialog({ type: 'role', record: role }); }} className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-teal-700"><Pencil className="h-3.5 w-3.5" /></span>
+                        {role.type !== 'System' && <span onClick={(event) => { event.stopPropagation(); removeRecord('role', role); }} className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-rose-600"><Trash2 className="h-3.5 w-3.5" /></span>}
+                      </span>
+                    )}
                   </div>
                 </button>
               ))}
@@ -357,7 +374,11 @@ export default function RolesAndPermissionsView() {
           <Card className="xl:col-span-8 border-slate-200 shadow-2xs">
             <CardHeader className="flex-row items-center justify-between gap-3 p-4 border-b border-slate-100">
               <div><CardTitle className="text-xs font-bold">{selectedRole?.roleName || 'Select a role'}</CardTitle><CardDescription className="text-[11px]">{selectedRole?.description}</CardDescription></div>
-              <Button onClick={saveMatrix} loading={saving} disabled={!selectedRole} className="bg-[#0d7676] hover:bg-[#0a5c5c] text-xs font-bold"><Save className="h-3.5 w-3.5 mr-1" /> Save permissions</Button>
+              {canManageRoles ? (
+                <Button onClick={saveMatrix} loading={saving} disabled={!selectedRole} className="bg-[#0d7676] hover:bg-[#0a5c5c] text-xs font-bold"><Save className="h-3.5 w-3.5 mr-1" /> Save permissions</Button>
+              ) : (
+                <span className="text-xs text-slate-400 font-medium italic">Read-only permissions view</span>
+              )}
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
@@ -372,7 +393,7 @@ export default function RolesAndPermissionsView() {
                             {module.actions.map(({ action, permission }) => {
                               const checked = selectedRole?.permissions?.[module.key]?.includes(action);
                               return (
-                                <button key={permission.id} type="button" onClick={() => togglePermission(module.key, action)} className={`inline-flex h-8 items-center gap-2 rounded-lg border px-2.5 text-xs font-semibold transition ${checked ? 'border-teal-300 bg-teal-50 text-teal-800' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`}>
+                                <button key={permission.id} type="button" disabled={!canManageRoles} onClick={() => togglePermission(module.key, action)} className={`inline-flex h-8 items-center gap-2 rounded-lg border px-2.5 text-xs font-semibold transition ${!canManageRoles ? 'cursor-default opacity-80' : ''} ${checked ? 'border-teal-300 bg-teal-50 text-teal-800' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`}>
                                   <span className={`flex h-4 w-4 items-center justify-center rounded border ${checked ? 'border-teal-600 bg-teal-600 text-white' : 'border-slate-300'}`}>{checked && <Check className="h-3 w-3" />}</span>
                                   {action}
                                 </button>
