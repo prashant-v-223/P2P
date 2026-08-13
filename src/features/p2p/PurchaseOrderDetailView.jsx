@@ -32,9 +32,15 @@ const STATUS_STYLE = {
   paid:     { label: 'Paid',     pill: 'bg-sky-50 text-sky-700 border-sky-200',               icon: CheckCircle2,  iconBox: 'bg-sky-50 text-sky-600 border-sky-200',          ref: 'text-sky-700' }
 };
 
+import { useSelector } from 'react-redux';
+import { userHasPermission } from '../../lib/permissions';
+
 export default function PurchaseOrderDetailView() {
   const { poId } = useParams();
   const navigate = useNavigate();
+  const { user } = useSelector((state) => state.auth || {});
+  const userPerms = user?.permissions || user?.customPermissions;
+  const canCreateAdvance = userHasPermission(user?.role, 'advance-payments.create', userPerms);
 
   const [loading, setLoading] = useState(true);
   const [po, setPo] = useState({
@@ -229,12 +235,14 @@ export default function PurchaseOrderDetailView() {
 
         <div className="flex items-center gap-2 self-start sm:self-center">
           <RecordDbInfoDrawer entityId={po.poNumber || poId} entityType="PurchaseOrder" recordData={po} />
-          <button
-            onClick={() => navigate('/p2p/advance-payments/create')}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs shadow-xs transition-all"
-          >
-            <Plus className="w-4 h-4" /> New Advance Payment
-          </button>
+          {canCreateAdvance && (
+            <button
+              onClick={() => navigate('/p2p/advance-payments/create')}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs shadow-xs transition-all"
+            >
+              <Plus className="w-4 h-4" /> New Advance Payment
+            </button>
+          )}
         </div>
       </div>
 

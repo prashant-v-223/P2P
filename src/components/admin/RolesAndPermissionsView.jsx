@@ -279,6 +279,19 @@ export default function RolesAndPermissionsView() {
         method: 'PUT',
         body: JSON.stringify({ permissions: selectedRole.permissions })
       });
+
+      // If the current logged in user's role was updated, update local storage permissions immediately
+      if (user?.role === selectedRole.roleName) {
+        try {
+          const rawUser = localStorage.getItem('rayzon_user');
+          if (rawUser) {
+            const parsed = JSON.parse(rawUser);
+            parsed.permissions = selectedRole.permissions;
+            localStorage.setItem('rayzon_user', JSON.stringify(parsed));
+          }
+        } catch (_) {}
+      }
+
       showToast({ type: 'success', title: 'Permissions saved', description: `${selectedRole.roleName} access permissions were updated.` });
       await loadData();
     } catch (error) {

@@ -11,6 +11,9 @@ import { Button } from '../../components/ui/button';
 import { ServerPagination } from '../../components/ui/server-pagination';
 import { getRfqAllocationSummary } from './rfqStatus';
 
+import { useSelector } from 'react-redux';
+import { userHasPermission } from '../../lib/permissions';
+
 const ActionButton = ({ onClick, icon: Icon, label, color = "slate", bordered = false }) => {
   const colorMap = {
     slate: { text: "text-slate-400", hover: "hover:text-slate-600 hover:bg-slate-50" },
@@ -38,6 +41,11 @@ const ActionButton = ({ onClick, icon: Icon, label, color = "slate", bordered = 
 export default function RfqSourcingView() {
   const navigate = useNavigate();
   const { showToast } = useToast();
+  const { user } = useSelector((state) => state.auth || {});
+  const userPerms = user?.permissions || user?.customPermissions;
+  const canCreate = userHasPermission(user?.role, 'rfq.create', userPerms);
+  const canEdit = canCreate || userHasPermission(user?.role, 'rfq.edit', userPerms);
+  const canDelete = userHasPermission(user?.role, 'rfq.delete', userPerms);
   const [rfqs, setRfqs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -207,9 +215,11 @@ export default function RfqSourcingView() {
           <p className="text-xs text-slate-500 font-medium mt-0.5">Create and manage Request for Quotations</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => navigate('/admin/rfqs/create')} className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#085a5a] text-white font-bold text-xs rounded-xl shadow-xs transition uppercase tracking-wider cursor-pointer">
-            <Plus className="w-4 h-4" /><span>Create RFQ</span>
-          </button>
+          {canCreate && (
+            <button onClick={() => navigate('/admin/rfqs/create')} className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#085a5a] text-white font-bold text-xs rounded-xl shadow-xs transition uppercase tracking-wider cursor-pointer">
+              <Plus className="w-4 h-4" /><span>Create RFQ</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -305,46 +315,54 @@ export default function RfqSourcingView() {
                           />
 
                           {/* Edit Button */}
-                          <ActionButton
-                            onClick={() => navigate(`/admin/rfqs/${targetRfqId}/edit`)}
-                            icon={Pencil}
-                            label="Edit RFQ"
-                            color="blue"
-                          />
-
-                          {/* Copy Button */}
-                          <ActionButton
-                            onClick={(e) => handleCopy(rfq, e)}
-                            icon={Copy}
-                            label="Copy RFQ (Opens pre-filled form)"
-                            color="emerald"
-                          />
-
-                          {/* Close/Reopen Button */}
-                          {isRfqClosed(rfq) ? (
+                          {canEdit && (
                             <ActionButton
-                              onClick={(e) => handleOpenReopenModal(rfq, e)}
-                              icon={RefreshCw}
-                              label="Reopen Closed RFQ"
-                              color="teal"
-                              bordered
-                            />
-                          ) : (
-                            <ActionButton
-                              onClick={(e) => handleClose(rfq, e)}
-                              icon={X}
-                              label="Close RFQ"
-                              color="rose"
+                              onClick={() => navigate(`/admin/rfqs/${targetRfqId}/edit`)}
+                              icon={Pencil}
+                              label="Edit RFQ"
+                              color="blue"
                             />
                           )}
 
+                          {/* Copy Button */}
+                          {canCreate && (
+                            <ActionButton
+                              onClick={(e) => handleCopy(rfq, e)}
+                              icon={Copy}
+                              label="Copy RFQ (Opens pre-filled form)"
+                              color="emerald"
+                            />
+                          )}
+
+                          {/* Close/Reopen Button */}
+                          {canEdit && (
+                            isRfqClosed(rfq) ? (
+                              <ActionButton
+                                onClick={(e) => handleOpenReopenModal(rfq, e)}
+                                icon={RefreshCw}
+                                label="Reopen Closed RFQ"
+                                color="teal"
+                                bordered
+                              />
+                            ) : (
+                              <ActionButton
+                                onClick={(e) => handleClose(rfq, e)}
+                                icon={X}
+                                label="Close RFQ"
+                                color="rose"
+                              />
+                            )
+                          )}
+
                           {/* Delete Button */}
-                          <ActionButton
-                            onClick={(e) => handleDelete(rfq, e)}
-                            icon={Trash2}
-                            label="Delete RFQ"
-                            color="rose"
-                          />
+                          {canDelete && (
+                            <ActionButton
+                              onClick={(e) => handleDelete(rfq, e)}
+                              icon={Trash2}
+                              label="Delete RFQ"
+                              color="rose"
+                            />
+                          )}
                         </div>
                       </td>
                     </tr>

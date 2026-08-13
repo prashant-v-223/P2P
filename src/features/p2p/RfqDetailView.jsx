@@ -8,6 +8,8 @@ import DocumentUploader from '../../components/shared/DocumentUploader';
 import RecordDbInfoDrawer from '../../components/common/RecordDbInfoDrawer';
 import UniversalApprovalWorkflowCard from '../../components/common/UniversalApprovalWorkflowCard';
 import { getRfqAllocationSummary } from './rfqStatus';
+import { useSelector } from 'react-redux';
+import { userHasPermission } from '../../lib/permissions';
 import {
   ArrowLeft,
   Pencil,
@@ -34,9 +36,14 @@ import {
 } from 'lucide-react';
 
 export default function RfqDetailView() {
-  const navigate = useNavigate();
   const { id } = useParams();
+  const navigate = useNavigate();
   const { showToast } = useToast();
+  const { user } = useSelector((state) => state.auth || {});
+  const userPerms = user?.permissions || user?.customPermissions;
+  const canCreate = userHasPermission(user?.role, 'rfq.create', userPerms);
+  const canEdit = canCreate || userHasPermission(user?.role, 'rfq.edit', userPerms);
+  const canDelete = userHasPermission(user?.role, 'rfq.delete', userPerms);
 
   const [rfq, setRfq] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -439,7 +446,7 @@ export default function RfqDetailView() {
 
         <div className="flex items-center gap-2">
           <RecordDbInfoDrawer entityId={rfq.rfqId || id} entityType="RfqHeader" recordData={rfq} />
-          {(rfq.status === 'closed' || (rfq.closingDate && new Date(rfq.closingDate) < new Date())) && (
+          {canEdit && (rfq.status === 'closed' || (rfq.closingDate && new Date(rfq.closingDate) < new Date())) && (
             <button
               onClick={() => {
                 setReopenClosingDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16));
@@ -451,7 +458,7 @@ export default function RfqDetailView() {
               <span>Reopen RFQ</span>
             </button>
           )}
-          {rfq.status !== 'closed' && (
+          {canEdit && rfq.status !== 'closed' && (
             <button
               onClick={async () => {
                 if (!window.confirm(`Are you sure you want to close RFQ ${rfq.rfqNumber}? Bidding will be locked.`)) return;
@@ -472,43 +479,49 @@ export default function RfqDetailView() {
               <span>Close RFQ</span>
             </button>
           )}
-          <button
-            onClick={() => navigate(`/admin/rfqs/${rfq.rfqId}/edit`)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer"
-          >
-            <Pencil className="w-3.5 h-3.5" />
-            <span>Edit RFQ</span>
-          </button>
-          <button
-            onClick={async () => {
-              try {
-                const res = await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}/copy`, { method: 'POST' });
-                const json = await res.json();
-                if (res.ok && json.success) {
-                  showToast({ title: 'RFQ Copied', description: `Opening create form with pre-filled details for ${json.data.rfqNumber}...`, type: 'success' });
-                  navigate('/admin/rfqs/create', { state: { copyFrom: json.data } });
-                } else throw new Error(json.error || 'Failed to copy RFQ');
-              } catch (err) {
-                showToast({ title: 'Copy Failed', description: err.message, type: 'error' });
-              }
-            }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer"
-          >
-            <Copy className="w-3.5 h-3.5 text-[#0d7676]" />
-            <span>Copy RFQ</span>
-          </button>
-          <button
-            onClick={async () => {
-              if (window.confirm('Delete this RFQ from MongoDB?')) {
-                await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}`, { method: 'DELETE' });
-                navigate('/admin/rfqs');
-              }
-            }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>Delete RFQ</span>
-          </button>
+          {canEdit && (
+            <button
+              onClick={() => navigate(`/admin/rfqs/${rfq.rfqId}/edit`)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              <span>Edit RFQ</span>
+            </button>
+          )}
+          {canCreate && (
+            <button
+              onClick={async () => {
+                try {
+                  const res = await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}/copy`, { method: 'POST' });
+                  const json = await res.json();
+                  if (res.ok && json.success) {
+                    showToast({ title: 'RFQ Copied', description: `Opening create form with pre-filled details for ${json.data.rfqNumber}...`, type: 'success' });
+                    navigate('/admin/rfqs/create', { state: { copyFrom: json.data } });
+                  } else throw new Error(json.error || 'Failed to copy RFQ');
+                } catch (err) {
+                  showToast({ title: 'Copy Failed', description: err.message, type: 'error' });
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer"
+            >
+              <Copy className="w-3.5 h-3.5 text-[#0d7676]" />
+              <span>Copy RFQ</span>
+            </button>
+          )}
+          {canDelete && (
+            <button
+              onClick={async () => {
+                if (window.confirm('Delete this RFQ from MongoDB?')) {
+                  await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}`, { method: 'DELETE' });
+                  navigate('/admin/rfqs');
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete RFQ</span>
+            </button>
+          )}
         </div>
       </div>
 

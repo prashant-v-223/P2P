@@ -210,7 +210,7 @@ export const ROUTE_PERMISSIONS = {
   '/profile': '*'
 };
 
-const ADMIN_ROLES = new Set(['admin', 'systemadmin', 'superadmin', 'system admin']);
+const ADMIN_ROLES = new Set(['admin', 'systemadmin', 'superadmin', 'system admin', 'super admin']);
 
 /**
  * Normalize a role name for alias matching.
@@ -272,32 +272,28 @@ const hasPermissionInDbShape = (permissionsObj, moduleKey, action) => {
  *   1. Admin / super-admin roles bypass everything.
  *   2. If DB-shaped permissions are provided (customPermissions), resolve
  *      strictly from them — DB revocations are respected.
- *   3. Otherwise fall back to the static ROLE_PERMISSIONS map (offline/demo).
- *
- * NOTE: The previous bug that granted ANY action when a module only had 'view'
- * has been fixed — only the exact action, 'manage', or '*' grant access.
+  *   3. Otherwise fall back to static permissions when DB object is empty.
  */
 export function userHasPermission(userRole, permissionKey, customPermissions) {
   if (!userRole) return false;
-
-  // 1. Admin bypass
-  if (ADMIN_ROLES.has(normalizeRole(userRole))) return true;
   if (permissionKey === '*') return true;
 
   const [mod, act] = String(permissionKey || '').split('.');
 
-  // 2. DB-driven resolution (source of truth)
-  if (customPermissions && typeof customPermissions === 'object') {
-    // Support both array-of-keys and DB object shape
+  // 1. DB-driven resolution (source of truth from MongoDB role permissions)
+  if (customPermissions && typeof customPermissions === 'object' && Object.keys(customPermissions).length > 0) {
     if (Array.isArray(customPermissions)) {
       if (customPermissions.includes('*') || customPermissions.includes(permissionKey)) return true;
       if (act && (customPermissions.includes(`${mod}.manage`) || customPermissions.includes(`${mod}.*`))) return true;
-    } else if (hasPermissionInDbShape(customPermissions, mod, act)) {
-      return true;
+      return false;
     }
+    return hasPermissionInDbShape(customPermissions, mod, act);
   }
 
-  // 3. Static fallback (only reached when DB permissions were not provided)
+  // 2. Admin role bypass (only reached when explicit DB permissions object is empty/absent)
+  if (ADMIN_ROLES.has(normalizeRole(userRole))) return true;
+
+  // 3. Static fallback (only reached when DB permissions object is absent or empty)
   const staticPerms = resolveStaticRolePerms(userRole);
   if (staticPerms.includes('*')) return true;
   if (staticPerms.includes(permissionKey)) return true;

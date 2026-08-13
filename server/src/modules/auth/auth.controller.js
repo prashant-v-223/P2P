@@ -9,62 +9,42 @@ import { sendPasswordResetEmail, sendTwoFactorEmail } from '../../services/mail.
 
 const refreshTokensStore = new Map();
 
-const FALLBACK_USERS = [
-  { id: 'usr-001', name: 'Prashant Vadhvana', email: 'prashantvadhvana@gmail.com', role: 'admin', department: 'Executive Administration', avatar: 'PV', status: 'Active' },
-  { id: 'usr-admin-1', name: 'System Admin', email: 'admin@rayzon.one', role: 'admin', department: 'Executive Administration', avatar: 'SA', status: 'Active' },
-  { id: 'usr-002', name: 'Kavya Mehta', email: 'kavya.mehta@rayzon.com', role: 'accounts', department: 'Accounts & Finance', avatar: 'KM', status: 'Active' },
-  { id: 'usr-003', name: 'Rajesh Patel', email: 'rajesh.patel@rayzon.com', role: 'cfo', department: 'Finance & Treasury', avatar: 'RP', status: 'Active' },
-  { id: 'usr-004', name: 'Sneha Sharma', email: 'sneha.sharma@rayzon.com', role: 'exim', department: 'EXIM & Logistics', avatar: 'SS', status: 'Active' },
-  { id: 'usr-009', name: 'Manish Thakkar', email: 'manish.thakkar@rayzon.com', role: 'exim-manager', department: 'EXIM & Logistics', avatar: 'MT', status: 'Active' },
-  { id: 'usr-010', name: 'Suresh Kumar', email: 'suresh.kumar@rayzon.com', role: 'finance', department: 'Finance & Treasury', avatar: 'SK', status: 'Active' },
-  { id: 'usr-012', name: 'Vikram Singh', email: 'vikram.singh@rayzon.com', role: 'logistics', department: 'Logistics & Supply Chain', avatar: 'VS', status: 'Active' },
-  { id: 'usr-013', name: 'Arjun Shah', email: 'arjun.shah@rayzon.com', role: 'md', department: 'Executive Board', avatar: 'AS', status: 'Active' },
-{ id: 'usr-014', name: 'Neha Gupta', email: 'neha.gupta@rayzon.com', role: 'procurement', department: 'Procurement', avatar: 'NG', status: 'Active' },
-  { id: 'usr-022', name: 'Harish Solanki', email: 'harish.solanki@rayzon.com', role: 'procurement_head', department: 'Procurement', avatar: 'HS', status: 'Active' },
-{ id: 'usr-025', name: 'Rohan Desai', email: 'rohan.desai@rayzon.com', role: 'manager', department: 'Procurement Executive', avatar: 'RD', status: 'Active', managerId: 'usr-022', managerName: 'Harish Solanki', team: 'Procurement', isManager: true, hierarchyLevel: 2 }
-];
+const publicUser = (user) => (typeof user?.toJSON === 'function' ? user.toJSON() : user);
 
-const publicUser = (user) => (typeof user.toJSON === 'function' ? user.toJSON() : user);
-
-// Static fallback permissions map used ONLY when the DB is unreachable or the
-// role record cannot be found. Mirrors the seeded DEFAULT_ROLES.
-const staticRolePermissions = (roleName) => {
-  const role = DEFAULT_ROLES.find((r) => r.roleName === roleName);
-  return role?.permissions || {};
-};
-
-// For super-admin roles, grant full wildcard access so the frontend bypasses checks.
 const isAdminRole = (roleName) =>
   ['admin', 'System Admin', 'system admin', 'superadmin', 'super admin'].some(
     (r) => String(roleName || '').toLowerCase() === r.toLowerCase()
   );
 
-/**
- * Attaches the user's role permissions (MongoDB shape { moduleKey: [action] })
- * to the public user payload so the frontend can enforce DB-driven RBAC.
- * Falls back to the seeded DEFAULT_ROLES map when the database is unavailable.
- */
 const attachRolePermissions = async (user) => {
   const plain = { ...user };
-
   let permissions = null;
   const roleName = plain.role;
 
-  if (isAdminRole(roleName)) {
-    permissions = { '*': ['*'] };
-  } else if (roleName && mongoose.connection.readyState === 1) {
+  if (roleName && mongoose.connection.readyState === 1) {
     try {
-      const role = await Role.findOne({ roleName }).lean();
-      if (role?.permissions) permissions = role.permissions;
+      const roleDoc = await Role.findOne({
+        $or: [
+          { roleName: roleName },
+          { id: roleName },
+          { id: `role-${roleName.toLowerCase()}` },
+          { roleName: { $regex: `^${roleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } }
+        ]
+      }).lean();
+
+      if (roleDoc?.permissions && typeof roleDoc.permissions === 'object') {
+        permissions = roleDoc.permissions;
+      }
     } catch (err) {
       console.warn('[AUTH RBAC WARN]: Failed to load role permissions:', err.message);
     }
   }
 
-  if (!permissions) permissions = staticRolePermissions(roleName);
+  if (!permissions && isAdminRole(roleName)) {
+    permissions = { '*': ['*'] };
+  }
 
-  // Do not blow away an explicitly-provided permissions field if the caller set one.
-  plain.permissions = plain.permissions || permissions || {};
+  plain.permissions = permissions || {};
   return plain;
 };
 
@@ -144,19 +124,7 @@ export const login = async (req, res) => {
       }
     }
 
-    // Demo identities must never bypass the real user directory. They are only
-    // available when MongoDB itself is unavailable, not when an account is
-    // absent, inactive, or deleted from the User collection.
-    if (!user && (!databaseConnected || databaseQueryFailed)) {
-      const fallback = FALLBACK_USERS.find((u) => u.email.toLowerCase() === normalizedEmail);
-      if (fallback) {
-        // Standard password check for demo/fallback mode
-        const validPasswords = ['Rayzon@2026', 'password123', 'Admin@2026'];
-        if (validPasswords.includes(password)) {
-          user = fallback;
-        }
-      }
-    }
+
 
     if (!user) {
       return res.status(401).json({ success: false, error: 'Invalid email or password.' });
@@ -227,9 +195,7 @@ export const refreshTokenController = async (req, res) => {
       }
     }
 
-    if (!user && (!databaseConnected || databaseQueryFailed)) {
-      user = FALLBACK_USERS.find((u) => u.id === decoded.id || u.email?.toLowerCase() === decoded.email?.toLowerCase());
-    }
+
 
     if (!user || (user.status && user.status !== 'Active')) {
       return res.status(403).json({ success: false, error: 'User is unavailable or inactive.' });

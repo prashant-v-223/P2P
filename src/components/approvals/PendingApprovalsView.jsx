@@ -140,12 +140,7 @@ function formatRelativeTime(value) {
   return `${diffDays}d ago`;
 }
 
-// Drives the accent rail on each card so aging requests stand out without a wall of red
-function getUrgency(submittedAt) {
-  if (!submittedAt) return 'normal';
-  const diffDays = (Date.now() - new Date(submittedAt).getTime()) / (1000 * 60 * 60 * 24);
-  if (diffDays >= 5) return 'critical';
-  if (diffDays >= 2) return 'warning';
+function getUrgency() {
   return 'normal';
 }
 
@@ -158,8 +153,8 @@ const STATUS_STYLES = {
 };
 
 const URGENCY_STYLES = {
-  critical: { accent: 'bg-rose-500', label: 'Aging · act soon', badge: 'bg-rose-50 text-rose-700 border-rose-200' },
-  warning: { accent: 'bg-amber-500', label: 'Awaiting action', badge: 'bg-amber-50 text-amber-700 border-amber-200' },
+  critical: { accent: 'bg-slate-200', label: null, badge: '' },
+  warning: { accent: 'bg-slate-200', label: null, badge: '' },
   normal: { accent: 'bg-slate-200', label: null, badge: '' }
 };
 

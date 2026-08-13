@@ -139,7 +139,7 @@ function EditUserModal({ user, roleOptions, allUsers, onClose, onSaved }) {
         role, 
         department, 
         status, 
-        managerId: managerId || null 
+        managerId: managerId || null,
       };
       if (password) payload.password = password;
 
@@ -226,20 +226,22 @@ function EditUserModal({ user, roleOptions, allUsers, onClose, onSaved }) {
           </div>
 
           <div className="rounded-xl border border-teal-100 bg-teal-50/50 p-3 space-y-3">
-            <p className="text-xs font-bold text-teal-900">Organisation hierarchy</p>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Reports to</label>
-            <SearchableSelect 
-              value={managerId} 
-              onChange={setManagerId} 
-              options={[
-                { label: 'No manager (system-managed role)', value: '' },
-                ...allUsers
-                  .filter((item) => item.id !== user.id && item.status === 'Active')
-                  .map((item) => ({ label: `${item.name} — ${item.role}`, value: item.id }))
-              ]} 
-              searchable 
-            />
-            <p className="text-[11px] text-teal-800">Level, visibility, and approval scope are assigned automatically from the selected role and reporting manager.</p>
+            <p className="text-xs font-bold text-teal-900">Organisation hierarchy & delegation</p>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Reports to (Reporting Manager)</label>
+              <SearchableSelect 
+                value={managerId || ''} 
+                onChange={(val) => setManagerId(val)} 
+                options={[
+                  { label: '— None (Top-level / No Manager) —', value: '' },
+                  ...allUsers
+                    .filter((item) => item.id !== user.id && item.status === 'Active')
+                    .map((item) => ({ label: `${item.name} — ${item.role}`, value: item.id }))
+                ]} 
+                searchable 
+              />
+            </div>
+            <p className="text-[11px] text-teal-800">Select "None" to remove the reporting manager or delegation link completely.</p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -994,19 +996,19 @@ export default function UserManagementView() {
               
               <div className="rounded-xl border border-teal-100 bg-teal-50/50 p-3 space-y-2">
                 <p className="text-xs font-bold text-teal-900">Organisation hierarchy</p>
-                <label className="block text-xs font-semibold text-slate-700">Reports to</label>
+                <label className="block text-xs font-semibold text-slate-700">Reports to (Reporting Manager)</label>
                 <SearchableSelect 
-                  value={managerId} 
-                  onChange={setManagerId} 
+                  value={managerId || ''} 
+                  onChange={(val) => setManagerId(val)} 
                   options={[
-                    { label: 'No manager (system-managed role)', value: '' },
+                    { label: '— None (Top-level / No Manager) —', value: '' },
                     ...hierarchyUsers
                       .filter((item) => item.status === 'Active')
                       .map((item) => ({ label: `${item.name} — ${item.role}`, value: item.id }))
                   ]} 
                   searchable 
                 />
-                <p className="text-[11px] text-teal-800">The system automatically assigns the hierarchy level, visibility, and approval scope.</p>
+                <p className="text-[11px] text-teal-800">Select "None" for top-level accounts without a reporting manager.</p>
               </div>
               
               <div className="modal-footer">

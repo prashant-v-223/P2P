@@ -30,7 +30,7 @@ export const updateRolePermissions = async (req, res) => {
     return res.status(400).json({ success: false, error: 'A permissions object is required.' });
   }
   const role = await Role.findOneAndUpdate(
-    { id: req.params.id },
+    { $or: [{ id: req.params.id }, { roleName: req.params.id }] },
     { permissions },
     { new: true, runValidators: true }
   );

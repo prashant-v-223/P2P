@@ -29,7 +29,10 @@ export default function InvoicePaymentsView() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { showToast } = useToast();
   const { user } = useSelector((state) => state.auth);
-  const canMarkPaid = userHasPermission(user?.role, 'invoice-payments.mark-paid', user?.permissions || user?.customPermissions);
+  const userPerms = user?.permissions || user?.customPermissions;
+  const canCreate = userHasPermission(user?.role, 'invoice-payments.create', userPerms);
+  const canEdit = canCreate || userHasPermission(user?.role, 'invoice-payments.edit', userPerms);
+  const canMarkPaid = userHasPermission(user?.role, 'invoice-payments.mark-paid', userPerms);
 
   const currentPage = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
   const searchTerm = searchParams.get('q') || '';
@@ -268,12 +271,14 @@ const getInitials = (name) => {
           </button>
         </div> */}
 <div></div>
-        <button
-          onClick={() => navigate('/admin/invoice-payments/create')}
-          className="flex items-center gap-1.5 bg-[#0d7676] hover:bg-[#0f766e] text-white px-4 py-2 rounded-lg font-bold text-xs shadow-2xs transition-colors shrink-0"
-        >
-          <Plus className="w-4 h-4" /> New Invoice Payment
-        </button>
+        {canCreate && (
+          <button
+            onClick={() => navigate('/admin/invoice-payments/create')}
+            className="flex items-center gap-1.5 bg-[#0d7676] hover:bg-[#0f766e] text-white px-4 py-2 rounded-lg font-bold text-xs shadow-2xs transition-colors shrink-0"
+          >
+            <Plus className="w-4 h-4" /> New Invoice Payment
+          </button>
+        )}
       </div>
 
       {/* SINGLE UNIFIED CONTROL BAR (Search + 3-Way Match + Status + Page Size) */}
@@ -499,13 +504,15 @@ const getInitials = (name) => {
                             </button>
                           )}
 
-                          <button
-                            onClick={() => navigate(`/admin/invoice-payments/${inv.invoicePaymentId}/edit`)}
-                            title="Edit Invoice"
-                            className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-slate-900 transition-colors"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
+                          {canEdit && (
+                            <button
+                              onClick={() => navigate(`/admin/invoice-payments/${inv.invoicePaymentId}/edit`)}
+                              title="Edit Invoice"
+                              className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-slate-900 transition-colors"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
 
                           {canDelete && (
                             <button
