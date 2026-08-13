@@ -71,7 +71,7 @@ const NAV_SECTIONS = [
       { path: '/management/logistics-providers', label: 'Logistics Providers', icon: Building2 },
       { path: '/admin/users', label: 'Users', icon: Users },
       { path: '/admin/roles', label: 'Roles & Permissions', icon: Lock },
-      { path: '/admin/hierarchy-report', label: 'Hierarchy Reports', icon: Network }
+      // { path: '/admin/hierarchy-report', label: 'Hierarchy Reports', icon: Network }
     ]
   },
   {

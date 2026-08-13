@@ -3345,7 +3345,7 @@ router.post('/rfqs/:id/award', authenticateToken, authorizePermission('rfq', 'aw
       const previouslyAllocatedQty = previouslyApprovedAllocations.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
       const remainingToAllocate = Math.max(0, totalContainers - previouslyAllocatedQty);
 
-      if (allocated <= 0 || allocated > remainingToAllocate) {pendingCount
+      if (allocated <= 0 || allocated > remainingToAllocate) {
         return res.status(400).json({
           success: false,
           error: `You must allocate between 1 and ${remainingToAllocate} container(s).`
@@ -3729,9 +3729,40 @@ router.post('/vendor-rfqs/:id/bl-entries/:blId/invoices', authenticateToken, asy
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
+router.post('/rfqs/:id/close', authenticateToken, async (req, res) => {
+  try {
+    const isObjId = mongoose.Types.ObjectId.isValid(req.params.id);
+    const query = isObjId
+      ? { $or: [{ _id: req.params.id }, { rfqId: req.params.id }, { rfqNumber: req.params.id }] }
+      : { $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] };
+
+    const rfq = await RfqHeader.findOne(query);
+    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found.' });
+
+    rfq.status = 'closed';
+    rfq.closedAt = new Date();
+    await rfq.save();
+
+    broadcastEvent('RFQ_CLOSED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber });
+
+    return res.json({
+      success: true,
+      message: `RFQ ${rfq.rfqNumber || rfq.rfqId} closed successfully.`,
+      data: rfq
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.post('/rfqs/:id/reopen', authenticateToken, async (req, res) => {
   try {
-    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
+    const isObjId = mongoose.Types.ObjectId.isValid(req.params.id);
+    const query = isObjId
+      ? { $or: [{ _id: req.params.id }, { rfqId: req.params.id }, { rfqNumber: req.params.id }] }
+      : { $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] };
+
+    const rfq = await RfqHeader.findOne(query);
     if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found.' });
 
     const newClosingDate = req.body.closingDate ? new Date(req.body.closingDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
@@ -3743,7 +3774,7 @@ router.post('/rfqs/:id/reopen', authenticateToken, async (req, res) => {
 
     return res.json({
       success: true,
-      message: `RFQ ${rfq.rfqNumber} reopened successfully until ${new Date(rfq.closingDate).toLocaleDateString('en-IN')}.`,
+      message: `RFQ ${rfq.rfqNumber || rfq.rfqId} reopened successfully until ${new Date(rfq.closingDate).toLocaleDateString('en-IN')}.`,
       data: rfq
     });
   } catch (err) {
@@ -4877,7 +4908,7 @@ router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
     const [
       poCount,
       prevPoCount,
-      pendingCount,
+      rawPendingCount,
       rfqCount,
       prevRfqCount,
       rfqAwardedCount,

@@ -13,7 +13,9 @@ export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
   const dismiss = useCallback((id) => setToasts((items) => items.filter((item) => item.id !== id)), []);
   const showToast = useCallback(({ title, description = '', type = 'success', duration = 3500 }) => {
-    const id = crypto.randomUUID();
+    const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     setToasts((items) => [...items.slice(-3), { id, title, description, type }]);
     window.setTimeout(() => dismiss(id), duration);
     return id;

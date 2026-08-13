@@ -1,0 +1,43 @@
+# Nginx Configuration for Rayzon P2P Application
+# Place this file at /etc/nginx/sites-available/p2p (or /etc/nginx/conf.d/p2p.conf)
+
+server {
+    listen 80;
+    server_name 101.53.150.120; # Replace with your server IP or domain name (e.g., p2p.rayzon.one)
+
+    # Max upload size for document attachments (e.g., invoices, customs docs)
+    client_max_body_size 50M;
+
+    # -------------------------------------------------------------------
+    # 1. Frontend React SPA (Static files output by `npm run build` -> dist)
+    # -------------------------------------------------------------------
+    location / {
+        root /var/www/p2p/dist; # Replace with full path to your built `dist` folder
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+
+    # -------------------------------------------------------------------
+    # 2. Node.js Backend API Proxy (Fixes "405 Not Allowed" on POST/PUT requests)
+    # -------------------------------------------------------------------
+    location /api/ {
+        proxy_pass http://127.0.0.1:5050/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    # -------------------------------------------------------------------
+    # 3. Static Uploads directory proxy
+    # -------------------------------------------------------------------
+    location /uploads/ {
+        proxy_pass http://127.0.0.1:5050/uploads/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
