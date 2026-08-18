@@ -111,6 +111,16 @@ export default function VendorListView() {
     }
   };
 
+  // Derive all available vendor types (standard list + dynamic types present in dataset)
+  const standardTypes = ['DOMESTIC', 'IMPORT', 'FREIGHT FORWARDER','SHIPPING LINE', 'OTHER'];
+  const datasetTypes = Array.from(new Set(vendors.map(v => (v.vendorType || '').toUpperCase()).filter(Boolean)));
+  const allTypesList = Array.from(new Set([...standardTypes, ...datasetTypes]));
+
+  const typeFilterOptions = [
+    { label: 'All types', value: 'All' },
+    ...allTypesList.map(t => ({ label: t, value: t }))
+  ];
+
   // Client-side filtering & sorting
   const filteredVendors = vendors
     .filter(v => {
@@ -123,7 +133,7 @@ export default function VendorListView() {
 
       const matchesType = 
         typeFilter === 'All' || 
-        (v.vendorType || '').toUpperCase() === typeFilter.toUpperCase();
+        (v.vendorType || 'DOMESTIC').toUpperCase() === typeFilter.toUpperCase();
 
       return matchesSearch && matchesType;
     })
@@ -169,13 +179,9 @@ export default function VendorListView() {
           </div>
 
           {/* Type Filter Select */}
-          <div className="w-36">
+          <div className="w-48">
             <SearchableSelect
-              options={[
-                { label: 'All types', value: 'All' },
-                { label: 'DOMESTIC', value: 'DOMESTIC' },
-                { label: 'IMPORT', value: 'IMPORT' }
-              ]}
+              options={typeFilterOptions}
               value={typeFilter}
               onChange={(val) => { setTypeFilter(val); setCurrentPage(1); }}
               size="sm"

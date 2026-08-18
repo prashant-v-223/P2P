@@ -62,13 +62,13 @@ export default function VendorLoginPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Email Address */}
             <div className="space-y-1.5">
-              <label className="block text-sm font-semibold text-slate-700">Email Address or Vendor Code</label>
+              <label className="block text-sm font-semibold text-slate-700">Email Address</label>
               <Input
-                type="text"
+                type="email"
                 required
                 value={email}
                 onChange={(e) => { setEmail(e.target.value); setErrorMsg(''); }}
-                placeholder="vendor@company.com or 20000201"
+                placeholder="vendor@company.com"
               />
             </div>
 

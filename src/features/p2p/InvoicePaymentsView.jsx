@@ -7,6 +7,7 @@ import { SearchableSelect } from '../../components/ui/searchable-select';
 import { CustomInput } from '../../components/ui/custom-input';
 import { useToast } from '../../components/ui/toast';
 import { userHasPermission } from '../../lib/permissions';
+import { exportCsv } from '../../utils/exportCsv';
 import { 
   FileCheck2, 
   Plus, 
@@ -21,7 +22,8 @@ import {
   RotateCcw,
   XCircle,
   Eye,
-  Edit3
+  Edit3,
+  Download
 } from 'lucide-react';
 
 export default function InvoicePaymentsView() {
@@ -279,12 +281,15 @@ const getInitials = (name) => {
             <Plus className="w-4 h-4" /> New Invoice Payment
           </button>
         )}
+        <button type="button" onClick={() => exportCsv('invoice-payments.csv', invoices)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">
+          <Download className="h-4 w-4" /> Export CSV
+        </button>
       </div>
 
       {/* SINGLE UNIFIED CONTROL BAR (Search + 3-Way Match + Status + Page Size) */}
-      <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[280px]">
-          <div className="min-w-[240px] flex-1">
+      <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(280px,1fr)_150px_150px_130px]">
+          <div className="min-w-0 sm:col-span-2 xl:col-span-1">
             <CustomInput
               type="text"
               placeholder="Search reference, ASN, invoice..."
@@ -297,7 +302,7 @@ const getInitials = (name) => {
             />
           </div>
 
-          <div className="w-36">
+          <div className="min-w-0">
             <SearchableSelect
               options={[
                 { label: 'All 3-Way Match', value: 'All Match' },
@@ -311,7 +316,7 @@ const getInitials = (name) => {
             />
           </div>
 
-          <div className="w-36">
+          <div className="min-w-0">
             <SearchableSelect
               options={[
                 { label: 'All Status', value: 'All Status' },
@@ -329,7 +334,7 @@ const getInitials = (name) => {
             />
           </div>
 
-          <div className="w-32">
+          <div className="min-w-0">
             <SearchableSelect
               options={[
                 { label: '10 per page', value: 10 },
@@ -348,17 +353,17 @@ const getInitials = (name) => {
       {/* Invoice Table Container with Max Height & Sticky Header */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden w-full flex flex-col max-h-[calc(100vh-210px)] min-h-[320px]">
         <div className="overflow-auto w-full flex-1">
-          <table className="w-full text-left text-xs">
+          <table className="w-full min-w-[1240px] table-auto text-left text-[11px] 2xl:min-w-[1320px] 2xl:text-xs">
             <thead className="bg-slate-50/90 sticky top-0 z-10 text-slate-400 font-extrabold uppercase tracking-wider text-[10px] border-b border-slate-200 backdrop-blur-xs">
               <tr>
-                <th className="py-3.5 px-3.5 text-center">#</th>
-                <th className="py-3.5 px-3.5">REFERENCE</th>
-                <th className="py-3.5 px-3.5">ASN</th>
+                <th className="py-3.5 px-2 text-center">#</th>
+                <th className="py-3.5 px-3.5 whitespace-nowrap">REFERENCE</th>
+                <th className="py-3.5 px-2.5 whitespace-nowrap">ASN</th>
                 <th className="py-3.5 px-3.5">PO NUMBER</th>
                 <th className="py-3.5 px-3.5">INVOICE NO.</th>
                 <th className="py-3.5 px-3.5">VENDOR</th>
                 <th className="py-3.5 px-3.5 text-right">INVOICE AMT</th>
-                <th className="py-3.5 px-3.5 text-center">TDS</th>
+                <th className="py-3.5 px-2.5 text-center whitespace-nowrap">TDS</th>
                 <th className="py-3.5 px-3.5 text-right">NET PAYABLE</th>
                 <th className="py-3.5 px-3.5 text-center">3-WAY MATCH</th>
                 <th className="py-3.5 px-3.5 text-center">STATUS</th>
@@ -402,12 +407,12 @@ const getInitials = (name) => {
                   return (
                     <tr key={inv.invoicePaymentId} className="hover:bg-slate-50/70 transition-colors text-xs">
                       {/* # */}
-                      <td className="py-3 px-3.5 text-center text-slate-400 font-semibold tabular-nums">
+                      <td className="py-3 px-2 text-center text-slate-400 font-semibold tabular-nums">
                         {(currentPage - 1) * pageSize + index + 1}
                       </td>
 
                       {/* REFERENCE */}
-                      <td className="py-3 px-3.5 font-mono font-extrabold text-slate-900">
+                      <td className="py-3 px-3.5 font-mono font-extrabold text-slate-900 whitespace-nowrap">
                         <Link
                           to={`/admin/invoice-payments/${inv.invoicePaymentId}`}
                           className="hover:text-teal-700 transition-colors"
@@ -417,7 +422,7 @@ const getInitials = (name) => {
                       </td>
 
                       {/* ASN */}
-                      <td className="py-3 px-3.5 font-mono text-slate-400">
+                      <td className="py-3 px-2.5 font-mono text-slate-400 whitespace-nowrap">
                         {inv.asnNumber ? (
                           <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200 text-[10px] font-bold">
                             {inv.asnNumber}
@@ -428,19 +433,19 @@ const getInitials = (name) => {
                       </td>
 
                       {/* PO NUMBER */}
-                      <td className="py-3 px-3.5 font-mono font-bold">
+                      <td className="py-3 px-3.5 font-mono font-bold whitespace-nowrap">
                         <span className="px-2 py-0.5 rounded bg-sky-50 text-[#0284c7] border border-sky-200 text-[11px] font-bold font-mono">
                           {inv.poId}
                         </span>
                       </td>
 
                       {/* INVOICE NO. */}
-                      <td className="py-3 px-3.5 font-mono text-slate-700 font-semibold">
+                      <td className="py-3 px-3.5 font-mono text-slate-700 font-semibold whitespace-nowrap">
                         {inv.invoiceNumber}
                       </td>
 
                       {/* VENDOR */}
-                      <td className="py-3 px-3.5 max-w-xs">
+                      <td className="py-3 px-3.5 min-w-[180px] max-w-[220px]">
                         <div className="flex items-center gap-2.5">
                           <div className="w-7 h-7 rounded-full bg-teal-50 border border-teal-200 text-[#0d7676] text-[10px] font-extrabold flex items-center justify-center shrink-0">
                             {getInitials(inv.vendorName)}
@@ -450,17 +455,17 @@ const getInitials = (name) => {
                       </td>
 
                       {/* INVOICE AMT */}
-                      <td className="py-3 px-3.5 text-right font-mono font-extrabold text-slate-900">
+                      <td className="py-3 px-3.5 text-right font-mono font-extrabold text-slate-900 whitespace-nowrap">
                         {(inv.grossAmount || 0).toLocaleString(inv.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })} {inv.currency || 'INR'}
                       </td>
 
                       {/* TDS */}
-                      <td className="py-3 px-3.5 text-center font-mono text-slate-500">
+                      <td className="py-3 px-2.5 text-center font-mono text-slate-500 whitespace-nowrap">
                         {inv.tdsAmount ? `${inv.tdsAmount.toLocaleString(inv.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })} ${inv.currency || 'INR'}` : <span className="text-slate-300">—</span>}
                       </td>
 
                       {/* NET PAYABLE */}
-                      <td className="py-3 px-3.5 text-right font-mono font-extrabold text-slate-900">
+                      <td className="py-3 px-3.5 text-right font-mono font-extrabold text-slate-900 whitespace-nowrap">
                         {(inv.netPayable || 0).toLocaleString(inv.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })} {inv.currency || 'INR'}
                       </td>
 

@@ -7,18 +7,7 @@ import { CloudUpload, FileText, CheckCircle2, AlertCircle, X, Search, ChevronDow
 import { CustomSelect } from '../../components/ui/custom-select';
 import { CustomDatePicker } from '../../components/ui/custom-date-picker';
 import { CustomFileUpload } from '../../components/ui/custom-file-upload';
-
-const generateUniqueInvoiceNumber = () => {
-  const year = new Date().getFullYear();
-  const rand = Math.floor(100000 + Math.random() * 900000);
-  return `INV-${year}-${rand}`;
-};
-
-const generateASNNumber = () => {
-  const year = new Date().getFullYear();
-  const rand = Math.floor(10000 + Math.random() * 90000);
-  return `ASN-${year}-${rand}`;
-};
+import { formatCurrency } from '../../utils/formatCurrency';
 
 const getLocalISODate = () => {
   const now = new Date();
@@ -26,7 +15,7 @@ const getLocalISODate = () => {
 };
 
 export default function VendorUploadInvoicePage() {
-  const { vendorProfile, purchaseOrders, addInvoice } = useVendor();
+  const { vendorProfile, purchaseOrders, invoices, addInvoice } = useVendor();
   const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -40,7 +29,7 @@ export default function VendorUploadInvoicePage() {
 
   const [apiSearchResults, setApiSearchResults] = useState([]);
 
-  const [invoiceNumber, setInvoiceNumber] = useState(generateUniqueInvoiceNumber());
+  const [invoiceNumber, setInvoiceNumber] = useState('');
   const [asnNumber, setAsnNumber] = useState('');
   const isImportVendor = String(vendorProfile?.vendorType || '').trim().toLowerCase().includes('import');
   const [invoiceDate, setInvoiceDate] = useState(getLocalISODate());
@@ -48,7 +37,6 @@ export default function VendorUploadInvoicePage() {
   const [dueDays, setDueDays] = useState(30);
   const [invoiceAmount, setInvoiceAmount] = useState('');
   const [invoiceQuantity, setInvoiceQuantity] = useState('');
-  const [grnNo, setGrnNo] = useState('');
   const [remarks, setRemarks] = useState('');
 
   useEffect(() => {
@@ -63,6 +51,7 @@ export default function VendorUploadInvoicePage() {
 
   // Live backend PO search whenever vendor types in the search box
   useEffect(() => {
+    if (!isPoOpen) return;
     const q = poSearch.trim();
     if (!q || q.length < 2) {
       setApiSearchResults([]);
@@ -79,7 +68,7 @@ export default function VendorUploadInvoicePage() {
             poNumber: p.poNumber,
             sapPoNumber: p.sapPoNumber,
             date: p.documentDate ? new Date(p.documentDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Open',
-            amount: `₹${(p.totalAmount || 0).toLocaleString('en-IN')}`,
+            amount: formatCurrency(p.totalAmount, p.currency || 'INR'),
             status: p.status || 'Open',
             currency: p.currency || 'INR',
             numericAmount: p.totalAmount || 0
@@ -89,7 +78,7 @@ export default function VendorUploadInvoicePage() {
       } catch (e) {}
     }, 150);
     return () => { active = false; clearTimeout(timer); };
-  }, [poSearch]);
+  }, [poSearch, isPoOpen]);
 
   const combinedPOs = useMemo(() => {
     const map = new Map();
@@ -118,8 +107,9 @@ export default function VendorUploadInvoicePage() {
   }, [combinedPOs, poSearch]);
 
   const selectedPOObj = useMemo(() => {
-    return combinedPOs.find((p) => p.id === poNumber) || (poNumber ? { id: poNumber, amount: 'PO Selected', date: 'Active', status: 'Open' } : null);
+    return combinedPOs.find((p) => p.id === poNumber) || null;
   }, [combinedPOs, poNumber]);
+console.log("selectedPOObj",selectedPOObj);
 
   // GST & Adjustments
   const [invoiceType, setInvoiceType] = useState('With GST');
@@ -127,36 +117,33 @@ export default function VendorUploadInvoicePage() {
   const [sgstAmount, setSgstAmount] = useState('0');
   const [igstAmount, setIgstAmount] = useState('0');
   const [tdsPercentage, setTdsPercentage] = useState('0%');
-  const [advanceAdjust, setAdvanceAdjust] = useState('0');
+  const [advanceAdjust, setAdvanceAdjust] = useState('');
 
   // File state
-  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedFiles, setSelectedFiles] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  const calculateDueDate = () => {
-    const d = new Date(invoiceDate || Date.now());
+  useEffect(() => {
+    if (!isImportVendor) return;
+    const year = new Date().getFullYear();
+    const currentMax = (invoices || []).reduce((max, invoice) => {
+      const match = String(invoice.asnNumber || '').match(new RegExp(`^ASN-${year}-(\\d+)$`));
+      return Math.max(max, match ? Number(match[1]) : 0);
+    }, 0);
+    setAsnNumber(`ASN-${year}-${String(currentMax + 1).padStart(3, '0')}`);
+  }, [isImportVendor, invoices]);
+
+  const calculateDueDateISO = () => {
+    const d = new Date(`${invoiceDate || getLocalISODate()}T00:00:00`);
     d.setDate(d.getDate() + Number(dueDays || 30));
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
   };
 
-
-
-  const handleFileChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      setSelectedFile(e.target.files[0]);
-      setErrorMsg('');
-    }
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setSelectedFile(e.dataTransfer.files[0]);
-      setErrorMsg('');
-    }
-  };
+  const calculateDueDate = () => new Date(`${calculateDueDateISO()}T00:00:00`).toLocaleDateString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric'
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -168,10 +155,28 @@ export default function VendorUploadInvoicePage() {
       showToast({ title: 'Purchase Order Required', description: msg, type: 'error' });
       return;
     }
+    if (!selectedPOObj) {
+      const msg = 'Please select a valid open Purchase Order from the list.';
+      setErrorMsg(msg);
+      showToast({ title: 'Invalid Purchase Order', description: msg, type: 'error' });
+      return;
+    }
+    if (!['open', 'partially_delivered'].includes(String(selectedPOObj.status || '').toLowerCase())) {
+      const msg = `Invoices cannot be submitted against a ${selectedPOObj.status || 'closed'} Purchase Order.`;
+      setErrorMsg(msg);
+      showToast({ title: 'Purchase Order Not Open', description: msg, type: 'error' });
+      return;
+    }
     if (!invoiceNumber.trim()) {
       const msg = 'Invoice Number is required.';
       setErrorMsg(msg);
       showToast({ title: 'Invoice Number Required', description: msg, type: 'error' });
+      return;
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9/_-]{2,49}$/.test(invoiceNumber.trim())) {
+      const msg = 'Invoice Number must be 3–50 characters and may contain letters, numbers, /, _ and - only.';
+      setErrorMsg(msg);
+      showToast({ title: 'Invalid Invoice Number', description: msg, type: 'error' });
       return;
     }
     if (!invoiceDate) {
@@ -198,8 +203,8 @@ export default function VendorUploadInvoicePage() {
       showToast({ title: 'Currency Mismatch', description: msg, type: 'error' });
       return;
     }
-    if (!dueDays && dueDays !== 0) {
-      const msg = 'Net Days is required.';
+    if (!Number.isInteger(Number(dueDays)) || Number(dueDays) < 1 || Number(dueDays) > 365) {
+      const msg = 'Net Days must be a whole number between 1 and 365.';
       setErrorMsg(msg);
       showToast({ title: 'Net Days Required', description: msg, type: 'error' });
       return;
@@ -228,16 +233,28 @@ export default function VendorUploadInvoicePage() {
       showToast({ title: 'Quantity Exceeds PO', description: msg, type: 'error' });
       return;
     }
-    if ([cgstAmount, sgstAmount, igstAmount, advanceAdjust].some((value) => Number(value) < 0)) {
+    if ([cgstAmount, sgstAmount, igstAmount].some((value) => Number(value) < 0) || (advanceAdjust !== '' && Number(advanceAdjust) < 0)) {
       const msg = 'GST amounts and advance adjustment cannot be negative.';
       setErrorMsg(msg);
       showToast({ title: 'Invalid Adjustment', description: msg, type: 'error' });
       return;
     }
-    if (!grnNo.trim()) {
-      const msg = 'GRN / Delivery Note No is required.';
+    if ([cgstAmount, sgstAmount, igstAmount].some((value) => value === '' || !Number.isFinite(Number(value))) || (advanceAdjust !== '' && !Number.isFinite(Number(advanceAdjust)))) {
+      const msg = 'GST amounts and the optional advance adjustment must be valid numbers.';
       setErrorMsg(msg);
-      showToast({ title: 'GRN / Delivery Note Required', description: msg, type: 'error' });
+      showToast({ title: 'Invalid Amount', description: msg, type: 'error' });
+      return;
+    }
+    if (Number(igstAmount) > 0 && (Number(cgstAmount) > 0 || Number(sgstAmount) > 0)) {
+      const msg = 'Use either IGST or CGST/SGST; they cannot be entered together.';
+      setErrorMsg(msg);
+      showToast({ title: 'Invalid GST Combination', description: msg, type: 'error' });
+      return;
+    }
+    if (Number(advanceAdjust) > Number(invoiceAmount) + Number(cgstAmount) + Number(sgstAmount) + Number(igstAmount)) {
+      const msg = 'Advance adjustment cannot exceed the invoice total.';
+      setErrorMsg(msg);
+      showToast({ title: 'Invalid Advance Adjustment', description: msg, type: 'error' });
       return;
     }
     if (!invoiceType) {
@@ -246,16 +263,41 @@ export default function VendorUploadInvoicePage() {
       showToast({ title: 'Invoice Type Required', description: msg, type: 'error' });
       return;
     }
-    if (!selectedFile) {
-      const msg = 'Invoice document file is required. Please drag & drop or upload your invoice file (PDF, JPG, PNG).';
+    if (!Array.isArray(selectedFiles) || selectedFiles.length === 0) {
+      const msg = 'At least one invoice supporting document is required.';
       setErrorMsg(msg);
       showToast({ title: 'Invoice File Required', description: msg, type: 'error' });
+      return;
+    }
+    if (selectedFiles.length > 10) {
+      const msg = 'A maximum of 10 supporting documents can be uploaded.';
+      setErrorMsg(msg);
+      showToast({ title: 'Too Many Documents', description: msg, type: 'error' });
+      return;
+    }
+    const allowedFileTypes = ['application/pdf', 'image/jpeg', 'image/png'];
+    if (selectedFiles.some((file) => !allowedFileTypes.includes(file.type))) {
+      const msg = 'Every supporting document must be a PDF, JPG, or PNG file.';
+      setErrorMsg(msg);
+      showToast({ title: 'Invalid Supporting Document', description: msg, type: 'error' });
+      return;
+    }
+    if (selectedFiles.some((file) => file.size > 25 * 1024 * 1024)) {
+      const msg = 'Each supporting document must not exceed 25 MB.';
+      setErrorMsg(msg);
+      showToast({ title: 'File Too Large', description: msg, type: 'error' });
+      return;
+    }
+    if (selectedFiles.some((file) => !file.uploaded || !file.fileUrl)) {
+      const msg = 'Please wait until all supporting documents have finished uploading.';
+      setErrorMsg(msg);
+      showToast({ title: 'Upload Not Complete', description: msg, type: 'error' });
       return;
     }
 
     // ASN validation for Import vendors
     const cleanAsn = asnNumber.trim().toUpperCase();
-    if (isImportVendor && (!cleanAsn || cleanAsn.length < 3)) {
+    if (isImportVendor && !/^ASN-\d{4}-\d{3,}$/.test(cleanAsn)) {
       const msg = 'Invalid ASN Number. ASN Number (Advance Shipping Notice) is required for import invoice entries.';
       setErrorMsg(msg);
       showToast({ title: 'Invalid ASN Number', description: msg, type: 'error' });
@@ -265,17 +307,16 @@ export default function VendorUploadInvoicePage() {
 
     setIsSubmitting(true);
     try {
-      await addInvoice({
+      const createdInvoice = await addInvoice({
         poNumber,
         invoiceNumber: invoiceNumber.trim(),
         asnNumber: finalAsn,
         invoiceDate,
         currency,
         dueDays,
-        paymentDueDate: calculateDueDate(),
+        paymentDueDate: calculateDueDateISO(),
         invoiceAmount,
         invoiceQuantity: Number(invoiceQuantity) || undefined,
-        grnNo: grnNo.trim(),
         remarks: remarks.trim(),
         invoiceType,
         cgstAmount,
@@ -283,8 +324,16 @@ export default function VendorUploadInvoicePage() {
         igstAmount,
         tdsPercentage,
         advanceAdjust,
-        fileName: selectedFile ? selectedFile.name : 'Invoice-Document.pdf'
+        fileName: selectedFiles[0].name,
+        supportingDocuments: selectedFiles.map((file) => ({
+          fileName: file.s3Key || file.name,
+          originalName: file.name,
+          fileUrl: file.fileUrl,
+          size: file.size,
+          mimeType: file.type
+        }))
       });
+      if (createdInvoice?.asnNumber) setAsnNumber(createdInvoice.asnNumber);
       setIsSubmitting(false);
       setShowSuccessModal(true);
     } catch (err) {
@@ -397,21 +446,7 @@ export default function VendorUploadInvoicePage() {
                       <p className="text-xs text-slate-500 font-medium">
                         No pre-registered PO found matching "{poSearch}"
                       </p>
-                      {poSearch.trim() && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const customPo = poSearch.trim().toUpperCase();
-                            setPoNumber(customPo);
-                            setPoSearch(customPo);
-                            setIsPoOpen(false);
-                            setErrorMsg('');
-                          }}
-                          className="px-3 py-1.5 bg-[#0d7676] text-white text-xs font-bold rounded-lg hover:bg-teal-700 transition shadow-2xs cursor-pointer"
-                        >
-                          Use "{poSearch.trim().toUpperCase()}" as Purchase Order
-                        </button>
-                      )}
+                      <p className="text-[10px] text-slate-400">Only registered open purchase orders can be selected.</p>
                     </div>
                   ) : (
                     filteredPOs.map((po) => {
@@ -421,7 +456,7 @@ export default function VendorUploadInvoicePage() {
                           key={po.id}
                           onClick={() => {
                             setPoNumber(po.id);
-                            setPoSearch(`${po.id} — ${po.amount}`);
+                            setPoSearch(String(po.id));
                             setIsPoOpen(false);
                             setErrorMsg('');
                             if (po.currency) setCurrency(po.currency);
@@ -485,18 +520,9 @@ export default function VendorUploadInvoicePage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Invoice Number */}
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-semibold text-slate-700">
-                  Invoice Number <span className="text-rose-500">*</span>
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setInvoiceNumber(generateUniqueInvoiceNumber())}
-                  className="text-[11px] font-bold text-[#0d7676] hover:underline cursor-pointer"
-                >
-                  ⚡ Auto-Generate
-                </button>
-              </div>
+              <label className="block text-xs font-semibold text-slate-700">
+                Invoice Number <span className="text-rose-500">*</span>
+              </label>
               <input
                 type="text"
                 value={invoiceNumber}
@@ -504,34 +530,25 @@ export default function VendorUploadInvoicePage() {
                   setInvoiceNumber(e.target.value);
                   setErrorMsg('');
                 }}
-                placeholder="e.g. INV-2026-891204"
+                placeholder="Enter vendor invoice number"
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
               />
             </div>
 
-            {/* ASN Number - Import vendors only */}
+            {/* Sequential ASN Number - Import vendors only */}
             {isImportVendor && <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-semibold text-slate-700">
-                  ASN Number
-                  <span className="ml-1.5 px-1.5 py-0.5 text-[9px] font-extrabold bg-amber-100 text-amber-700 border border-amber-200 rounded uppercase tracking-wider">Auto</span>
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setAsnNumber(generateASNNumber())}
-                  className="text-[11px] font-bold text-amber-600 hover:underline cursor-pointer"
-                >
-                  ⚡ Regenerate
-                </button>
-              </div>
+              <label className="block text-xs font-semibold text-slate-700">
+                ASN Number <span className="text-rose-500">*</span>
+              </label>
               <input
                 type="text"
                 value={asnNumber}
-                onChange={(e) => setAsnNumber(e.target.value)}
-                placeholder="e.g. ASN-2026-48291"
-                className="w-full px-3.5 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-400 focus:bg-white"
+                readOnly
+                aria-readonly="true"
+                placeholder={`ASN-${new Date().getFullYear()}-001`}
+                className="w-full px-3.5 py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-slate-900 text-sm font-mono font-bold cursor-not-allowed"
               />
-              <p className="text-[10px] text-amber-600 font-semibold">Auto-generated Advance Shipment Notice number</p>
+              <p className="text-[10px] text-slate-500 font-semibold">System sequence: ASN-{new Date().getFullYear()}-001, ASN-{new Date().getFullYear()}-002…</p>
             </div>}
 
             {/* Invoice Date */}
@@ -623,33 +640,16 @@ export default function VendorUploadInvoicePage() {
                 type="number"
                 min="0.01"
                 step="0.01"
-                max={selectedPOObj?.remainingQuantity || undefined}
+                max={Number(selectedPOObj?.remainingQuantity) > 0 ? selectedPOObj.remainingQuantity : undefined}
                 value={invoiceQuantity}
                 onChange={(e) => { setInvoiceQuantity(e.target.value); setErrorMsg(''); }}
                 placeholder="Enter delivered quantity"
-                disabled={!selectedPOObj || Number(selectedPOObj.totalQuantity) <= 0}
+                disabled={!selectedPOObj}
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] disabled:opacity-60"
               />
               {Number(selectedPOObj?.totalQuantity) > 0 && (
                 <p className="text-[10px] font-semibold text-slate-500">Remaining PO quantity: {selectedPOObj.remainingQuantity}</p>
               )}
-            </div>
-
-            {/* GRN / Delivery Note No */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-slate-700">
-                GRN / Delivery Note No <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={grnNo}
-                onChange={(e) => {
-                  setGrnNo(e.target.value);
-                  setErrorMsg('');
-                }}
-                placeholder="e.g. GRN-001"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
-              />
             </div>
 
             {/* Remarks */}
@@ -757,13 +757,15 @@ export default function VendorUploadInvoicePage() {
 
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-slate-700">
-                Advance to Adjust <span className="text-rose-500">*</span>
+                Advance to Adjust <span className="text-slate-400 font-normal">(Optional)</span>
               </label>
               <input
                 type="number"
                 step="0.01"
                 value={advanceAdjust}
                 onChange={(e) => setAdvanceAdjust(e.target.value)}
+                min="0"
+                placeholder="0.00"
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white font-mono"
               />
             </div>
@@ -776,12 +778,14 @@ export default function VendorUploadInvoicePage() {
             label="INVOICE SUPPORTING DOCUMENT"
             required
             accept=".pdf,.jpg,.jpeg,.png"
-            value={selectedFile}
-            onChange={(file) => {
-              setSelectedFile(file);
+            multiple
+            value={selectedFiles}
+            onChange={(files) => {
+              setSelectedFiles(files);
               setErrorMsg('');
             }}
-            helperText="Upload official invoice PDF or high-resolution scan."
+            onError={(message) => setErrorMsg(message)}
+            helperText="Upload up to 10 invoice documents (PDF, JPG, or PNG; maximum 25 MB each)."
           />
         </div>
 
@@ -865,12 +869,15 @@ export default function VendorUploadInvoicePage() {
                 type="button"
                 onClick={() => {
                   setShowSuccessModal(false);
-                  setInvoiceNumber(generateUniqueInvoiceNumber());
-                  setAsnNumber(generateASNNumber());
+                  setInvoiceNumber('');
+                  setAsnNumber((current) => {
+                    const year = new Date().getFullYear();
+                    const sequence = Number(String(current).split('-').pop()) || 0;
+                    return `ASN-${year}-${String(sequence + 1).padStart(3, '0')}`;
+                  });
                   setInvoiceAmount('');
-                  setGrnNo('');
                   setRemarks('');
-                  setSelectedFile(null);
+                  setSelectedFiles([]);
                 }}
                 className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
               >

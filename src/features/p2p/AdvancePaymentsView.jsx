@@ -7,6 +7,7 @@ import { SearchableSelect } from '../../components/ui/searchable-select';
 import { CustomInput } from '../../components/ui/custom-input';
 import { useToast } from '../../components/ui/toast';
 import { userHasPermission } from '../../lib/permissions';
+import { exportCsv } from '../../utils/exportCsv';
 import { 
   Search, 
   Eye, 
@@ -17,7 +18,8 @@ import {
   Clock, 
   CheckCircle2, 
   Wallet,
-  Loader2
+  Loader2,
+  Download
 } from 'lucide-react';
 
 const getInitials = (name) => {
@@ -98,6 +100,7 @@ console.log("canMarkPaid",canMarkPaid);
             vendorName:    item.vendorName || 'Vendor',
             requestedBy:   item.requestedByName || item.requestedBy || item.createdBy || 'Finance Team',
             amount:        item.amount || 0,
+            adjustedAmount: item.adjustedAmount || 0,
             currency:      item.currency || 'INR',
             pctOfPo:       `${item.percentageOfPo || 0}.00%`,
             mode:          item.paymentMode || 'NEFT',
@@ -225,6 +228,9 @@ console.log("canMarkPaid",canMarkPaid);
             <Plus className="w-4 h-4" /> New Advance Payment
           </Link>
         )}
+        <button type="button" onClick={() => exportCsv('advance-payments.csv', advances)} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">
+          <Download className="h-4 w-4" /> Export CSV
+        </button>
       </div>
 
       {/* Metric Summary Cards */}
@@ -332,6 +338,7 @@ console.log("canMarkPaid",canMarkPaid);
                 <th className="py-3.5 px-4">VENDOR</th>
                 <th className="py-3.5 px-4">REQUESTED BY</th>
                 <th className="py-3.5 px-4 text-right">AMOUNT</th>
+                <th className="py-3.5 px-4 text-right">ADJUSTED AMOUNT</th>
                 <th className="py-3.5 px-4 text-center">% OF PO</th>
                 <th className="py-3.5 px-4 text-center">MODE</th>
                 <th className="py-3.5 px-4 text-center">STATUS</th>
@@ -342,7 +349,7 @@ console.log("canMarkPaid",canMarkPaid);
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan="11" className="py-16 text-center text-slate-400 font-medium">
+                  <td colSpan="12" className="py-16 text-center text-slate-400 font-medium">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Loader2 className="w-6 h-6 text-[#0d7676] animate-spin" />
                       <p>Loading advance payments...</p>
@@ -351,7 +358,7 @@ console.log("canMarkPaid",canMarkPaid);
                 </tr>
               ) : advances.length === 0 ? (
                 <tr>
-                  <td colSpan="11" className="py-16 text-center text-slate-400 font-medium">
+                  <td colSpan="12" className="py-16 text-center text-slate-400 font-medium">
                     <div className="flex flex-col items-center justify-center gap-1.5">
                       <Wallet className="w-8 h-8 text-slate-300" />
                       <p className="font-semibold text-slate-700">No advance payment records found</p>
@@ -406,6 +413,10 @@ console.log("canMarkPaid",canMarkPaid);
 
                       <td className="py-3.5 px-4 text-right font-mono font-extrabold text-slate-900">
                         {adv.amount.toLocaleString(adv.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })} {adv.currency}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-right font-mono font-bold text-amber-700">
+                        {adv.adjustedAmount.toLocaleString(adv.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })} {adv.currency}
                       </td>
 
                       <td className="py-3.5 px-4 text-center font-mono font-semibold text-slate-600">

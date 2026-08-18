@@ -17,6 +17,7 @@ import {
   Receipt,
   FileText
 } from 'lucide-react';
+import { formatCurrency } from '../../utils/formatCurrency';
 
 export default function VendorDashboardPage() {
   const { vendorProfile, purchaseOrders, invoices, advances } = useVendor();
@@ -30,9 +31,6 @@ export default function VendorDashboardPage() {
   const paidInvoicesCount = invoices.filter((i) => i.status === 'Paid').length;
   const isFreightForwarder = /(freight|forwarder|logistics|shipping)/i.test(`${vendorProfile.vendorType || ''} ${vendorProfile.category || ''}`);
   const isImportVendor = String(vendorProfile.vendorType || '').toLowerCase().includes('import');
-  const formatAmount = (amount, currency = 'INR') => new Intl.NumberFormat('en-IN', {
-    style: 'currency', currency: currency === 'USD' ? 'USD' : 'INR', maximumFractionDigits: 2
-  }).format(Number(amount) || 0);
 
   if (isFreightForwarder) return <FreightForwarderDashboard />;
 
@@ -235,14 +233,14 @@ export default function VendorDashboardPage() {
                       {po.status}
                     </span>
                   </div>
-                  <span className="text-[11px] text-slate-400 font-medium block mt-0.5">
-                    {po.date}
+                  <span className="text-[11px] text-slate-400 font-medium block mt-0.5 whitespace-nowrap">
+                    PO: {po.date} · Due: {po.dueDate || '—'}
                   </span>
                 </div>
 
                 <div className="text-right">
-                  <span className="text-xs font-extrabold text-slate-900 block">
-                    {po.amount}
+                  <span className="text-xs font-extrabold text-slate-900 block whitespace-nowrap font-mono">
+                    {formatCurrency(po.numericAmount, po.currency)}
                   </span>
                   <span className="text-[10px] font-bold text-[#0d7676] group-hover:underline">
                     Submit Invoice →
@@ -290,7 +288,7 @@ export default function VendorDashboardPage() {
                       <span className="text-[11px] text-slate-400 font-medium block mt-0.5">PO: {inv.poNumber} · {inv.invoiceDate}</span>
                     </div>
                     <div className="text-right">
-                      <span className="text-xs font-bold text-slate-900">{formatAmount(inv.invoiceAmount, inv.currency)}</span>
+                      <span className="text-xs font-bold text-slate-900 whitespace-nowrap font-mono">{formatCurrency(inv.invoiceAmount, inv.currency)}</span>
                     </div>
                   </div>
                 ))}

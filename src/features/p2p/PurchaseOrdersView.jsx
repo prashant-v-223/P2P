@@ -4,13 +4,16 @@ import { apiFetch } from '../../services/api';
 import { ServerPagination } from '../../components/ui/server-pagination';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { CustomInput } from '../../components/ui/custom-input';
+import { formatCurrency } from '../../utils/formatCurrency';
+import { exportCsv } from '../../utils/exportCsv';
 import { 
   Search, 
   Eye, 
   ChevronRight, 
   Loader2,
   FileText,
-  Plus
+  Plus,
+  Download
 } from 'lucide-react';
 
 const getInitials = (name) => {
@@ -73,7 +76,10 @@ export default function PurchaseOrdersView() {
             poNumber: item.sapPoNumber || item.poNumber,
             vendorName: item.supplierName || 'Vendor',
             vendorCode: item.supplierId || '100001',
-            poDate: item.createdAt ? new Date(item.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '30 Jul 2026',
+            poDate: item.documentDate || item.createdAt ? new Date(item.documentDate || item.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—',
+            dueDate: item.dueDate || item.deliveryDate || item.paymentDueDate
+              ? new Date(item.dueDate || item.deliveryDate || item.paymentDueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+              : '—',
             type: (item.poNumber || '').startsWith('PO-43') || (item.poNumber || '').startsWith('60') ? 'Import' : 'Domestic',
             poValue: item.totalAmount || 0,
             currency: item.currency || 'INR',
@@ -181,6 +187,9 @@ export default function PurchaseOrdersView() {
         >
           <Plus className="w-4 h-4" /> Raise Advance Request
         </Link>
+        <button type="button" onClick={() => exportCsv('purchase-orders.csv', pos)} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">
+          <Download className="h-4 w-4" /> Export CSV
+        </button>
       </div>
 
       {/* PO Table Container with Max Height & Scrolling */}
@@ -193,6 +202,7 @@ export default function PurchaseOrdersView() {
                 <th className="py-3.5 px-4">PO NUMBER</th>
                 <th className="py-3.5 px-4">VENDOR</th>
                 <th className="py-3.5 px-4">PO DATE</th>
+                <th className="py-3.5 px-4 whitespace-nowrap">DUE DATE</th>
                 <th className="py-3.5 px-4 text-center">TYPE</th>
                 <th className="py-3.5 px-4 text-right">PO VALUE</th>
                 <th className="py-3.5 px-4 text-center">ADVANCE PAID</th>
@@ -203,7 +213,7 @@ export default function PurchaseOrdersView() {
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan="9" className="py-16 text-center text-slate-400 font-medium">
+                  <td colSpan="10" className="py-16 text-center text-slate-400 font-medium">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Loader2 className="w-6 h-6 text-[#0d7676] animate-spin" />
                       <p>Loading purchase orders...</p>
@@ -212,7 +222,7 @@ export default function PurchaseOrdersView() {
                 </tr>
               ) : pos.length === 0 ? (
                 <tr>
-                  <td colSpan="9" className="py-16 text-center text-slate-400 font-medium">
+                  <td colSpan="10" className="py-16 text-center text-slate-400 font-medium">
                     <div className="flex flex-col items-center justify-center gap-1.5">
                       <FileText className="w-8 h-8 text-slate-300" />
                       <p className="font-semibold text-slate-700">No purchase order records found</p>
@@ -251,8 +261,12 @@ export default function PurchaseOrdersView() {
                         </div>
                       </td>
 
-                      <td className="py-3.5 px-4 text-slate-600 font-mono text-[11px]">
+                      <td className="py-3.5 px-4 text-slate-600 font-mono text-[11px] whitespace-nowrap">
                         {po.poDate}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-slate-600 font-mono text-[11px] whitespace-nowrap">
+                        {po.dueDate}
                       </td>
 
                       <td className="py-3.5 px-4 text-center">
@@ -266,14 +280,14 @@ export default function PurchaseOrdersView() {
                         </span>
                       </td>
 
-                      <td className="py-3.5 px-4 text-right font-mono font-extrabold text-slate-900">
-                        {po.poValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })} {po.currency}
+                      <td className="py-3.5 px-4 text-right font-mono font-extrabold text-slate-900 whitespace-nowrap">
+                        {formatCurrency(po.poValue, po.currency)}
                       </td>
 
                       <td className="py-3.5 px-4 text-center font-mono text-slate-500">
                         {po.advancePaid ? (
-                          <span className="text-emerald-700 font-bold">
-                            {po.advancePaid.toLocaleString('en-IN')} INR
+                          <span className="text-emerald-700 font-bold whitespace-nowrap">
+                            {formatCurrency(po.advancePaid, po.currency)}
                           </span>
                         ) : (
                           <span className="text-slate-300">—</span>

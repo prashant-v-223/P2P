@@ -35,6 +35,7 @@ function getS3Client() {
   if (!s3Client) {
     const clientConfig = {
       region: process.env.AWS_REGION || 'us-east-1',
+      maxAttempts: 1,
       credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../../services/api';
+import { formatCurrency } from '../../utils/formatCurrency';
 
 const VendorContext = createContext();
 
@@ -75,8 +76,13 @@ export const VendorProvider = ({ children }) => {
       if (res.ok && json.success) {
         const pos = (json.purchaseOrders || []).map(p => ({
             id: p.sapPoNumber || p.poNumber,
-            date: p.date || 'Today',
-            amount: `₹${(p.totalAmount || 0).toLocaleString('en-IN')}`,
+            date: p.documentDate || p.createdAt
+              ? new Date(p.documentDate || p.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+              : '—',
+            dueDate: p.dueDate || p.deliveryDate || p.paymentDueDate
+              ? new Date(p.dueDate || p.deliveryDate || p.paymentDueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+              : '—',
+            amount: formatCurrency(p.totalAmount, p.currency || 'INR'),
             status: p.status || 'Open',
             currency: p.currency || 'INR',
             numericAmount: Number(p.totalAmount) || 0,
@@ -93,12 +99,14 @@ export const VendorProvider = ({ children }) => {
             invoiceNumber: i.invoiceNumber,
             poNumber: i.sapPoNumber || i.poId,
             createdAt: i.createdAt ? new Date(i.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today',
-            paymentDueDate: i.createdAt ? new Date(new Date(i.createdAt).getTime() + 30*24*60*60*1000).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '30 Days',
+            paymentDueDate: i.paymentDueDate || i.dueDate
+              ? new Date(i.paymentDueDate || i.dueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+              : '—',
             invoiceDate: i.invoiceDate ? new Date(i.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '',
             status: formatStatus(i.status),
             invoiceAmount: Number(i.grossAmount) || 0,
             currency: i.currency || 'INR',
-            grnNo: i.grnNumber || 'GRN-001',
+            grnNo: i.grnNumber || '',
             fileName: 'Invoice-Document.pdf'
           }));
         setInvoices(invs);
@@ -184,6 +192,9 @@ export const VendorProvider = ({ children }) => {
       poNumber: newInvoice.poNumber,
       invoiceNumber: newInvoice.invoiceNumber,
       asnNumber: newInvoice.asnNumber || '',
+      invoiceDate: newInvoice.invoiceDate,
+      paymentDueDate: newInvoice.paymentDueDate,
+      supportingDocuments: newInvoice.supportingDocuments,
       vendorId: vendorProfile.sapVendorCode || vendorUser.sapVendorCode || '30000111',
       vendorName: vendorProfile.companyName || vendorUser.companyName || 'Vendor',
       requestedBy: vendorProfile.companyName || vendorUser.companyName || 'Vendor',
@@ -194,7 +205,6 @@ export const VendorProvider = ({ children }) => {
       tdsPercentage: Number.parseFloat(newInvoice.tdsPercentage) || 0,
       tdsAmount: (Number(newInvoice.invoiceAmount) || 0) * (Number.parseFloat(newInvoice.tdsPercentage) || 0) / 100,
       advanceAdjusted: Number(newInvoice.advanceAdjust || 0),
-      grnNumber: newInvoice.grnNo,
       remarks: newInvoice.remarks
     };
 
@@ -212,7 +222,8 @@ export const VendorProvider = ({ children }) => {
       id: backendInvoiceId || `INV-${Date.now().toString().slice(-6)}`,
       createdAt: new Date().toISOString(),
       status: 'Pending',
-      ...newInvoice
+      ...newInvoice,
+      asnNumber: json.data?.asnNumber || newInvoice.asnNumber
     };
 
     setInvoices((prev) => {

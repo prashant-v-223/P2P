@@ -154,7 +154,7 @@ function buildAdvanceFilter(idParam) {
   return { $or: filterOr };
 }
 
-const activePaymentStatuses = ['pending', 'approved', 'paid'];
+const activePaymentStatuses = ['pending', 'approved', 'paid', 'adjusted'];
 
 function sameValue(left, right) {
   return String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
@@ -712,11 +712,11 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
       InvoicePayment.find({
         $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }],
         status: { $in: activePaymentStatuses }
-      }).select('poId sapPoNumber grossAmount threeWayMatch.invoiceQuantity').lean(),
+      }).select('poId sapPoNumber grossAmount status advanceAdjusted threeWayMatch.invoiceQuantity').lean(),
       AdvancePayment.find({
         $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }],
         status: { $in: activePaymentStatuses }
-      }).select('poId sapPoNumber amount').lean(),
+      }).select('poId sapPoNumber amount adjustedAmount status').lean(),
       vendorKeys.length ? Vendor.find({
         $or: [
           { id: { $in: vendorKeys } },
@@ -734,6 +734,15 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
       const invoicedAmount = matchingInvoices.reduce((sum, item) => sum + (Number(item.grossAmount) || 0), 0);
       const invoicedQuantity = matchingInvoices.reduce((sum, item) => sum + (Number(item.threeWayMatch?.invoiceQuantity) || 0), 0);
       const advanceCommitted = matchingAdvances.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+      const approvedStatuses = new Set(['approved', 'paid', 'adjusted']);
+      const approvedInvoiceAmount = matchingInvoices
+        .filter((item) => approvedStatuses.has(String(item.status).toLowerCase()))
+        .reduce((sum, item) => sum + (Number(item.grossAmount) || 0), 0);
+      const approvedAdvanceAmount = matchingAdvances
+        .filter((item) => approvedStatuses.has(String(item.status).toLowerCase()))
+        .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+      const approvedTotal = approvedInvoiceAmount + approvedAdvanceAmount;
+      const shouldClose = Number(po.totalAmount) > 0 && approvedTotal >= Number(po.totalAmount);
       const totalQuantity = getPoQuantity(po);
       const vendor = poVendors.find((item) =>
         sameValue(item.id, po.supplierId) ||
@@ -749,6 +758,10 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
         invoicedAmount,
         remainingInvoiceAmount: Math.max(0, Number(po.totalAmount) - invoicedAmount),
         advanceCommitted,
+        approvedAdvanceAmount,
+        approvedInvoiceAmount,
+        approvedTotal,
+        status: shouldClose ? 'closed' : po.status,
         remainingAdvanceAmount: Math.max(0, Number(po.totalAmount) - advanceCommitted),
         totalQuantity,
         remainingQuantity: Math.max(0, totalQuantity - invoicedQuantity)
@@ -2133,19 +2146,29 @@ router.get('/invoices/:id', authenticateToken, async (req, res) => {
 
 // ─── POST Create Invoice Payment ─────────────────────────────────────────────
 
+router.get('/invoices/next-asn', authenticateToken, async (req, res) => {
+  try {
+    const vendorId = req.user?.role === 'Vendor' ? (req.user.sapVendorCode || req.user.id) : String(req.query.vendorId || '');
+    const filter = vendorId ? { vendorId } : {};
+    const year = new Date().getFullYear();
+    const used = await InvoicePayment.find({ ...filter, $or: [{ asnNumber: /^\d+$/ }, { asnNumber: new RegExp(`^ASN-${year}-\\d+$`) }] }).select('asnNumber').lean();
+    const next = used.reduce((max, item) => Math.max(max, Number(String(item.asnNumber).split('-').pop()) || 0), 0) + 1;
+    return res.json({ success: true, data: { asnNumber: `ASN-${year}-${String(next).padStart(3, '0')}` } });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.post('/invoices/create', authenticateToken, async (req, res) => {
   try {
     const {
       poNumber, invoiceNumber, grossAmount, gstAmount, tdsAmount, tdsPercentage,
       advanceAdjusted, advanceIdAdjusted, poQuantity, grnQuantity, invoiceQuantity,
       grnNumber, remarks, approvalTo, requestedBy, vendorId, vendorName, asnNumber: requestedAsnNumber,
-      invoiceDate, currency
+      invoiceDate, paymentDueDate, currency, supportingDocuments
     } = req.body;
 
     if (!poNumber) return res.status(400).json({ success: false, error: 'Purchase Order is required.' });
-    if (req.user?.role === 'Vendor' && !String(grnNumber || '').trim()) {
-      return res.status(400).json({ success: false, error: 'GRN / Delivery Note number is required.' });
-    }
     if (invoiceDate && Date.parse(invoiceDate) > Date.now()) {
       return res.status(400).json({ success: false, error: 'Invoice date cannot be in the future.' });
     }
@@ -2218,23 +2241,16 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
     }
     const netPayable = Math.max(0, numGross + numGst - numTds - numAdv);
 
-    // Unique invoice number with retry
-    let finalInvoiceNumber = String(invoiceNumber || '').trim();
+    const finalInvoiceNumber = String(invoiceNumber || '').trim();
     if (!finalInvoiceNumber) {
-      finalInvoiceNumber = 'INV-' + new Date().getFullYear() + '-' + Math.floor(100000 + Math.random() * 900000);
+      return res.status(400).json({ success: false, error: 'Vendor Invoice Number is required.' });
     }
-
-    // Check for duplicates with retry
-    let retries = 3;
-    while (retries > 0) {
-      const existingInv = await InvoicePayment.findOne({ invoiceNumber: finalInvoiceNumber, vendorId: vendorIdFinal });
-      if (!existingInv) break;
-      // Generate new number and retry
-      finalInvoiceNumber = 'INV-' + new Date().getFullYear() + '-' + Math.floor(100000 + Math.random() * 900000);
-      retries--;
+    if (!/^[A-Za-z0-9][A-Za-z0-9/_-]{2,49}$/.test(finalInvoiceNumber)) {
+      return res.status(400).json({ success: false, error: 'Invoice Number must be 3–50 characters and may contain letters, numbers, /, _ and - only.' });
     }
-    if (retries === 0) {
-      return res.status(409).json({ success: false, error: 'Unable to generate unique invoice number. Please try again.' });
+    const existingInv = await InvoicePayment.findOne({ invoiceNumber: finalInvoiceNumber, vendorId: vendorIdFinal });
+    if (existingInv) {
+      return res.status(409).json({ success: false, error: 'This Invoice Number already exists for the vendor.' });
     }
 
     const invPaymentId = 'INV-PAY-' + Date.now().toString().slice(-6);
@@ -2248,9 +2264,31 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
     }).lean();
 
     const isImportVendor = String(vendor?.vendorType || '').toLowerCase().includes('import');
-    const asnNumber = isImportVendor
-      ? (String(requestedAsnNumber || '').trim() || `ASN-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`)
-      : '';
+    let asnNumber = '';
+    if (isImportVendor) {
+      const year = new Date().getFullYear();
+      const used = await InvoicePayment.find({ vendorId: vendorIdFinal, $or: [{ asnNumber: /^\d+$/ }, { asnNumber: new RegExp(`^ASN-${year}-\\d+$`) }] }).select('asnNumber').lean();
+      const next = used.reduce((max, item) => Math.max(max, Number(String(item.asnNumber).split('-').pop()) || 0), 0) + 1;
+      asnNumber = `ASN-${year}-${String(next).padStart(3, '0')}`;
+    }
+
+    const normalizedSupportingDocuments = Array.isArray(supportingDocuments) ? supportingDocuments : [];
+    if (req.user?.role === 'Vendor' && normalizedSupportingDocuments.length === 0) {
+      return res.status(400).json({ success: false, error: 'At least one invoice supporting document is required.' });
+    }
+    if (normalizedSupportingDocuments.length > 10) {
+      return res.status(400).json({ success: false, error: 'A maximum of 10 supporting documents can be uploaded.' });
+    }
+    const allowedSupportingTypes = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+    if (normalizedSupportingDocuments.some((document) => !document?.fileUrl || !document?.fileName)) {
+      return res.status(400).json({ success: false, error: 'Every supporting document must have a valid uploaded file.' });
+    }
+    if (normalizedSupportingDocuments.some((document) => document.mimeType && !allowedSupportingTypes.has(String(document.mimeType)))) {
+      return res.status(400).json({ success: false, error: 'Every supporting document must be a PDF, JPG, or PNG file.' });
+    }
+    if (normalizedSupportingDocuments.some((document) => Number(document.size) > 25 * 1024 * 1024)) {
+      return res.status(400).json({ success: false, error: 'Each supporting document must not exceed 25 MB.' });
+    }
 
     const grnQty = grnQuantity && Number(grnQuantity) > 0 ? Number(grnQuantity) : (invQty > 0 ? invQty : poQty);
     const isMatched = (poQty === grnQty) && (grnQty === invQty);
@@ -2263,7 +2301,15 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       vendorName: vendorNameFinal,
       invoiceNumber: finalInvoiceNumber,
       asnNumber: asnNumber,
+      supportingDocuments: normalizedSupportingDocuments.map((document) => ({
+        fileName: String(document.fileName),
+        originalName: String(document.originalName || document.fileName),
+        fileUrl: String(document.fileUrl),
+        size: Number(document.size) || 0,
+        mimeType: String(document.mimeType || '')
+      })),
       invoiceDate: invoiceDate && !Number.isNaN(Date.parse(invoiceDate)) ? new Date(invoiceDate) : new Date(),
+      paymentDueDate: paymentDueDate && !Number.isNaN(Date.parse(paymentDueDate)) ? new Date(paymentDueDate) : undefined,
       grossAmount: numGross,
       currency: poCurrency,
       gstAmount: numGst,
@@ -2312,6 +2358,24 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
     newInvoice.assignedApproverName = approval.assignedApproverName || null;
     newInvoice.assignedApproverRole = approval.assignedApproverRole || null;
     await newInvoice.save();
+
+    if (numAdv > 0) {
+      let remainingAdjustment = numAdv;
+      const advancesToAdjust = await AdvancePayment.find({
+        $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }],
+        status: { $in: ['approved', 'paid', 'adjusted'] }
+      }).sort({ createdAt: 1 });
+      for (const advance of advancesToAdjust) {
+        if (remainingAdjustment <= 0) break;
+        const available = Math.max(0, Number(advance.amount) - Number(advance.adjustedAmount || 0));
+        const applied = Math.min(available, remainingAdjustment);
+        if (applied <= 0) continue;
+        advance.adjustedAmount = Number(advance.adjustedAmount || 0) + applied;
+        advance.adjustmentInvoiceId = invPaymentId;
+        remainingAdjustment -= applied;
+        await advance.save();
+      }
+    }
 
     try {
       await WorkflowAudit.create({
@@ -3537,7 +3601,11 @@ router.get('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) =>
     const entries = await RfqBlEntry.find({ rfqId: context.rfq.rfqId }).sort({ createdAt: -1 }).lean();
     const mine = entries.filter((entry) => vendorKeys.includes(normaliseInviteValue(entry.vendorId)) || vendorKeys.includes(normaliseInviteValue(entry.vendorName)));
     const usedContainers = mine.reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0);
-    return res.json({ success: true, data: { rfq: context.rfq.toObject(), allocation: context.allocation, usedContainers, remainingContainers: Math.max(0, context.allocation.containers - usedContainers), entries: mine } });
+    const poRef = context.rfq.sapPoNumber || context.rfq.poId || context.rfq.poNumber;
+    const linkedPo = poRef ? await PurchaseOrder.findOne({ $or: [{ poNumber: poRef }, { sapPoNumber: poRef }] }).lean() : null;
+    const poNumberText = String(linkedPo?.sapPoNumber || linkedPo?.poNumber || poRef || '');
+    const requiresAsn = /^(43|60|PO-43)/i.test(poNumberText);
+    return res.json({ success: true, data: { rfq: context.rfq.toObject(), allocation: context.allocation, requiresAsn, usedContainers, remainingContainers: Math.max(0, context.allocation.containers - usedContainers), entries: mine } });
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -3604,10 +3672,13 @@ router.post('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) =
     }
 
     const asnNumber = String(req.body.asnNumber || '').trim().toUpperCase();
-    if (!asnNumber) {
+    const poRef = context.rfq.sapPoNumber || context.rfq.poId || context.rfq.poNumber;
+    const linkedPo = poRef ? await PurchaseOrder.findOne({ $or: [{ poNumber: poRef }, { sapPoNumber: poRef }] }).lean() : null;
+    const requiresAsn = /^(43|60|PO-43)/i.test(String(linkedPo?.sapPoNumber || linkedPo?.poNumber || poRef || ''));
+    if (requiresAsn && !asnNumber) {
       return res.status(400).json({ success: false, error: 'ASN Number (Advance Shipping Notice) is required to link with RFQ & PO records.' });
     }
-    if (!/^[A-Z0-9\-_/]{3,30}$/i.test(asnNumber)) {
+    if (asnNumber && !/^[A-Z0-9\-_/]{3,30}$/i.test(asnNumber)) {
       return res.status(400).json({ success: false, error: 'ASN Number must be between 3 and 30 characters (letters, numbers, hyphens, slashes).' });
     }
 
@@ -3617,20 +3688,20 @@ router.post('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) =
       return res.status(400).json({ success: false, error: `BL Number "${blNumber}" already exists in the system.` });
     }
 
-    const duplicateAsn = await RfqBlEntry.exists({ $or: [{ asnNumber }, { autoAsnNumber: asnNumber }] });
+    const duplicateAsn = asnNumber ? await RfqBlEntry.exists({ $or: [{ asnNumber }, { autoAsnNumber: asnNumber }] }) : false;
     if (duplicateAsn) {
       return res.status(400).json({ success: false, error: `ASN Number "${asnNumber}" has already been used for a BL entry.` });
     }
 
     const poKeys = [context.rfq?.poId, context.rfq?.sapPoNumber, context.rfq?.poNumber, context.rfq?.rfqId, context.rfq?.rfqNumber].filter(Boolean);
-    const matchingInvoice = await InvoicePayment.findOne({
+    const matchingInvoice = asnNumber ? await InvoicePayment.findOne({
       $and: [
         { asnNumber: { $regex: new RegExp(`^${asnNumber.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') } },
         { $or: [{ poId: { $in: poKeys } }, { sapPoNumber: { $in: poKeys } }, { poNumber: { $in: poKeys } }, { asnNumber: { $exists: true, $ne: '' } }] }
       ]
-    }).lean();
+    }).lean() : null;
 
-    if (!matchingInvoice) {
+    if (requiresAsn && !matchingInvoice) {
       return res.status(400).json({
         success: false,
         error: `ASN Number "${asnNumber}" does not match any invoice record for the linked Purchase Order (PO).`
@@ -4637,7 +4708,10 @@ router.post('/custom-duties/:id/payout', authenticateToken, authorizePermission(
 
 // ─── FILE UPLOAD/DOWNLOAD ROUTES ────────────────────────────────────────────
 
-const uploadMiddleware = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+const uploadMiddleware = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024, files: 10 }
+});
 
 router.post('/upload-file', authenticateToken, uploadMiddleware.single('file'), async (req, res) => {
   try {
@@ -4662,6 +4736,41 @@ router.post('/upload-file', authenticateToken, uploadMiddleware.single('file'), 
     });
   } catch (err) {
     console.error('[Upload API] File upload error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/upload-files', authenticateToken, uploadMiddleware.array('files', 10), async (req, res) => {
+  try {
+    if (!req.files?.length) return res.status(400).json({ success: false, error: 'No files uploaded.' });
+
+    const folder = req.body.folder || 'documents';
+    const uploadedFiles = await Promise.all(req.files.map(async (file) => {
+      const storageResult = await uploadToS3(file.buffer, file.originalname, file.mimetype, folder);
+      return {
+        fileUrl: storageResult.url,
+        fileName: storageResult.key || file.originalname,
+        originalName: file.originalname,
+        size: storageResult.size,
+        mimeType: file.mimetype,
+        storage: storageResult.storage
+      };
+    }));
+
+    return res.status(200).json({
+      success: true,
+      message: `${uploadedFiles.length} files uploaded successfully.`,
+      files: uploadedFiles
+    });
+
+    const newlyClosed = enrichedPos.filter((po) => po.status === 'closed' && pos.find((item) => String(item._id) === String(po._id))?.status !== 'closed');
+    if (newlyClosed.length) {
+      await PurchaseOrder.bulkWrite(newlyClosed.map((po) => ({
+        updateOne: { filter: { _id: po._id }, update: { $set: { status: 'closed' } } }
+      })));
+    }
+  } catch (err) {
+    console.error('[Batch Upload API] File upload error:', err);
     return res.status(500).json({ success: false, error: err.message });
   }
 });

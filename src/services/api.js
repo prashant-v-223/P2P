@@ -54,7 +54,7 @@ export const apiFetch = async (url, options = {}) => {
       try {
         const directRes5050 = await fetch(`http://127.0.0.1:5050${url}`, requestOptions);
         if (directRes5050.ok || directRes5050.status < 400) return directRes5050;
-      } catch (e) {}
+      } catch (e) { }
     }
   } catch (netErr) {
     networkError = netErr;
@@ -63,7 +63,7 @@ export const apiFetch = async (url, options = {}) => {
         const directRes5050 = await fetch(`http://127.0.0.1:5050${url}`, requestOptions);
         if (directRes5050.ok || directRes5050.status < 400) return directRes5050;
         res = directRes5050;
-      } catch (e) {}
+      } catch (e) { }
     }
   }
 

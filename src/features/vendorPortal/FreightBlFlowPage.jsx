@@ -196,10 +196,12 @@ export function FreightBlCreatePage() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [asnValidating, setAsnValidating] = useState(false);
   const [asnValidatedSuccess, setAsnValidatedSuccess] = useState(false);
+  const requiresAsn = summary?.requiresAsn !== false;
 
   const handleAsnBlur = async () => {
+    if (!requiresAsn) return;
     const cleanAsn = form.asnNumber.trim().toUpperCase();
-    if (!cleanAsn) {
+    if (requiresAsn && !cleanAsn) {
       setFieldErrors((prev) => ({ ...prev, asnNumber: 'ASN Number is required.' }));
       setAsnValidatedSuccess(false);
       return;
@@ -254,9 +256,9 @@ export function FreightBlCreatePage() {
 
     if (!cleanAsn) {
       errors.asnNumber = 'ASN Number is required to link with RFQ & PO records.';
-    } else if (cleanAsn.length < 3) {
+    } else if (cleanAsn && cleanAsn.length < 3) {
       errors.asnNumber = 'ASN Number must be at least 3 characters.';
-    } else if (!/^[A-Z0-9\-_/]+$/i.test(cleanAsn)) {
+    } else if (cleanAsn && !/^[A-Z0-9\-_/]+$/i.test(cleanAsn)) {
       errors.asnNumber = 'ASN Number can only contain letters, numbers, hyphens, and slashes.';
     }
 
@@ -375,8 +377,8 @@ export function FreightBlCreatePage() {
               )}
             </div>
 
-            {/* ASN Number Field */}
-            <div>
+            {/* ASN Number Field - import BL only */}
+            {requiresAsn && <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
                 ASN Number (Advance Shipping Notice) <span className="text-rose-500">*</span>
               </label>
@@ -413,7 +415,7 @@ export function FreightBlCreatePage() {
                   <AlertCircle className="w-3 h-3 shrink-0" /> {fieldErrors.asnNumber}
                 </p>
               )}
-            </div>
+            </div>}
 
             {/* Container Count Field */}
             <div className="sm:col-span-2">

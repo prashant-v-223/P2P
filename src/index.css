@@ -52,6 +52,7 @@
     letter-spacing: 0.05em !important;
     text-transform: uppercase !important;
     color: #94a3b8 !important;
+    white-space: nowrap;
   }
 
   td {
@@ -75,6 +76,22 @@
 
   input, select, textarea {
     font-size: 13.5px;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1599px) {
+  main table:not(.table-fixed) td {
+    white-space: nowrap;
+  }
+
+  main table:not(.table-fixed) th,
+  main table:not(.table-fixed) td {
+    padding-left: 0.625rem !important;
+    padding-right: 0.625rem !important;
+  }
+
+  main table:not(.table-fixed) td {
+    font-size: 11px !important;
   }
 }
 

@@ -4,6 +4,7 @@ import { useVendor } from './vendorContext';
 import { FileText, Plus, Search, Filter, Eye, Download, CheckCircle, Clock, XCircle } from 'lucide-react';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { ServerPagination } from '../../components/ui/server-pagination';
+import { formatCurrency } from '../../utils/formatCurrency';
 
 export default function VendorInvoicesListPage() {
   const { invoices, vendorProfile } = useVendor();
@@ -13,13 +14,6 @@ export default function VendorInvoicesListPage() {
   const [statusFilter, setStatusFilter] = useState('All');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-
-  const formatAmount = (amount, currency = 'INR') => {
-    if (typeof amount === 'string' && /[^\d.,-]/.test(amount)) return amount;
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency', currency: currency === 'USD' ? 'USD' : 'INR', minimumFractionDigits: 2
-    }).format(Number(amount) || 0);
-  };
 
   const filteredInvoices = invoices.filter((inv) => {
     const matchesSearch =
@@ -105,23 +99,23 @@ export default function VendorInvoicesListPage() {
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500">
                   <tr>
-                    <th className="p-4">Invoice #</th>
-                    <th className="p-4">PO Number</th>
-                    <th className="p-4">Date</th>
-                    <th className="p-4">Due Date</th>
-                    <th className="p-4">Amount</th>
-                    <th className="p-4">Status</th>
+                    <th className="p-4 whitespace-nowrap">Invoice #</th>
+                    <th className="p-4 whitespace-nowrap">PO Number</th>
+                    <th className="p-4 whitespace-nowrap">Date</th>
+                    <th className="p-4 whitespace-nowrap">Due Date</th>
+                    <th className="p-4 whitespace-nowrap">Amount</th>
+                    <th className="p-4 whitespace-nowrap">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                   {paginatedInvoices.map((inv) => (
                     <tr key={inv.id} className="hover:bg-slate-50/70 transition">
-                      <td className="p-4 font-bold text-slate-900 font-mono">{inv.invoiceNumber || inv.id}</td>
-                      <td className="p-4 text-slate-800 font-mono font-bold">{inv.poNumber}</td>
-                      <td className="p-4 text-slate-500">{inv.invoiceDate || inv.createdAt || 'Today'}</td>
-                      <td className="p-4 text-slate-500">{inv.paymentDueDate || '30 Days'}</td>
-                      <td className="p-4 font-bold text-slate-900 font-mono">
-                        {formatAmount(inv.invoiceAmount, inv.currency)}
+                      <td className="p-4 font-bold text-slate-900 font-mono whitespace-nowrap">{inv.invoiceNumber || inv.id}</td>
+                      <td className="p-4 text-slate-800 font-mono font-bold whitespace-nowrap">{inv.poNumber}</td>
+                      <td className="p-4 text-slate-500 whitespace-nowrap">{inv.invoiceDate || inv.createdAt || '—'}</td>
+                      <td className="p-4 text-slate-500 whitespace-nowrap">{inv.paymentDueDate || '—'}</td>
+                      <td className="p-4 font-bold text-slate-900 font-mono whitespace-nowrap">
+                        {formatCurrency(inv.invoiceAmount, inv.currency)}
                       </td>
                       <td className="p-4">
                         <span

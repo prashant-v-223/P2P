@@ -216,7 +216,7 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
     <aside
       className={cn(
         "bg-white border-r border-slate-200 h-screen flex flex-col transition-all duration-300 flex-shrink-0 select-none z-40",
-        collapsed ? "w-[68px] overflow-visible" : "w-[250px] ",
+        collapsed ? "w-[68px] overflow-visible" : "w-[232px] 2xl:w-[250px]",
         "fixed inset-y-0 left-0 lg:static lg:translate-x-0",
         mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       )}

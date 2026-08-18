@@ -11,46 +11,75 @@ export function CustomFileUpload({
   required = false,
   error,
   helperText,
-  disabled = false
+  disabled = false,
+  onError
 }) {
   const fileInputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadCount, setUploadCount] = useState(0);
 
   const processUpload = async (rawFiles) => {
+    if (!multiple && rawFiles.length !== 1) {
+      onError?.('Please select exactly one file.');
+      return;
+    }
     const fileList = multiple ? Array.from(rawFiles) : [rawFiles[0]];
+    const existingFiles = multiple && Array.isArray(value) ? value : [];
+    if (multiple && existingFiles.length + fileList.length > 10) {
+      onError?.('You can upload a maximum of 10 files.');
+      return;
+    }
+    const acceptedExtensions = String(accept).split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
+    const invalidFile = fileList.find((file) => {
+      const extension = `.${String(file.name || '').split('.').pop().toLowerCase()}`;
+      return acceptedExtensions.length > 0 && !acceptedExtensions.includes(extension) && !acceptedExtensions.includes(file.type);
+    });
+    if (invalidFile) {
+      onError?.(`${invalidFile.name} is not an accepted file type.`);
+      return;
+    }
+    if (fileList.some((file) => file.size > 25 * 1024 * 1024)) {
+      onError?.('Each file must not exceed 25 MB.');
+      return;
+    }
+    onError?.('');
+    setUploadCount(fileList.length);
     setUploading(true);
 
     try {
-      const processedFiles = await Promise.all(fileList.map(async (file) => {
-        try {
-          const formData = new FormData();
-          formData.append('file', file);
-          formData.append('folder', 'documents');
+      const formData = new FormData();
+      fileList.forEach((file) => formData.append(multiple ? 'files' : 'file', file));
+      formData.append('folder', 'documents');
 
-          const res = await apiFetch('/api/p2p/upload-file', {
-            method: 'POST',
-            body: formData
-          });
+      const res = await apiFetch(multiple ? '/api/p2p/upload-files' : '/api/p2p/upload-file', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || 'File upload failed.');
 
-          if (res && res.ok) {
-            const data = await res.json();
-            file.fileUrl = data.fileUrl || data.fileName;
-            file.s3Key = data.fileName;
-            file.uploaded = true;
-          }
-        } catch (err) {
-          console.warn('[FileUpload] Cloud storage upload warning:', err);
-        }
+      const uploadedResults = multiple ? data.files : [data];
+      const processedFiles = fileList.map((file, index) => {
+        const uploaded = uploadedResults[index];
+        if (!uploaded?.fileUrl) return file;
+        file.fileUrl = uploaded.fileUrl;
+        file.s3Key = uploaded.fileName;
+        file.uploaded = true;
         return file;
-      }));
+      });
 
-      const finalVal = multiple ? processedFiles : processedFiles[0];
+      const finalVal = multiple
+        ? [...existingFiles, ...processedFiles].filter((file, index, files) => (
+            files.findIndex((item) => item.name === file.name && item.size === file.size) === index
+          ))
+        : processedFiles[0];
       onChange(finalVal);
     } catch (err) {
       console.error('[FileUpload] Upload error:', err);
-      onChange(multiple ? fileList : fileList[0]);
+      onError?.(err.message || 'File upload failed. Please try again.');
     } finally {
       setUploading(false);
+      setUploadCount(0);
     }
   };
 
@@ -116,13 +145,13 @@ export function CustomFileUpload({
 
         <p className="text-xs font-bold text-slate-800">
           {uploading ? (
-            <span className="text-[#0d7676]">Uploading file to AWS S3 Storage...</span>
+            <span className="text-[#0d7676]">Uploading {uploadCount > 1 ? `${uploadCount} files` : 'file'}...</span>
           ) : (
             <><span className="text-[#0d7676] hover:underline">Click to upload</span> or drag and drop</>
           )}
         </p>
         <p className="text-[10px] text-slate-400 font-medium mt-0.5">
-          Supports PDF, JPG, PNG, DOCX, XLSX (Max 25MB)
+          Accepted: {accept} (Max 25 MB){multiple ? '' : ' · One file only'}
         </p>
       </div>
 

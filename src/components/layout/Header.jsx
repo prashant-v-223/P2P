@@ -63,7 +63,7 @@ export default function Header({ collapsed, setCollapsed, onOpenMobile }) {
               <h1 className="truncate text-base font-bold tracking-tight text-slate-950">{meta.title}</h1>
               <span className="hidden rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 md:inline">{meta.eyebrow}</span>
             </div>
-            <p className="hidden truncate text-xs text-slate-500 md:block">{meta.description}</p>
+            <p className="hidden truncate text-xs text-slate-500 xl:block">{meta.description}</p>
           </div>
         </div>
       </div>

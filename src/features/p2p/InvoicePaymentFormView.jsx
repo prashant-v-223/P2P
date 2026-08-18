@@ -84,7 +84,7 @@ export default function InvoicePaymentFormView() {
   const [sgstAmount, setSgstAmount] = useState('0');
   const [igstAmount, setIgstAmount] = useState('0');
   const [tdsPercentage, setTdsPercentage] = useState('0%');
-  const [advanceAdjust, setAdvanceAdjust] = useState('0');
+  const [advanceAdjust, setAdvanceAdjust] = useState('');
 
   // Upload - Changed from single file to multiple documents
   const [sendApprovalTo, setSendApprovalTo] = useState('');
@@ -253,12 +253,6 @@ export default function InvoicePaymentFormView() {
       showToast({ title: 'Amount Exceeds PO', description: msg, type: 'error' });
       return;
     }
-    if (!grnNo.trim()) {
-      const msg = 'GRN / Delivery Note No is required.';
-      setErrorMsg(msg);
-      showToast({ title: 'GRN / Delivery Note Required', description: msg, type: 'error' });
-      return;
-    }
     if (!invoiceType) {
       const msg = 'Invoice Type is required.';
       setErrorMsg(msg);
@@ -293,7 +287,7 @@ export default function InvoicePaymentFormView() {
         tdsAmount: ((Number(invoiceAmount) || 0) * numTdsPct) / 100,
         tdsPercentage: numTdsPct,
         advanceAdjusted: Number(advanceAdjust) || 0,
-        grnNumber: grnNo.trim(),
+        grnNumber: '',
         remarks: remarks.trim(),
         approvalTo: sendApprovalTo,
         vendorType: selectedPoObj?.vendorType || ''
@@ -736,23 +730,6 @@ export default function InvoicePaymentFormView() {
               )}
             </div>
 
-            {/* GRN / Delivery Note No */}
-            <div className="space-y-1">
-              <label className="block text-xs font-semibold text-slate-700">
-                GRN / Delivery Note No <span className="text-rose-500">*</span>
-              </label>
-              <CustomInput
-                type="text"
-                value={grnNo}
-                onChange={(e) => {
-                  setGrnNo(e.target.value);
-                  setErrorMsg('');
-                }}
-                placeholder="e.g. GRN-001"
-                size="md"
-              />
-            </div>
-
             {/* Remarks */}
             <div className="space-y-1 md:col-span-2">
               <label className="block text-xs font-semibold text-slate-700">Remarks</label>
@@ -853,13 +830,15 @@ export default function InvoicePaymentFormView() {
 
             <div className="space-y-1">
               <label className="block text-xs font-semibold text-slate-700">
-                Advance Adjust <span className="text-rose-500">*</span>
+                Advance Adjust <span className="text-slate-400 font-normal">(Optional)</span>
               </label>
               <input
                 type="number"
                 step="0.01"
+                min="0"
                 value={advanceAdjust}
                 onChange={(e) => setAdvanceAdjust(e.target.value)}
+                placeholder="0.00"
                 className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white font-mono"
               />
             </div>

@@ -8,7 +8,15 @@ const invoicePaymentSchema = new mongoose.Schema({
   vendorName:       { type: String, required: true },
   invoiceNumber:    { type: String, required: true },
   asnNumber:        { type: String, default: '' },
+  supportingDocuments: [{
+    fileName: String,
+    originalName: String,
+    fileUrl: String,
+    size: Number,
+    mimeType: String
+  }],
   invoiceDate:      { type: Date, default: Date.now },
+  paymentDueDate:   { type: Date },
   grossAmount:      { type: Number, required: true },
   currency:         { type: String, default: 'INR', uppercase: true, trim: true },
   gstAmount:        { type: Number, default: 0 },

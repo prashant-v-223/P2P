@@ -4,7 +4,9 @@ import Sidebar from './Sidebar';
 import Header from './Header';
 
 export default function MainLayout() {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => (
+    typeof window !== 'undefined' && window.innerWidth < 1600
+  ));
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
@@ -36,7 +38,7 @@ export default function MainLayout() {
         />
 
         {/* Full-width scrollable viewport */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-6 scroll-smooth">
+        <main className="flex-1 overflow-y-auto p-3 sm:p-4 xl:p-5 2xl:p-6 scroll-smooth">
           <div className="w-full space-y-6">
             <Outlet />
           </div>

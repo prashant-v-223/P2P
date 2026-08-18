@@ -2,10 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { useSelector } from 'react-redux';
-import {
-  UserPlus, Search, Shield, CheckCircle2, Loader2, X,
-  XCircle, Users, AlertCircle, Pencil, Trash2, ShieldAlert, GitBranch, ChevronDown, ChevronRight, List, Network, RefreshCw, Eye, EyeOff
-} from 'lucide-react';
+import { UserPlus, Search, Shield, CheckCircle2, Loader2, X, XCircle, Users, AlertCircle, Pencil, Trash2, ShieldAlert, GitBranch, ChevronDown, ChevronRight, List, Network, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { SearchableSelect } from '../ui/searchable-select';
 import { FieldError } from '../ui/field-error';
@@ -28,58 +25,52 @@ function HierarchyNode({ user, canEditUser, onEdit, level = 0 }) {
           <div className="absolute left-[11px] top-[26px] h-[1px] w-3 bg-slate-200"></div>
         </div>
       )}
-      
+
       <div className={`relative group rounded-lg transition-all duration-200 ${level > 0 ? 'ml-6' : ''}`}>
         <div className="flex items-start gap-2 py-1.5">
           <span className="mt-3 w-5 shrink-0">
             {hasReports && (
-              <button 
-                type="button" 
-                onClick={() => setExpanded((value) => !value)} 
-                className="rounded p-0.5 text-slate-500 hover:bg-slate-100" 
+              <button
+                type="button"
+                onClick={() => setExpanded((value) => !value)}
+                className="rounded p-0.5 text-slate-500 hover:bg-slate-100"
                 aria-label={`${expanded ? 'Collapse' : 'Expand'} ${user.name}'s reports`}
               >
                 {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
               </button>
             )}
           </span>
-          
-          <div className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 py-2 shadow-2xs ${
-            user.status === 'Active' 
-              ? 'border-slate-200 bg-white' 
-              : 'border-rose-100 bg-rose-50/50 opacity-60'
-          }`}>
-            <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
-              user.status === 'Active' ? 'bg-teal-100 text-teal-700' : 'bg-slate-200 text-slate-500'
+
+          <div className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 py-2 shadow-2xs ${user.status === 'Active'
+            ? 'border-slate-200 bg-white'
+            : 'border-rose-100 bg-rose-50/50 opacity-60'
             }`}>
+            <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${user.status === 'Active' ? 'bg-teal-100 text-teal-700' : 'bg-slate-200 text-slate-500'
+              }`}>F
               {user.avatar}
             </span>
-            
+
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[11px] font-bold text-slate-800">{user.name}</span>
               <span className="block truncate text-[10px] text-slate-500">{user.role} · {user.department}</span>
             </span>
-            
-            <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${
-              user.status === 'Active' 
-                ? 'bg-emerald-50 text-emerald-700' 
-                : 'bg-slate-100 text-slate-500'
-            }`}>
+
+            <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${user.status === 'Active' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
               {user.status}
             </span>
-            
+
             {hasReports && (
               <span className="hidden rounded bg-teal-50 px-1.5 py-0.5 text-[9px] font-bold text-teal-700 sm:inline">
                 {user.reports.length} report{user.reports.length === 1 ? '' : 's'}
               </span>
             )}
-            
+
             {canEditUser && (
-              <button 
-                type="button" 
-                onClick={() => onEdit(user)} 
-                className="rounded p-1 text-slate-400 hover:bg-teal-50 hover:text-teal-700" 
-                title={`Edit ${user.name}`} 
+              <button
+                type="button"
+                onClick={() => onEdit(user)}
+                className="rounded p-1 text-slate-400 hover:bg-teal-50 hover:text-teal-700"
+                title={`Edit ${user.name}`}
                 aria-label={`Edit ${user.name}`}
               >
                 <Pencil className="h-3.5 w-3.5" />
@@ -87,16 +78,16 @@ function HierarchyNode({ user, canEditUser, onEdit, level = 0 }) {
             )}
           </div>
         </div>
-        
+
         {hasReports && expanded && (
           <ul className="ml-4 border-l border-slate-200 pl-3">
             {user.reports.map((report) => (
-              <HierarchyNode 
-                key={report.id} 
-                user={report} 
+              <HierarchyNode
+                key={report.id}
+                user={report}
                 level={level + 1}
-                canEditUser={canEditUser} 
-                onEdit={onEdit} 
+                canEditUser={canEditUser}
+                onEdit={onEdit}
               />
             ))}
           </ul>
@@ -133,12 +124,12 @@ function EditUserModal({ user, roleOptions, allUsers, onClose, onSaved }) {
 
     try {
       setSaving(true);
-      const payload = { 
-        name: name.trim(), 
-        email: email.trim(), 
-        role, 
-        department, 
-        status, 
+      const payload = {
+        name: name.trim(),
+        email: email.trim(),
+        role,
+        department,
+        status,
         managerId: managerId || null,
       };
       if (password) payload.password = password;
@@ -180,24 +171,24 @@ function EditUserModal({ user, roleOptions, allUsers, onClose, onSaved }) {
         <form noValidate onSubmit={handleUpdate} className="modal-body max-h-[calc(100dvh-5.5rem)] overflow-y-auto space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name <span className="text-rose-500">*</span></label>
-            <input 
-              type="text" 
-              required 
-              value={name} 
-              onChange={(e) => { setName(e.target.value); setErrors({ ...errors, name: '' }); }} 
-              className={`w-full text-sm p-2.5 rounded-lg border ${errors.name ? 'border-rose-400' : 'border-slate-300'}`} 
+            <input
+              type="text"
+              required
+              value={name}
+              onChange={(e) => { setName(e.target.value); setErrors({ ...errors, name: '' }); }}
+              className={`w-full text-sm p-2.5 rounded-lg border ${errors.name ? 'border-rose-400' : 'border-slate-300'}`}
             />
             <FieldError>{errors.name}</FieldError>
           </div>
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Official Email <span className="text-rose-500">*</span></label>
-            <input 
-              type="email" 
-              required 
-              value={email} 
-              onChange={(e) => { setEmail(e.target.value); setErrors({ ...errors, email: '' }); }} 
-              className={`w-full text-sm p-2.5 rounded-lg border ${errors.email ? 'border-rose-400' : 'border-slate-300'}`} 
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => { setEmail(e.target.value); setErrors({ ...errors, email: '' }); }}
+              className={`w-full text-sm p-2.5 rounded-lg border ${errors.email ? 'border-rose-400' : 'border-slate-300'}`}
             />
             <FieldError>{errors.email}</FieldError>
           </div>
@@ -205,22 +196,22 @@ function EditUserModal({ user, roleOptions, allUsers, onClose, onSaved }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">System Role <span className="text-rose-500">*</span></label>
-              <SearchableSelect 
-                value={role} 
-                onChange={(value) => { setRole(value); setErrors({ ...errors, role: '' }); }} 
-                error={errors.role} 
-                options={roleOptions} 
-                searchPlaceholder="Search roles..." 
+              <SearchableSelect
+                value={role}
+                onChange={(value) => { setRole(value); setErrors({ ...errors, role: '' }); }}
+                error={errors.role}
+                options={roleOptions}
+                searchPlaceholder="Search roles..."
               />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Department <span className="text-rose-500">*</span></label>
-              <SearchableSelect 
-                value={department} 
-                onChange={(value) => { setDepartment(value); setErrors({ ...errors, department: '' }); }} 
-                error={errors.department} 
-                options={['Procurement', 'Finance & Accounts', 'EXIM & Logistics', 'Supply Chain', 'IT Operations', 'Executive Management', 'Accounts & Finance']} 
-                searchPlaceholder="Search departments..." 
+              <SearchableSelect
+                value={department}
+                onChange={(value) => { setDepartment(value); setErrors({ ...errors, department: '' }); }}
+                error={errors.department}
+                options={['Procurement', 'Finance & Accounts', 'EXIM & Logistics', 'Supply Chain', 'IT Operations', 'Executive Management', 'Accounts & Finance']}
+                searchPlaceholder="Search departments..."
               />
             </div>
           </div>
@@ -229,16 +220,16 @@ function EditUserModal({ user, roleOptions, allUsers, onClose, onSaved }) {
             <p className="text-xs font-bold text-teal-900">Organisation hierarchy & delegation</p>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Reports to (Reporting Manager)</label>
-              <SearchableSelect 
-                value={managerId || ''} 
-                onChange={(val) => setManagerId(val)} 
+              <SearchableSelect
+                value={managerId || ''}
+                onChange={(val) => setManagerId(val)}
                 options={[
                   { label: '— None (Top-level / No Manager) —', value: '' },
                   ...allUsers
                     .filter((item) => item.id !== user.id && item.status === 'Active')
                     .map((item) => ({ label: `${item.name} — ${item.role}`, value: item.id }))
-                ]} 
-                searchable 
+                ]}
+                searchable
               />
             </div>
             <p className="text-[11px] text-teal-800">Select "None" to remove the reporting manager or delegation link completely.</p>
@@ -258,12 +249,12 @@ function EditUserModal({ user, roleOptions, allUsers, onClose, onSaved }) {
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Reset Password <span className="font-normal text-slate-400">(optional)</span></label>
               <div className="relative">
-                <input 
-                  type={showPassword ? "text" : "password"} 
-                  placeholder="Leave blank to keep current" 
-                  value={password} 
-                  onChange={(e) => { setPassword(e.target.value); setErrors({ ...errors, password: '' }); }} 
-                  className={`w-full text-sm pl-3 pr-10 py-2.5 rounded-lg border ${errors.password ? 'border-rose-400' : 'border-slate-300'}`} 
+                <input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Leave blank to keep current"
+                  value={password}
+                  onChange={(e) => { setPassword(e.target.value); setErrors({ ...errors, password: '' }); }}
+                  className={`w-full text-sm pl-3 pr-10 py-2.5 rounded-lg border ${errors.password ? 'border-rose-400' : 'border-slate-300'}`}
                 />
                 <button
                   type="button"
@@ -544,30 +535,28 @@ export default function UserManagementView() {
       {/* View Toggle */}
       <section className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-2 shadow-2xs">
         <div className="inline-flex rounded-lg bg-slate-100 p-1" role="tablist" aria-label="User directory view">
-          <button 
-            type="button" 
-            role="tab" 
-            aria-selected={viewMode === 'table'} 
-            onClick={() => setViewMode('table')} 
-            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-bold transition ${
-              viewMode === 'table' 
-                ? 'bg-white text-teal-700 shadow-2xs' 
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={viewMode === 'table'}
+            onClick={() => setViewMode('table')}
+            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-bold transition ${viewMode === 'table'
+              ? 'bg-white text-teal-700 shadow-2xs'
+              : 'text-slate-500 hover:text-slate-800'
+              }`}
           >
             <List className="h-3.5 w-3.5" />
             User table
           </button>
-          <button 
-            type="button" 
-            role="tab" 
-            aria-selected={viewMode === 'hierarchy'} 
-            onClick={() => setViewMode('hierarchy')} 
-            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-bold transition ${
-              viewMode === 'hierarchy' 
-                ? 'bg-white text-teal-700 shadow-2xs' 
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={viewMode === 'hierarchy'}
+            onClick={() => setViewMode('hierarchy')}
+            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-bold transition ${viewMode === 'hierarchy'
+              ? 'bg-white text-teal-700 shadow-2xs'
+              : 'text-slate-500 hover:text-slate-800'
+              }`}
           >
             <Network className="h-3.5 w-3.5" />
             Organisation hierarchy
@@ -634,7 +623,7 @@ export default function UserManagementView() {
             </div>
           </div>
         )}
-        
+
         {viewMode === 'hierarchy' && (
           <div className="flex min-w-0 items-center gap-3">
             <span className="section-icon hidden bg-teal-50 text-teal-700 sm:inline-flex">
@@ -691,11 +680,11 @@ export default function UserManagementView() {
                 {hierarchyTree.length > 0 ? (
                   <ul className="space-y-1">
                     {hierarchyTree.map((user) => (
-                      <HierarchyNode 
-                        key={user.id} 
-                        user={user} 
-                        canEditUser={canEditUser} 
-                        onEdit={setEditUserModal} 
+                      <HierarchyNode
+                        key={user.id}
+                        user={user}
+                        canEditUser={canEditUser}
+                        onEdit={setEditUserModal}
                       />
                     ))}
                   </ul>
@@ -703,7 +692,7 @@ export default function UserManagementView() {
                   <p className="py-12 text-center text-xs text-slate-400">No hierarchy data available.</p>
                 )}
               </section>
-              
+
               <aside className="h-fit space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-2xs xl:sticky xl:top-4">
                 <div>
                   <p className="text-xs font-bold text-slate-900">Hierarchy overview</p>
@@ -711,7 +700,7 @@ export default function UserManagementView() {
                     Keep managers active and assign each team member to the right reporting line.
                   </p>
                 </div>
-                
+
                 <div className="grid grid-cols-3 gap-2 xl:grid-cols-1">
                   <div className="rounded-lg border border-teal-100 bg-teal-50 p-2.5">
                     <p className="text-[10px] font-semibold uppercase text-teal-700">People</p>
@@ -726,7 +715,7 @@ export default function UserManagementView() {
                     <p className="mt-1 text-xl font-extrabold text-amber-800">{topLevelCount}</p>
                   </div>
                 </div>
-                
+
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Management tip</p>
                   <p className="mt-1.5 text-[11px] leading-5 text-slate-600">
@@ -763,11 +752,10 @@ export default function UserManagementView() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-full font-bold text-xs flex items-center justify-center border shadow-2xs ${
-                          usr.status === 'Active' 
-                            ? 'bg-teal-100 text-[#0d7676] border-teal-200' 
-                            : 'bg-slate-200 text-slate-500 border-slate-300'
-                        }`}>
+                        <div className={`w-8 h-8 rounded-full font-bold text-xs flex items-center justify-center border shadow-2xs ${usr.status === 'Active'
+                          ? 'bg-teal-100 text-[#0d7676] border-teal-200'
+                          : 'bg-slate-200 text-slate-500 border-slate-300'
+                          }`}>
                           {usr.avatar}
                         </div>
                         <span className="font-bold text-slate-900">{usr.name}</span>
@@ -794,19 +782,19 @@ export default function UserManagementView() {
                         const hasActiveReports = Boolean(activeReportCounts[usr.id]);
                         const isCurrentUser = currentUser?.id === usr.id;
                         const disabled = statusUpdatingId === usr.id || (usr.status === 'Active' && (hasActiveReports || isCurrentUser));
-                        const title = hasActiveReports 
-                          ? 'Reassign or deactivate direct reports before deactivating this manager.' 
-                          : isCurrentUser 
-                            ? 'You cannot deactivate your own account.' 
+                        const title = hasActiveReports
+                          ? 'Reassign or deactivate direct reports before deactivating this manager.'
+                          : isCurrentUser
+                            ? 'You cannot deactivate your own account.'
                             : `Set account to ${usr.status === 'Active' ? 'inactive' : 'active'}`;
                         return (
-                          <button 
-                            type="button" 
-                            role="switch" 
-                            aria-checked={usr.status === 'Active'} 
-                            disabled={disabled} 
-                            title={title} 
-                            onClick={() => handleStatusToggle(usr)} 
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={usr.status === 'Active'}
+                            disabled={disabled}
+                            title={title}
+                            onClick={() => handleStatusToggle(usr)}
                             className="inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             <span className={`relative h-5 w-9 rounded-full transition ${usr.status === 'Active' ? 'bg-emerald-500' : 'bg-slate-300'}`}>
@@ -818,11 +806,10 @@ export default function UserManagementView() {
                           </button>
                         );
                       })() : (
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
-                          usr.status === 'Active' 
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                            : 'bg-rose-50 text-rose-600 border-rose-200'
-                        }`}>
+                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${usr.status === 'Active'
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-rose-50 text-rose-600 border-rose-200'
+                          }`}>
                           {usr.status === 'Active' ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
                           {usr.status}
                         </span>
@@ -911,55 +898,55 @@ export default function UserManagementView() {
                   <p className="mt-0.5 text-xs text-slate-500">Create an account and assign database-backed access.</p>
                 </div>
               </div>
-              <button 
-                type="button" 
-                disabled={submitting} 
-                onClick={() => setIsAddUserOpen(false)} 
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" 
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => setIsAddUserOpen(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
                 aria-label="Close modal"
               >
                 <X className="h-4 w-4" />
               </button>
             </header>
-            
+
             <form noValidate onSubmit={handleCreateUser} className="modal-body max-h-[calc(100dvh-5.5rem)] overflow-y-auto space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name <span className="text-rose-500" aria-hidden="true">*</span></label>
-                <input 
-                  type="text" 
-                  required 
-                  placeholder="e.g. Ramesh Shah" 
-                  value={name} 
-                  onChange={(e) => { setName(e.target.value); setErrors({ ...errors, name: '' }); }} 
-                  className={`w-full text-sm p-2.5 rounded-lg border ${errors.name ? 'border-rose-400' : 'border-slate-300'}`} 
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Ramesh Shah"
+                  value={name}
+                  onChange={(e) => { setName(e.target.value); setErrors({ ...errors, name: '' }); }}
+                  className={`w-full text-sm p-2.5 rounded-lg border ${errors.name ? 'border-rose-400' : 'border-slate-300'}`}
                 />
                 <FieldError>{errors.name}</FieldError>
               </div>
-              
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Official Email <span className="text-rose-500" aria-hidden="true">*</span></label>
-                <input 
-                  type="email" 
-                  required 
-                  placeholder="ramesh@rayzon.one" 
-                  value={email} 
-                  onChange={(e) => { setEmail(e.target.value); setErrors({ ...errors, email: '' }); }} 
-                  className={`w-full text-sm p-2.5 rounded-lg border ${errors.email ? 'border-rose-400' : 'border-slate-300'}`} 
+                <input
+                  type="email"
+                  required
+                  placeholder="ramesh@rayzon.one"
+                  value={email}
+                  onChange={(e) => { setEmail(e.target.value); setErrors({ ...errors, email: '' }); }}
+                  className={`w-full text-sm p-2.5 rounded-lg border ${errors.email ? 'border-rose-400' : 'border-slate-300'}`}
                 />
                 <FieldError>{errors.email}</FieldError>
               </div>
-              
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Temporary Password <span className="text-rose-500" aria-hidden="true">*</span></label>
                 <div className="relative">
-                  <input 
-                    type={showAddUserPassword ? "text" : "password"} 
-                    required 
-                    minLength={8} 
-                    placeholder="Minimum 8 characters" 
-                    value={password} 
-                    onChange={(e) => { setPassword(e.target.value); setErrors({ ...errors, password: '' }); }} 
-                    className={`w-full text-sm pl-3 pr-10 py-2.5 rounded-lg border ${errors.password ? 'border-rose-400' : 'border-slate-300'}`} 
+                  <input
+                    type={showAddUserPassword ? "text" : "password"}
+                    required
+                    minLength={8}
+                    placeholder="Minimum 8 characters"
+                    value={password}
+                    onChange={(e) => { setPassword(e.target.value); setErrors({ ...errors, password: '' }); }}
+                    className={`w-full text-sm pl-3 pr-10 py-2.5 rounded-lg border ${errors.password ? 'border-rose-400' : 'border-slate-300'}`}
                   />
                   <button
                     type="button"
@@ -971,46 +958,46 @@ export default function UserManagementView() {
                 </div>
                 <FieldError>{errors.password}</FieldError>
               </div>
-              
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">System Role <span className="text-rose-500" aria-hidden="true">*</span></label>
-                <SearchableSelect 
-                  value={role} 
-                  onChange={(value) => { setRole(value); setErrors({ ...errors, role: '' }); }} 
-                  error={errors.role} 
-                  options={roleOptions} 
-                  searchPlaceholder="Search roles..." 
+                <SearchableSelect
+                  value={role}
+                  onChange={(value) => { setRole(value); setErrors({ ...errors, role: '' }); }}
+                  error={errors.role}
+                  options={roleOptions}
+                  searchPlaceholder="Search roles..."
                 />
               </div>
-              
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Department <span className="text-rose-500" aria-hidden="true">*</span></label>
-                <SearchableSelect 
-                  value={department} 
-                  onChange={(value) => { setDepartment(value); setErrors({ ...errors, department: '' }); }} 
-                  error={errors.department} 
-                  options={['Procurement', 'Finance & Accounts', 'EXIM & Logistics', 'Supply Chain', 'IT Operations', 'Executive Management', 'Accounts & Finance']} 
-                  searchPlaceholder="Search departments..." 
+                <SearchableSelect
+                  value={department}
+                  onChange={(value) => { setDepartment(value); setErrors({ ...errors, department: '' }); }}
+                  error={errors.department}
+                  options={['Procurement', 'Finance & Accounts', 'EXIM & Logistics', 'Supply Chain', 'IT Operations', 'Executive Management', 'Accounts & Finance']}
+                  searchPlaceholder="Search departments..."
                 />
               </div>
-              
+
               <div className="rounded-xl border border-teal-100 bg-teal-50/50 p-3 space-y-2">
                 <p className="text-xs font-bold text-teal-900">Organisation hierarchy</p>
                 <label className="block text-xs font-semibold text-slate-700">Reports to (Reporting Manager)</label>
-                <SearchableSelect 
-                  value={managerId || ''} 
-                  onChange={(val) => setManagerId(val)} 
+                <SearchableSelect
+                  value={managerId || ''}
+                  onChange={(val) => setManagerId(val)}
                   options={[
                     { label: '— None (Top-level / No Manager) —', value: '' },
                     ...hierarchyUsers
                       .filter((item) => item.status === 'Active')
                       .map((item) => ({ label: `${item.name} — ${item.role}`, value: item.id }))
-                  ]} 
-                  searchable 
+                  ]}
+                  searchable
                 />
                 <p className="text-[11px] text-teal-800">Select "None" for top-level accounts without a reporting manager.</p>
               </div>
-              
+
               <div className="modal-footer">
                 <button type="button" onClick={() => setIsAddUserOpen(false)} className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
                 <button type="submit" disabled={submitting} className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-[#0d7676] hover:bg-[#0a5c5c] rounded-lg disabled:opacity-50">

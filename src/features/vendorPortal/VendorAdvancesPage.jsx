@@ -4,6 +4,7 @@ import { useToast } from '../../components/ui/toast';
 import { CreditCard, FileText, Plus, Filter, CheckCircle2, X } from 'lucide-react';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { ServerPagination } from '../../components/ui/server-pagination';
+import { formatCurrency } from '../../utils/formatCurrency';
 
 export default function VendorAdvancesPage() {
   const { advances, purchaseOrders, addAdvanceRequest } = useVendor();
@@ -176,7 +177,7 @@ export default function VendorAdvancesPage() {
                       <td className="p-4 text-slate-800">{adv.poNumber}</td>
                       <td className="p-4 text-slate-500">{adv.requestedDate}</td>
                       <td className="p-4 font-bold text-slate-900">
-                        {new Intl.NumberFormat('en-IN', { style: 'currency', currency: adv.currency === 'USD' ? 'USD' : 'INR' }).format(Number(adv.amount) || 0)}
+                        {formatCurrency(adv.amount, adv.currency)}
                       </td>
                       <td className="p-4">
                         <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800">

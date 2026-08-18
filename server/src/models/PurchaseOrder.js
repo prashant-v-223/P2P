@@ -23,6 +23,7 @@ const purchaseOrderSchema = new mongoose.Schema({
   amountLocked: { type: Boolean, default: false },
   previousTotalAmount: Number,
   documentDate: { type: Date, default: Date.now },
+  dueDate: { type: Date },
   status: { 
     type: String, 
     enum: ['open', 'partially_delivered', 'delivered', 'closed', 'cancelled'], 

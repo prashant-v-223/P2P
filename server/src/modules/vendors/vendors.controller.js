@@ -97,19 +97,12 @@ export const vendorLogin = async (req, res) => {
     const loginIdentifier = String(email || username || '').trim().toLowerCase();
 
     if (!loginIdentifier || !password) {
-      return res.status(400).json({ success: false, error: 'Email/Vendor Code and password are required.' });
+      return res.status(400).json({ success: false, error: 'Email and password are required.' });
     }
 
 
     const rx = new RegExp(`^${escapeRegex(loginIdentifier)}$`, 'i');
-    let vendor = await Vendor.findOne({
-      $or: [
-        { email: rx },
-        { sapVendorCode: rx },
-        { supplierId: rx },
-        { id: rx }
-      ]
-    }).sort({ updatedAt: -1 }).select('+passwordHash +legacyPasswordHash');
+    let vendor = await Vendor.findOne({ email: rx }).sort({ updatedAt: -1 }).select('+passwordHash +legacyPasswordHash');
 
     if (!vendor) {
       vendor = await Vendor.findOne({
