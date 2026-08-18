@@ -318,10 +318,10 @@ export function userCanAccessRoute(userRole, routePath, customPermissions) {
   // Normalize path (strip query params / trailing slashes)
   const cleanPath = (routePath || '/').split('?')[0].replace(/\/$/, '') || '/';
 
-  // Hierarchy Report (7-Day Payment Report): Accessible to users with reports or approvals permissions
+  // Hierarchy Report (7-Day Payment Report): Accessible ONLY to Finance & Admin teams
   if (cleanPath === '/admin/hierarchy-report') {
-    return userHasPermission(userRole, 'reports.view', customPermissions) ||
-           userHasPermission(userRole, 'approvals.view', customPermissions);
+    const roleNorm = normalizeRole(userRole);
+    return ADMIN_ROLES.has(roleNorm) || isFinanceRole(userRole);
   }
 
   // Find matching route permission (exact match first)

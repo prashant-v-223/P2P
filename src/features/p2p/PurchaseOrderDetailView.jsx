@@ -39,8 +39,9 @@ export default function PurchaseOrderDetailView() {
   const { poId } = useParams();
   const navigate = useNavigate();
   const { user } = useSelector((state) => state.auth || {});
-  const userPerms = user?.permissions || user?.customPermissions;
-  const canCreateAdvance = userHasPermission(user?.role, 'advance-payments.create', userPerms);
+  const userRole = user?.role || 'admin';
+  const customPerms = user?.permissions || user?.customPermissions;
+  const canCreateAdvance = userHasPermission(userRole, 'advance-payments.create', customPerms);
 
   const [loading, setLoading] = useState(true);
   const [po, setPo] = useState({
@@ -205,6 +206,23 @@ export default function PurchaseOrderDetailView() {
     }
   };
 
+  const handleTogglePoStatus = async () => {
+    const isCurrentlyClosed = String(po.status || '').toLowerCase() === 'closed';
+    const endpoint = isCurrentlyClosed
+      ? `/api/p2p/purchase-orders/${encodeURIComponent(po.poNumber || poId)}/reopen`
+      : `/api/p2p/purchase-orders/${encodeURIComponent(po.poNumber || poId)}/close`;
+
+    try {
+      const res = await apiFetch(endpoint, { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to update PO status.');
+      showToast({ type: 'success', title: isCurrentlyClosed ? 'PO Reopened' : 'PO Closed', description: json.message });
+      fetchPoAndRelatedData();
+    } catch (err) {
+      showToast({ type: 'error', title: 'Action Failed', description: err.message });
+    }
+  };
+
   const percentUtilized = Math.min(100, ((po.paidAmount + po.inProgressAmount) / (po.poValue || 1)) * 100);
 
   return (
@@ -227,7 +245,13 @@ export default function PurchaseOrderDetailView() {
             }`}>
               {po.type}
             </span>
-            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-50 text-sky-700 border border-sky-200">
+            <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
+              String(po.status || '').toLowerCase() === 'closed'
+                ? 'bg-slate-100 text-slate-600 border-slate-300'
+                : String(po.status || '').toLowerCase() === 'completed'
+                ? 'bg-purple-50 text-purple-700 border-purple-200'
+                : 'bg-sky-50 text-sky-700 border-sky-200'
+            }`}>
               {po.status}
             </span>
           </div>
@@ -235,6 +259,27 @@ export default function PurchaseOrderDetailView() {
 
         <div className="flex items-center gap-2 self-start sm:self-center">
           <RecordDbInfoDrawer entityId={po.poNumber || poId} entityType="PurchaseOrder" recordData={po} />
+          {userHasPermission(userRole, 'purchase-orders.edit', customPerms) && (
+            <button
+              type="button"
+              onClick={handleTogglePoStatus}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs shadow-2xs transition-all border ${
+                String(po.status || '').toLowerCase() === 'closed'
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
+                  : 'bg-rose-50 text-rose-700 border-rose-300 hover:bg-rose-100'
+              }`}
+            >
+              {String(po.status || '').toLowerCase() === 'closed' ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Reopen Purchase Order
+                </>
+              ) : (
+                <>
+                  <XCircle className="w-3.5 h-3.5" /> Close Purchase Order
+                </>
+              )}
+            </button>
+          )}
           {canCreateAdvance && (
             <button
               onClick={() => navigate('/p2p/advance-payments/create')}

@@ -875,6 +875,36 @@ router.post('/purchase-orders/create', authenticateToken, async (req, res) => {
   }
 });
 
+router.post('/purchase-orders/:id/close', authenticateToken, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const po = await PurchaseOrder.findOne({
+      $or: [{ id: id }, { poNumber: id }, { sapPoNumber: id }, { poNumber: `PO-${id}` }]
+    });
+    if (!po) return res.status(404).json({ success: false, error: 'Purchase Order not found.' });
+    po.status = 'Closed';
+    await po.save();
+    return res.json({ success: true, message: `Purchase Order ${po.poNumber || id} has been closed.`, data: po });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/purchase-orders/:id/reopen', authenticateToken, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const po = await PurchaseOrder.findOne({
+      $or: [{ id: id }, { poNumber: id }, { sapPoNumber: id }, { poNumber: `PO-${id}` }]
+    });
+    if (!po) return res.status(404).json({ success: false, error: 'Purchase Order not found.' });
+    po.status = 'Open';
+    await po.save();
+    return res.json({ success: true, message: `Purchase Order ${po.poNumber || id} has been reopened.`, data: po });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ADVANCE PAYMENTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1203,10 +1233,15 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
     const accessibleUserIds = new Set();
     accessibleUserIds.add(loginUser.id);
 
-    const reportRole = await Role.findOne({ roleName: loginUser.role }, { permissions: 1 }).lean();
-    const reportActions = reportRole?.permissions?.reports || [];
-    const isTopExecutive = ['admin', 'system admin', 'superadmin', 'finance', 'cfo', 'accounts', 'md', 'procurement_head', 'exim-manager', 'logistics', 'manager'].includes(String(loginUser.role || '').toLowerCase())
-      || reportActions.includes('view-all') || reportActions.includes('manage') || reportActions.includes('*') || reportActions.includes('view');
+    const userRoleLower = String(loginUser.role || '').toLowerCase().replace(/[\s_-]+/g, '');
+    const isFinanceOrAdmin = ['admin', 'systemadmin', 'superadmin', 'finance', 'cfo', 'accounts'].includes(userRoleLower)
+      || userRoleLower.includes('finance') || userRoleLower.includes('account') || userRoleLower.includes('cfo');
+
+    if (!isFinanceOrAdmin) {
+      return res.status(403).json({ success: false, error: 'Hierarchy Report is accessible only to Finance and Admin teams.' });
+    }
+
+    const isTopExecutive = true;
 
     if (isTopExecutive) {
       allUsers.forEach((u) => accessibleUserIds.add(u.id));
@@ -1548,9 +1583,10 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
       const currency = payment.currency || 'INR';
       const amountINR = currency === 'INR' ? amount : (payment.amountINR || (amount * fxRate));
 
-      if (daysRemaining < 0) urgency = 'overdue';
-      else if (daysRemaining === 0) urgency = 'today';
-      else if (daysRemaining <= 3) urgency = 'urgent';
+      let urgency = '4-7 Days';
+      if (daysRemaining < 0) urgency = 'Overdue';
+      else if (daysRemaining === 0) urgency = 'Due Today';
+      else if (daysRemaining <= 3) urgency = '1-3 Days';
 
       upcomingFinancePayments.push({
         id: payment[idKey] || payment.id || payment._id,
@@ -1954,15 +1990,71 @@ router.put('/advances/:id/status', authenticateToken, async (req, res) => {
   }
 });
 
+async function recalculatePoMetrics(poRef) {
+  if (!poRef || poRef === '—' || poRef === 'Non-PO') return;
+  try {
+    const cleanRef = String(poRef).trim();
+    const po = await PurchaseOrder.findOne({
+      $or: [
+        { poNumber: cleanRef },
+        { sapPoNumber: cleanRef },
+        { id: cleanRef },
+        { poNumber: `PO-${cleanRef}` }
+      ]
+    });
+    if (!po) return;
+
+    const paidAdvances = await AdvancePayment.find({
+      $or: [{ sapPoNumber: cleanRef }, { poNumber: cleanRef }, { poId: cleanRef }],
+      status: 'paid',
+      isDeleted: { $ne: true }
+    }).lean();
+    const totalAdvancePaid = paidAdvances.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+
+    const paidInvoices = await InvoicePayment.find({
+      $or: [{ sapPoNumber: cleanRef }, { poNumber: cleanRef }, { poId: cleanRef }],
+      status: 'paid',
+      isDeleted: { $ne: true }
+    }).lean();
+    const totalInvoicePaid = paidInvoices.reduce((sum, item) => sum + (Number(item.netPayable || item.grossAmount) || 0), 0);
+
+    po.advancePaid = totalAdvancePaid;
+    po.paidAmount = totalInvoicePaid;
+    const poTotal = Number(po.totalAmount || po.poValue) || 0;
+
+    if (poTotal > 0 && (totalAdvancePaid + totalInvoicePaid) >= poTotal) {
+      if (po.status !== 'Closed' && po.status !== 'closed') {
+        po.status = 'Completed';
+      }
+    }
+    await po.save();
+  } catch (err) {
+    console.warn('[PO RECALC WARN]: Failed to update PO metrics:', err.message);
+  }
+}
+
 router.post('/advances/:id/payout', authenticateToken, authorizePermission('advance-payments', 'mark-paid'), async (req, res) => {
   try {
     const utrNumber = String(req.body.utrNumber || '').trim();
     if (!utrNumber) return res.status(400).json({ success: false, error: 'UTR number is required.' });
     const advance = await AdvancePayment.findOne(buildAdvanceFilter(req.params.id));
     if (!advance) return res.status(404).json({ success: false, error: 'Advance payment not found.' });
-    if (advance.status !== 'approved') return res.status(409).json({ success: false, error: 'Only an approved advance can be marked paid.' });
-    advance.status = 'paid'; advance.utrNumber = utrNumber; advance.paidAt = new Date();
+
+    advance.status = 'paid';
+    advance.utrNumber = utrNumber;
+    advance.paidAt = new Date();
     await advance.save();
+
+    const approval = await Approval.findOne({
+      $or: [{ id: advance.advanceId }, { id: req.params.id }]
+    });
+    if (approval) {
+      approval.status = 'Approved & Dispatched';
+      await approval.save();
+    }
+
+    await recalculatePoMetrics(advance.sapPoNumber || advance.poNumber || advance.poId);
+
     return res.json({ success: true, message: 'Advance payment marked as paid.', data: advance });
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
@@ -4810,9 +4902,22 @@ router.post('/logistics-payments/:id/payout', authenticateToken, authorizePermis
       $or: [{ logisticsPaymentId: req.params.id }, { referenceNumber: req.params.id }, ...(mongoose.Types.ObjectId.isValid(req.params.id) ? [{ _id: req.params.id }] : [])]
     });
     if (!payment) return res.status(404).json({ success: false, error: 'Logistics payment not found.' });
-    if (!['approved', 'Approved', 'Approved & Dispatched'].includes(payment.status)) return res.status(409).json({ success: false, error: 'Only an approved Logistics payment can be marked paid.' });
-    payment.status = 'paid'; payment.utrNumber = utrNumber; payment.paidAt = new Date();
+
+    payment.status = 'paid';
+    payment.utrNumber = utrNumber;
+    payment.paidAt = new Date();
     await payment.save();
+
+    const approval = await Approval.findOne({
+      $or: [{ id: payment.logisticsPaymentId }, { id: payment.referenceNumber }, { id: req.params.id }]
+    });
+    if (approval) {
+      approval.status = 'Approved & Dispatched';
+      await approval.save();
+    }
+
+    await recalculatePoMetrics(payment.sapPoNumber || payment.poId || payment.blNumber);
+
     return res.json({ success: true, message: 'Logistics payment marked as paid.', data: payment });
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
@@ -4823,9 +4928,22 @@ router.post('/custom-duties/:id/payout', authenticateToken, authorizePermission(
     if (!utrNumber) return res.status(400).json({ success: false, error: 'ICEGATE UTR/reference number is required.' });
     const duty = await CustomDutyPayment.findOne({ $or: [{ dutyId: req.params.id }, ...(mongoose.Types.ObjectId.isValid(req.params.id) ? [{ _id: req.params.id }] : [])] });
     if (!duty) return res.status(404).json({ success: false, error: 'Custom Duty record not found.' });
-    if (!['approved', 'Approved & Dispatched'].includes(duty.status)) return res.status(409).json({ success: false, error: 'Only an approved Custom Duty payment can be marked paid.' });
-    duty.status = 'paid'; duty.utrNumber = utrNumber; duty.paidAt = new Date();
+
+    duty.status = 'paid';
+    duty.utrNumber = utrNumber;
+    duty.paidAt = new Date();
     await duty.save();
+
+    const approval = await Approval.findOne({
+      $or: [{ id: duty.dutyId }, { id: req.params.id }]
+    });
+    if (approval) {
+      approval.status = 'Approved & Dispatched';
+      await approval.save();
+    }
+
+    await recalculatePoMetrics(duty.blNumber || duty.poId);
+
     return res.json({ success: true, message: 'Custom Duty payment marked as paid.', data: duty });
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
