@@ -4,6 +4,7 @@ import {
   CheckCircle2, Clock, XCircle, RotateCcw, AlertTriangle, Lock, Loader2, MessageSquare, AlertCircle 
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
+import { isFinanceRole } from '../../lib/permissions';
 
 // Helper: Format role title for display
 function formatRoleTitle(roleKey = '') {
@@ -546,7 +547,13 @@ export default function UniversalApprovalWorkflowCard({
                 <h3 className="font-extrabold text-slate-900 text-base">
                   Confirm {confirmModal.action === 'reject' ? 'Rejection' : confirmModal.action === 'return' ? 'Return Request' : 'Approval'}
                 </h3>
-                <p className="text-xs text-slate-500 font-medium">Reference: <strong className="font-mono">{referenceId}</strong></p>
+                <p className="text-xs text-slate-500 font-medium">
+                  Reference: <strong className="font-mono">{
+                    isFinanceRole(currentUser?.role) && !(approval?.dueDate || approval?.paymentDueDate || approval?.expectedPaymentDate)
+                      ? '[Pending Due Date]'
+                      : referenceId
+                  }</strong>
+                </p>
               </div>
             </div>
 

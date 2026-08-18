@@ -33,10 +33,16 @@ try {
   });
   if (invalidLogin.response.status !== 401) throw new Error('Invalid-password login was not rejected.');
 
-  const login = await request('/api/auth/login', {
+  let login = await request('/api/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ email: 'admin@rayzon.one', password: 'password123' })
+    body: JSON.stringify({ email: 'admin@rayzon.one', password: 'Rayzon@2026' })
   });
+  if (!login.response.ok || !login.body.accessToken) {
+    login = await request('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'admin@rayzon.one', password: 'password123' })
+    });
+  }
   if (!login.response.ok || !login.body.accessToken) throw new Error('Seeded admin login failed.');
   if ('passwordHash' in login.body.user) throw new Error('Password hash leaked through the API.');
 

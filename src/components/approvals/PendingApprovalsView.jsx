@@ -21,6 +21,7 @@ import { useToast } from '../ui/toast';
 import { SearchableSelect } from '../ui/searchable-select';
 import { setPendingCount } from '../../features/approvals/approvalsSlice';
 import { ServerPagination } from '../ui/server-pagination';
+import { isFinanceRole } from '../../lib/permissions';
 
 // Step display labels per payment type (must match backend WORKFLOW_STEPS status strings)
 const JOURNEY_LABELS = {
@@ -492,12 +493,25 @@ export default function PendingApprovalsView() {
                         <div className={`flex h-8 w-8 items-center justify-center rounded-lg border ${typeStyle.border} ${typeStyle.bg} ${typeStyle.text}`}>
                           <FileText className="h-4 w-4" />
                         </div>
-                        <Link
-                          to={getApprovalDetailUrl(approval)}
-                          className="font-mono text-base font-extrabold text-slate-900 transition-colors hover:text-teal-700"
-                        >
-                          {approval.id}
-                        </Link>
+                        {(() => {
+                          const hasDueDate = Boolean(approval.dueDate || approval.paymentDueDate || approval.expectedPaymentDate || approval.transactionSnapshot?.dueDate || approval.transactionSnapshot?.paymentDueDate);
+                          const isFinanceUser = isFinanceRole(user?.role);
+                          if (isFinanceUser && !hasDueDate) {
+                            return (
+                              <span className="font-mono text-xs font-extrabold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-200" title="Request number is hidden for Finance until a due date is specified">
+                                [Pending Due Date]
+                              </span>
+                            );
+                          }
+                          return (
+                            <Link
+                              to={getApprovalDetailUrl(approval)}
+                              className="font-mono text-base font-extrabold text-slate-900 transition-colors hover:text-teal-700"
+                            >
+                              {approval.id}
+                            </Link>
+                          );
+                        })()}
                         <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider ${typeStyle.bg} ${typeStyle.text} ${typeStyle.border}`}>
                           {approval.type}
                         </span>

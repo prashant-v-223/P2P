@@ -15,8 +15,7 @@ import {
   Building2,
   FileCheck,
   FileText,
-  ChevronDown,
-  Plus
+  ChevronDown
 } from 'lucide-react';
 
 
@@ -24,7 +23,6 @@ function PoSelector({ value, onChange }) {
   const [open, setOpen] = useState(false);
   const [poList, setPoList] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [creating, setCreating] = useState(false);
   const [inputVal, setInputVal] = useState(value || '');
   const ref = useRef(null);
 
@@ -37,7 +35,10 @@ function PoSelector({ value, onChange }) {
         const res = await apiFetch('/api/p2p/purchase-orders?size=100');
         const json = await res.json();
         if (res.ok && json.data) {
-          setPoList(json.data);
+          setPoList(json.data.filter((po) => {
+            const status = String(po.status || '').trim().toLowerCase();
+            return Number(po.totalAmount) > 0 && !['closed', 'cancelled', 'canceled', 'blocked'].includes(status);
+          }));
         }
       } catch (e) {
         console.error('Fetch PO error:', e);
@@ -64,31 +65,6 @@ function PoSelector({ value, onChange }) {
     const desc = (po.description || '').toLowerCase();
     return num.includes(q) || vendor.includes(q) || desc.includes(q);
   });
-
-  const handleCreatePo = async () => {
-    const numToCreate = inputVal.trim();
-    if (!numToCreate) return;
-    setCreating(true);
-    try {
-      const res = await apiFetch('/api/p2p/purchase-orders/create', {
-        method: 'POST',
-        body: JSON.stringify({ poNumber: numToCreate, totalAmount: 500000 })
-      });
-      const json = await res.json();
-      if (res.ok && json.data) {
-        const createdPo = json.data;
-        setPoList(prev => [createdPo, ...prev.filter(p => p.poNumber !== createdPo.poNumber)]);
-        const createdNum = createdPo.poNumber || createdPo.sapPoNumber || numToCreate;
-        onChange(createdNum);
-        setInputVal(createdNum);
-        setOpen(false);
-      }
-    } catch (e) {
-      console.error('Error creating PO:', e);
-    } finally {
-      setCreating(false);
-    }
-  };
 
   const selectedPoObj = poList.find(p => String(p.poNumber || p.sapPoNumber || p.poId) === String(value));
 
@@ -166,23 +142,13 @@ function PoSelector({ value, onChange }) {
           ) : (
             <div className="p-4 text-center space-y-2">
               <p className="text-xs text-slate-500 font-medium">No existing PO found matching "{inputVal}"</p>
-              {inputVal.trim() && (
-                <button
-                  type="button"
-                  onClick={handleCreatePo}
-                  disabled={creating}
-                  className="px-3 py-1.5 rounded-lg bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs shadow-2xs transition inline-flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                  <span>{creating ? 'Adding to DB...' : `Add "${inputVal.trim()}" to DB & Link`}</span>
-                </button>
-              )}
+              <p className="text-[10px] font-semibold text-slate-400">Create or sync the purchase order from Purchase Order Management first.</p>
             </div>
           )}
         </div>
       )}
       <p className="text-[10px] text-slate-400 font-medium">
-        Search open SAP POs or enter a new PO number to add & link it automatically.
+        Select an existing open SAP purchase order.
       </p>
     </div>
   );
@@ -373,8 +339,8 @@ export default function RfqFormView() {
 
       const rfqId = json.data?.rfqId || json.data?.rfqNumber || id;
 
-      // Step 2: Upload documents if any are attached (only for new RFQs)
-      if (!isEdit && documents.length > 0 && rfqId) {
+      // Step 2: Upload newly attached documents for both create and edit flows.
+      if (documents.length > 0 && rfqId) {
         const formData = new FormData();
         documents.forEach(doc => {
           formData.append('files', doc.file);

@@ -71,7 +71,8 @@ const FALLBACK_PERMISSIONS = [
   { id: 'perm-046', key: 'roles.view', name: 'View Roles', module: 'Roles & Permissions', action: 'view', description: 'View system roles and permission matrix.', type: 'System', status: 'Active' },
   { id: 'perm-047', key: 'roles.manage', name: 'Manage Roles', module: 'Roles & Permissions', action: 'manage', description: 'Create, edit roles and assign permissions.', type: 'System', status: 'Active' },
   { id: 'perm-048', key: 'permissions.view', name: 'View Permissions', module: 'Roles & Permissions', action: 'view-perms', description: 'View the permission registry.', type: 'System', status: 'Active' },
-  { id: 'perm-049', key: 'permissions.create', name: 'Create Permissions', module: 'Roles & Permissions', action: 'create-perms', description: 'Create new permission keys.', type: 'System', status: 'Active' }
+  { id: 'perm-049', key: 'permissions.create', name: 'Create Permissions', module: 'Roles & Permissions', action: 'create-perms', description: 'Create new permission keys.', type: 'System', status: 'Active' },
+  { id: 'perm-050', key: 'reports.view', name: 'View Hierarchy Report', module: 'Reports', action: 'view', description: 'View 7-Day Payment Hierarchy Report.', type: 'System', status: 'Active' }
 ];
 
 const requestJson = async (url, options) => {

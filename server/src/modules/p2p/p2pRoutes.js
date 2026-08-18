@@ -21,7 +21,7 @@ import { User } from '../../models/User.js';
 import { Role } from '../../models/Role.js';
 import { broadcastEvent } from '../../services/sse.service.js';
 import { sendApprovalCreatedEmails } from '../../services/notification.service.js';
-import { authenticateToken, optionalAuth } from '../../middleware/auth.middleware.js';
+import { authenticateToken } from '../../middleware/auth.middleware.js';
 import { authorizeRole, authorizePermission } from '../../middleware/rbac.middleware.js';
 import { sendRfqInvitationEmail, sendBlSubmittedEmail, sendBlAssignedToAgentEmail, sendBlCustomsClearedEmail, sendRfqAwardedEmail } from '../../services/mail.service.js';
 import { ExchangeRate } from '../../models/ExchangeRate.js';
@@ -1205,8 +1205,8 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
 
     const reportRole = await Role.findOne({ roleName: loginUser.role }, { permissions: 1 }).lean();
     const reportActions = reportRole?.permissions?.reports || [];
-    const isTopExecutive = ['admin', 'system admin', 'superadmin'].includes(String(loginUser.role || '').toLowerCase())
-      || reportActions.includes('view-all') || reportActions.includes('manage') || reportActions.includes('*');
+    const isTopExecutive = ['admin', 'system admin', 'superadmin', 'finance', 'cfo', 'accounts', 'md', 'procurement_head', 'exim-manager', 'logistics', 'manager'].includes(String(loginUser.role || '').toLowerCase())
+      || reportActions.includes('view-all') || reportActions.includes('manage') || reportActions.includes('*') || reportActions.includes('view');
 
     if (isTopExecutive) {
       allUsers.forEach((u) => accessibleUserIds.add(u.id));
@@ -1548,7 +1548,6 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
       const currency = payment.currency || 'INR';
       const amountINR = currency === 'INR' ? amount : (payment.amountINR || (amount * fxRate));
 
-      let urgency = 'upcoming';
       if (daysRemaining < 0) urgency = 'overdue';
       else if (daysRemaining === 0) urgency = 'today';
       else if (daysRemaining <= 3) urgency = 'urgent';
@@ -1578,6 +1577,46 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
     customDuties.forEach(duty => processUpcomingItem(duty, 'Custom Duty', 'dutyId', 'dutyAmount', 'customAgentName', 'sapPoNumber'));
 
     upcomingFinancePayments.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+
+    // ── Build Past 7-Day Payments List (Last 7 Days Approved/Paid/Processed) ──
+    const last7dFinancePayments = [];
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const processPastItem = (payment, type, idKey, amtKey, vendorKey, poKey) => {
+      const status = String(payment.status || '').toLowerCase();
+      // Include approved, paid, or processed payments
+      if (!['approved', 'paid', 'adjusted', 'approved & dispatched'].some((s) => status.includes(s))) return;
+
+      const actionDate = payment.updatedAt || payment.paidAt || payment.approvedAt || payment.createdAt;
+      const dateObj = actionDate ? new Date(actionDate) : now;
+      if (dateObj >= sevenDaysAgo) {
+        const amount = Number(payment[amtKey] ?? payment.amount ?? payment.totalAmount) || 0;
+        const fxRate = Number(payment.fxRate) || 83.5;
+        const currency = payment.currency || 'INR';
+        const amountINR = currency === 'INR' ? amount : (payment.amountINR || (amount * fxRate));
+
+        last7dFinancePayments.push({
+          id: payment[idKey] || payment.id || payment._id,
+          type,
+          vendorName: payment[vendorKey] || payment.vendorName || payment.customAgentName || 'Vendor',
+          poNumber: payment[poKey] || payment.sapPoNumber || payment.poId || '—',
+          amount,
+          amountINR,
+          currency,
+          status: payment.status || 'Approved',
+          actionDate: dateObj.toISOString(),
+          requestedBy: payment.requestedByName || payment.requestedBy || payment.createdBy || 'Finance Team',
+          department: payment.department || 'Procurement'
+        });
+      }
+    };
+
+    advances.forEach(adv => processPastItem(adv, 'Advance Payment', 'advanceId', 'amount', 'vendorName', 'sapPoNumber'));
+    invoices.forEach(inv => processPastItem(inv, 'Invoice Payment', 'invoicePaymentId', 'netPayable', 'vendorName', 'sapPoNumber'));
+    logisticsPayments.forEach(log => processPastItem(log, 'Logistics Payment', 'logisticsPaymentId', 'totalAmount', 'vendorName', 'sapPoNumber'));
+    customDuties.forEach(duty => processPastItem(duty, 'Custom Duty', 'dutyId', 'dutyAmount', 'customAgentName', 'sapPoNumber'));
+
+    last7dFinancePayments.sort((a, b) => new Date(b.actionDate) - new Date(a.actionDate));
 
     // Build Hierarchy Tree
     const rowMap = new Map(rows.map((r) => [r.userId, { ...r, reports: [] }]));
@@ -2587,12 +2626,24 @@ function validateRfqPayload(body, { partial = false } = {}) {
   }
   if (body.estimatedReadinessDate && Number.isNaN(new Date(body.estimatedReadinessDate).getTime())) return 'Enter a valid estimated readiness date.';
   if (!partial && (!Array.isArray(body.invitedVendors) || !body.invitedVendors.length)) return 'Invite at least one active Freight Forwarder.';
+  if (Array.isArray(body.invitedVendors)) {
+    const inviteIds = body.invitedVendors.map((vendor) => normaliseInviteValue(vendor?.vendorId || vendor?.sapVendorCode)).filter(Boolean);
+    if (inviteIds.length !== body.invitedVendors.length) return 'Every invited Freight Forwarder must have a valid vendor identifier.';
+    if (new Set(inviteIds).size !== inviteIds.length) return 'The same Freight Forwarder cannot be invited more than once.';
+  }
   return '';
 }
 
 function validateOpenPo(po) {
   const status = String(po?.status || '').trim().toLowerCase();
   return Boolean(po && Number(po.totalAmount) > 0 && !['closed', 'cancelled', 'canceled', 'blocked'].includes(status));
+}
+
+function requireInternalRfqUser(req, res, next) {
+  if (String(req.user?.role || '').trim().toLowerCase() === 'vendor') {
+    return res.status(403).json({ success: false, error: 'Use the vendor RFQ portal for vendor RFQ access.' });
+  }
+  return next();
 }
 
 function isRfqClosed(closingDate) {
@@ -2677,18 +2728,19 @@ async function resolveVendorAwardedRfq(req) {
   if (!rfq || !isFreightVendorInvited(rfq.toObject(), vendor)) return { error: 'Assigned RFQ not found.', status: 404 };
   const awardApproval = await getRfqAwardApproval(rfq.toObject());
   const allocation = getVendorAward(rfq.toObject(), vendor);
-  if (!awardApproval.approved) {
+  const allocationAlreadyApproved = allocation?.approved === true;
+  if (!allocationAlreadyApproved && !awardApproval.approved) {
     return { error: `Bill of Lading access is locked until the RFQ award approval is completed. Current approval status: ${awardApproval.approval?.status || 'Pending'}.`, status: 403 };
   }
-  if (String(rfq.status).toLowerCase() !== 'awarded' || !allocation) {
-    return { error: 'Only a fully approved awarded vendor can manage Bill of Lading entries.', status: 403 };
+  if (!['pending_approval', 'partially_awarded', 'awarded'].includes(String(rfq.status).toLowerCase()) || !allocation || allocation.approved === false) {
+    return { error: 'Only a vendor with an approved RFQ allocation can manage Bill of Lading entries.', status: 403 };
   }
   return { vendor, rfq, allocation };
 }
 
 // ─── GET /api/p2p/rfqs ────────────────────────────────────────────────────────
 
-router.get('/rfqs', authenticateToken, async (req, res) => {
+router.get('/rfqs', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'view'), async (req, res) => {
   try {
     const search = String(req.query.q || req.query.search || '').trim();
     const statusFilter = String(req.query.status || '').trim();
@@ -2741,7 +2793,13 @@ router.get('/rfqs', authenticateToken, async (req, res) => {
     const enriched = rfqs.map((r) => {
       let currentStatus = r.status || 'published';
       const app = approvalByKey.get(String(r.awardApprovalId || r.rfqId));
-      if (app?.status === 'Approved & Dispatched') currentStatus = 'awarded';
+      if (app?.status === 'Approved & Dispatched') {
+        const totalQuantity = Number(r.totalQuantity) || Number(r.cargoDetails?.containerCount) || 0;
+        const approvedQuantity = (Array.isArray(r.awardAllocations) ? r.awardAllocations : [])
+          .filter((allocation) => allocation.approved === true)
+          .reduce((sum, allocation) => sum + (Number(allocation.containers) || 0), 0);
+        currentStatus = totalQuantity > 0 && approvedQuantity >= totalQuantity ? 'awarded' : approvedQuantity > 0 ? 'partially_awarded' : r.status;
+      }
       else if (app?.status === 'Rejected' && r.status === 'pending_approval') currentStatus = 'published';
       if (currentStatus !== r.status || (!r.awardApprovalId && app?.id)) {
         statusRepairs.push({
@@ -2938,13 +2996,16 @@ router.delete('/logistics-providers/:id', authenticateToken, authorizePermission
 
 // ─── GET Freight Forwarders / Shipping Lines Vendor List ──────────────────────
 
-router.get('/rfqs/logistics-vendors', authenticateToken, async (req, res) => {
+router.get('/rfqs/logistics-vendors', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'view'), async (req, res) => {
   try {
     const statusRegex = /active/i;
     const catRegex = /logistics|freight|forwarder|shipping/i;
 
     const [realVendors] = await Promise.all([
-      Vendor.find().lean().catch(() => [])
+      Vendor.find({
+        status: statusRegex,
+        $or: [{ vendorType: catRegex }, { category: catRegex }]
+      }).lean().catch(() => [])
     ]);
 
     const combinedList = [];
@@ -2979,7 +3040,7 @@ router.get('/rfqs/logistics-vendors', authenticateToken, async (req, res) => {
 
 // ─── POST Create RFQ ─────────────────────────────────────────────────────────
 
-router.post('/rfqs/demo-workflow', authenticateToken, async (req, res) => {
+router.post('/rfqs/demo-workflow', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
   try {
     if (req.user?.role === 'Vendor') return res.status(403).json({ success: false, error: 'Only procurement users can create RFQ test workflows.' });
     const poCandidates = await PurchaseOrder.find().sort({ createdAt: -1 }).limit(50).lean();
@@ -3010,8 +3071,19 @@ router.post('/rfqs', authenticateToken, authorizePermission('rfq', 'create'), as
     const po = await PurchaseOrder.findOne({ $or: [{ poId: linkedPoId }, { sapPoNumber: linkedPoId }, { poNumber: linkedPoId }] }).lean();
     if (!validateOpenPo(po)) return res.status(400).json({ success: false, error: 'Linked purchase order does not exist or is not open.' });
     const vendorKeys = invitedVendors.flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).filter(Boolean);
-    const activeVendorCount = await Vendor.countDocuments({ status: 'Active', $or: [{ id: { $in: vendorKeys } }, { sapVendorCode: { $in: vendorKeys } }, { supplierId: { $in: vendorKeys } }] });
-    if (activeVendorCount !== new Set(vendorKeys.map(String)).size && activeVendorCount < invitedVendors.length) return res.status(400).json({ success: false, error: 'One or more invited Freight Forwarders are invalid or inactive.' });
+    const activeVendors = await Vendor.find({
+      status: /active/i,
+      $and: [
+        { $or: [{ id: { $in: vendorKeys } }, { sapVendorCode: { $in: vendorKeys } }, { supplierId: { $in: vendorKeys } }] },
+        { $or: [{ vendorType: /logistics|freight|forwarder|shipping/i }, { category: /logistics|freight|forwarder|shipping/i }] }
+      ]
+    }).select('id sapVendorCode supplierId companyName').lean();
+    const matchedInviteCount = invitedVendors.filter((invite) => activeVendors.some((vendor) =>
+      [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean).some((key) =>
+        [invite.vendorId, invite.sapVendorCode].filter(Boolean).some((value) => sameValue(key, value))
+      )
+    )).length;
+    if (matchedInviteCount !== invitedVendors.length) return res.status(400).json({ success: false, error: 'One or more invited Freight Forwarders are invalid, inactive, or not logistics vendors.' });
     const rfqNumber = await nextRfqNumber();
 
     const newRfq = await RfqHeader.create({
@@ -3069,7 +3141,7 @@ router.post('/rfqs', authenticateToken, authorizePermission('rfq', 'create'), as
 
 // ─── GET Single RFQ Details ──────────────────────────────────────────────────
 
-router.get('/rfqs/:id', authenticateToken, async (req, res) => {
+router.get('/rfqs/:id', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'view'), async (req, res) => {
   try {
     const { id } = req.params;
     let rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }, { awardApprovalId: id }] }).lean();
@@ -3174,7 +3246,7 @@ router.get('/rfqs/:id', authenticateToken, async (req, res) => {
 
 // ─── PUT Update RFQ ──────────────────────────────────────────────────────────
 
-router.put('/rfqs/:id', authenticateToken, async (req, res) => {
+router.put('/rfqs/:id', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
   try {
     const { id } = req.params;
     const {
@@ -3192,6 +3264,8 @@ router.put('/rfqs/:id', authenticateToken, async (req, res) => {
 
     if (title) rfq.title = title.trim();
     if (linkedPoId) {
+      const linkedPo = await PurchaseOrder.findOne({ $or: [{ poId: linkedPoId }, { sapPoNumber: linkedPoId }, { poNumber: linkedPoId }] }).lean();
+      if (!validateOpenPo(linkedPo)) return res.status(400).json({ success: false, error: 'Linked purchase order does not exist or is not open.' });
       rfq.poId = linkedPoId;
       rfq.sapPoNumber = linkedPoId;
     }
@@ -3224,6 +3298,20 @@ router.put('/rfqs/:id', authenticateToken, async (req, res) => {
 
     if (invitedVendors && Array.isArray(invitedVendors)) {
       if (!invitedVendors.length) return res.status(400).json({ success: false, error: 'At least one Freight Forwarder must remain invited.' });
+      const inviteKeys = invitedVendors.flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).filter(Boolean);
+      const activeFreightVendors = await Vendor.find({
+        status: /active/i,
+        $and: [
+          { $or: [{ id: { $in: inviteKeys } }, { sapVendorCode: { $in: inviteKeys } }, { supplierId: { $in: inviteKeys } }] },
+          { $or: [{ vendorType: /logistics|freight|forwarder|shipping/i }, { category: /logistics|freight|forwarder|shipping/i }] }
+        ]
+      }).select('id sapVendorCode supplierId').lean();
+      const validInviteCount = invitedVendors.filter((invite) => activeFreightVendors.some((vendor) =>
+        [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean).some((key) =>
+          [invite.vendorId, invite.sapVendorCode].filter(Boolean).some((value) => sameValue(key, value))
+        )
+      )).length;
+      if (validInviteCount !== invitedVendors.length) return res.status(400).json({ success: false, error: 'Every invited vendor must be an active Freight Forwarder.' });
       const submittedQuotes = await RfqQuote.find({ rfqId: rfq.rfqId }).select('vendorId vendorName').lean();
       const retainsVendor = (quote) => invitedVendors.some((vendor) =>
         [vendor.vendorId, vendor.sapVendorCode].filter(Boolean).map(normaliseInviteValue).includes(normaliseInviteValue(quote.vendorId)) ||
@@ -3265,7 +3353,7 @@ router.delete('/rfqs/:id', authenticateToken, authorizePermission('rfq', 'delete
 
 // ─── POST Copy/Duplicate RFQ ──────────────────────────────────────────────────
 
-router.post('/rfqs/:id/copy', authenticateToken, async (req, res) => {
+router.post('/rfqs/:id/copy', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
   try {
     const { id } = req.params;
     const sourceRfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] }).lean();
@@ -3301,7 +3389,7 @@ router.post('/rfqs/:id/copy', authenticateToken, async (req, res) => {
 
 // ─── POST Submit Vendor Quote with Auto L1..L5 Ranking ────────────────────────
 
-router.post('/rfqs/:id/quote', authenticateToken, async (req, res) => {
+router.post('/rfqs/:id/quote', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
   try {
     const { id } = req.params;
     const { vendorId, vendorName, shippingLine, oceanFreightUsd, stChargesInr, otherChargesInr, transitDays } = req.body;
@@ -3330,8 +3418,9 @@ router.post('/rfqs/:id/quote', authenticateToken, async (req, res) => {
     const othInr = Number(otherChargesInr || 0);
     const transit = Number(transitDays);
     if (!(oceanUsd > 0) || !Number.isFinite(stInr) || stInr < 0 || !Number.isFinite(othInr) || othInr < 0 || !Number.isInteger(transit) || transit <= 0) return res.status(400).json({ success: false, error: 'Enter valid positive freight and transit values; INR charges may be zero but not negative.' });
-    const usdRate = 92.5;
-    const totalInr = Math.round(oceanUsd * usdRate + stInr + othInr);
+    const usdConversion = await getFxConversion(oceanUsd, 'USD');
+    const usdRate = usdConversion.fxRate;
+    const totalInr = Math.round(usdConversion.amountINR + stInr + othInr);
 
     const quoteId = `Q-${Date.now().toString().slice(-6)}`;
     await RfqQuote.create({
@@ -3343,6 +3432,7 @@ router.post('/rfqs/:id/quote', authenticateToken, async (req, res) => {
       oceanFreightUsd: oceanUsd,
       stChargesInr: stInr,
       otherChargesInr: othInr,
+      exchangeRate: usdRate,
       totalInr,
       freightAmount: oceanUsd,
       destinationCharges: stInr,
@@ -3352,7 +3442,7 @@ router.post('/rfqs/:id/quote', authenticateToken, async (req, res) => {
 
     const allQuotes = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 });
     for (let i = 0; i < allQuotes.length; i++) {
-      const rankLabel = `L${i + 1}`;
+      const rankLabel = i < 50 ? `L${i + 1}` : 'N/A';
       allQuotes[i].rank = rankLabel;
       await allQuotes[i].save();
     }
@@ -3464,9 +3554,9 @@ router.post('/rfqs/:id/award', authenticateToken, authorizePermission('rfq', 'aw
 
       const isFullReassignment = Boolean(isReassignment) && rfq.status === 'awarded' && (Number(rfq.allocatedQuantity) >= totalContainers);
 
-      const approvedAllocationsList = isFullReassignment
-        ? []
-        : (rfq.get('awardAllocations') || []).filter(a => a.approved === true);
+      // Keep the current approved allocation active until a reassignment is approved.
+      // This also lets a rejection restore the previous award without data loss.
+      const approvedAllocationsList = (rfq.get('awardAllocations') || []).filter(a => a.approved === true);
       const updatedAllocatedQty = approvedAllocationsList.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
 
       if (isFullReassignment) {
@@ -3528,8 +3618,10 @@ router.get('/vendor-rfqs', authenticateToken, async (req, res) => {
     return res.json({
       success: true, data: rfqs.map((rfq) => {
         const approval = rfq.awardApprovalId ? approvalById.get(rfq.awardApprovalId) : null;
-        const approvalPending = Boolean(rfq.awardApprovalId && approval?.status !== 'Approved & Dispatched');
-        return { ...rfq, status: approvalPending ? 'pending_approval' : rfq.status, awardApprovalStatus: approval?.status || null, myQuote: quotes.find((q) => q.rfqId === rfq.rfqId) || null };
+        const approvalPending = Boolean(rfq.awardApprovalId && approval && !['Approved & Dispatched', 'Rejected'].includes(approval.status));
+        const allocation = getVendorAward(rfq, vendor);
+        const allocationReady = allocation?.approved === true || (['partially_awarded', 'awarded'].includes(String(rfq.status).toLowerCase()) && allocation?.approved !== false);
+        return { ...rfq, status: approvalPending ? 'pending_approval' : rfq.status, awardApprovalStatus: approval?.status || null, myQuote: quotes.find((q) => q.rfqId === rfq.rfqId) || null, myAllocation: allocationReady ? allocation : null };
       })
     });
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
@@ -3545,8 +3637,9 @@ router.get('/vendor-rfqs/:id', authenticateToken, async (req, res) => {
     const myQuote = await RfqQuote.findOne({ rfqId: rfq.rfqId, vendorId: { $in: ids } }).lean();
     const awardApproval = await getRfqAwardApproval(rfq);
     const allocation = getVendorAward(rfq, vendor);
-    const awardReady = String(rfq.status).toLowerCase() === 'awarded' && awardApproval.approved;
-    return res.json({ success: true, data: { ...rfq, status: awardApproval.required && !awardApproval.approved ? 'pending_approval' : rfq.status, myQuote, myAllocation: awardReady ? allocation : null, awardPending: Boolean(allocation && !awardReady), awardApprovalStatus: awardApproval.approval?.status || null } });
+    const awardReady = allocation?.approved === true || (['partially_awarded', 'awarded'].includes(String(rfq.status).toLowerCase()) && awardApproval.approved && allocation?.approved !== false);
+    const approvalIsPending = awardApproval.required && awardApproval.approval && !['Approved & Dispatched', 'Rejected'].includes(awardApproval.approval.status);
+    return res.json({ success: true, data: { ...rfq, status: approvalIsPending ? 'pending_approval' : rfq.status, myQuote, myAllocation: awardReady ? allocation : null, awardPending: Boolean(allocation && approvalIsPending), awardApprovalStatus: awardApproval.approval?.status || null } });
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
@@ -3563,20 +3656,21 @@ router.post('/vendor-rfqs/:id/quote', authenticateToken, async (req, res) => {
     const shipping = Number(req.body.stChargesInr);
     const other = Number(req.body.otherChargesInr) || 0;
     const transitDays = Number(req.body.transitDays);
-    if (!String(req.body.shippingLine || '').trim() || ocean <= 0 || shipping < 0 || other < 0 || transitDays <= 0) {
+    if (!String(req.body.shippingLine || '').trim() || !Number.isFinite(ocean) || ocean <= 0 || !Number.isFinite(shipping) || shipping < 0 || !Number.isFinite(other) || other < 0 || !Number.isInteger(transitDays) || transitDays <= 0) {
       return res.status(400).json({ success: false, error: 'Shipping line, positive freight, valid charges, and transit days are required.' });
     }
     if (req.body.vesselEtd && req.body.vesselEta && new Date(req.body.vesselEta) < new Date(req.body.vesselEtd)) {
       return res.status(400).json({ success: false, error: 'Vessel ETA cannot be earlier than Vessel ETD.' });
     }
     const vendorId = vendor.sapVendorCode || vendor.supplierId || vendor.id;
+    const usdConversion = await getFxConversion(ocean, 'USD');
     const quote = await RfqQuote.findOneAndUpdate(
       { rfqId: rfq.rfqId, vendorId },
       {
         $set: {
           vendorName: vendor.companyName, shippingLine: String(req.body.shippingLine).trim(),
           oceanFreightUsd: ocean, stChargesInr: shipping, otherChargesInr: other,
-          totalInr: Math.round(ocean * 92.5 + shipping + other), freightAmount: ocean,
+          totalInr: Math.round(usdConversion.amountINR + shipping + other), exchangeRate: usdConversion.fxRate, freightAmount: ocean,
           destinationCharges: shipping, transitDays, vesselRoute: req.body.vesselRoute || '',
           cutoffDate: req.body.cutoffDate || null, vesselEtd: req.body.vesselEtd || null,
           vesselEta: req.body.vesselEta || null, freeDays: req.body.freeDays || '',
@@ -3587,7 +3681,7 @@ router.post('/vendor-rfqs/:id/quote', authenticateToken, async (req, res) => {
       { new: true, upsert: true, runValidators: true }
     );
     const ranked = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 });
-    await Promise.all(ranked.map((item, index) => RfqQuote.updateOne({ _id: item._id }, { rank: index < 5 ? `L${index + 1}` : 'N/A' })));
+    await Promise.all(ranked.map((item, index) => RfqQuote.updateOne({ _id: item._id }, { rank: index < 50 ? `L${index + 1}` : 'N/A' })));
     broadcastEvent('RFQ_QUOTE_SUBMITTED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, vendorName: vendor.companyName, quoteId: quote.quoteId });
     return res.json({ success: true, message: 'Freight quote submitted successfully.', data: quote });
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
@@ -3614,6 +3708,13 @@ router.get('/validate-asn', authenticateToken, async (req, res) => {
     const asnNumber = String(req.query.asnNumber || '').trim().toUpperCase();
     const rfqId = String(req.query.rfqId || '').trim();
 
+    if (req.user?.role === 'Vendor') {
+      const vendor = await getFreightVendorFromRequest(req);
+      if (!vendor || !rfqId) return res.status(403).json({ success: false, valid: false, error: 'A valid assigned RFQ is required for ASN validation.' });
+      const assignedRfq = await RfqHeader.findOne({ $or: [{ rfqId }, { rfqNumber: rfqId }] }).lean();
+      if (!assignedRfq || !isFreightVendorInvited(assignedRfq, vendor)) return res.status(404).json({ success: false, valid: false, error: 'Assigned RFQ not found.' });
+    }
+
     if (!asnNumber) {
       return res.status(400).json({ success: false, valid: false, error: 'ASN Number is required.' });
     }
@@ -3636,7 +3737,7 @@ router.get('/validate-asn', authenticateToken, async (req, res) => {
       matchingInvoice = await InvoicePayment.findOne({
         $and: [
           { asnNumber: { $regex: new RegExp(`^${asnNumber.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') } },
-          { $or: [{ poId: { $in: poKeys } }, { sapPoNumber: { $in: poKeys } }, { poNumber: { $in: poKeys } }, { asnNumber: { $exists: true, $ne: '' } }] }
+          { $or: [{ poId: { $in: poKeys } }, { sapPoNumber: { $in: poKeys } }, { poNumber: { $in: poKeys } }] }
         ]
       }).lean();
     } else {
@@ -3697,7 +3798,7 @@ router.post('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) =
     const matchingInvoice = asnNumber ? await InvoicePayment.findOne({
       $and: [
         { asnNumber: { $regex: new RegExp(`^${asnNumber.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') } },
-        { $or: [{ poId: { $in: poKeys } }, { sapPoNumber: { $in: poKeys } }, { poNumber: { $in: poKeys } }, { asnNumber: { $exists: true, $ne: '' } }] }
+          { $or: [{ poId: { $in: poKeys } }, { sapPoNumber: { $in: poKeys } }, { poNumber: { $in: poKeys } }] }
       ]
     }).lean() : null;
 
@@ -3711,6 +3812,9 @@ router.post('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) =
     const existing = await RfqBlEntry.find({ rfqId: context.rfq.rfqId }).lean();
     const used = existing.filter((entry) => vendorKeys.includes(normaliseInviteValue(entry.vendorId)) || vendorKeys.includes(normaliseInviteValue(entry.vendorName))).reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0);
     const remaining = context.allocation.containers - used;
+    if (!Number.isInteger(containerCount) || containerCount <= 0) {
+      return res.status(400).json({ success: false, error: 'Container count must be a positive whole number.' });
+    }
     if (containerCount > remaining) return res.status(400).json({ success: false, error: `Only ${Math.max(0, remaining)} awarded container(s) remain.` });
     const documents = (Array.isArray(req.body.documents) ? req.body.documents : []).filter((doc) => doc?.fileName).map((doc) => ({ docType: doc.docType || 'Bill of Lading', fileUrl: String(doc.fileName), uploadedBy: context.vendor.companyName, uploadedAt: new Date() }));
     if (!documents.length) return res.status(400).json({ success: false, error: 'At least one supporting document is required.' });
@@ -3760,14 +3864,26 @@ router.post('/vendor-rfqs/:id/bl-entries/:blId/invoices', authenticateToken, asy
     const bl = await RfqBlEntry.findOne({ rfqId: context.rfq.rfqId, $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] });
     const keys = freightVendorKeys(context.vendor);
     if (!bl || ![bl.vendorId, bl.vendorName].map(normaliseInviteValue).some((key) => keys.includes(key))) return res.status(404).json({ success: false, error: 'BL entry not found.' });
-    if (!['submitted', 'in_progress', 'custom_cleared', 'invoice_pending'].includes(bl.status)) return res.status(400).json({ success: false, error: 'Logistics invoice cannot be raised for this BL status.' });
+    if (!['custom_cleared', 'invoice_pending'].includes(bl.status)) return res.status(400).json({ success: false, error: 'Logistics invoice can only be raised after customs clearance.' });
     const invoiceNumber = String(req.body.invoiceNumber || '').trim().toUpperCase();
     const amount = Number(req.body.amount);
     const ref = `BLI-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
     const category = req.body.category || 'freight';
+    const allowedCategories = ['freight', 'destination_charges', 'detention', 'port_storage', 'agency_fee'];
+    if (!invoiceNumber || invoiceNumber.length > 100) return res.status(400).json({ success: false, error: 'A valid invoice number is required.' });
+    if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ success: false, error: 'Invoice amount must be greater than zero.' });
+    if (!allowedCategories.includes(category)) return res.status(400).json({ success: false, error: 'Invalid logistics invoice category.' });
+    const duplicateInvoice = await LogisticsPayment.exists({ vendorId: bl.vendorId, invoiceNumber });
+    if (duplicateInvoice) return res.status(409).json({ success: false, error: `Invoice number "${invoiceNumber}" has already been submitted.` });
     const typeDisplay = category === 'freight' ? 'Freight Invoice' : category === 'destination_charges' ? 'Destination Charges (Shipping Line)' : category === 'recepted_charges' ? 'Recepted Charges' : category === 'agency_fee' ? 'Agency Charges' : category === 'port_storage' ? 'Port Storage' : 'BL Charge Invoice';
-    const numAmount = Number(amount);
+    const numAmount = amount;
     const curr = String(req.body.currency || 'INR').toUpperCase();
+    if (!['INR', 'USD', 'EUR', 'GBP', 'CNY', 'JPY', 'AED', 'SGD'].includes(curr)) return res.status(400).json({ success: false, error: 'Unsupported invoice currency.' });
+    const rawFile = String(req.body.fileName || req.body.fileUrl || '').trim();
+    const docList = Array.isArray(req.body.documents) && req.body.documents.length > 0
+      ? req.body.documents.filter((document) => String(document?.fileName || document?.fileUrl || '').trim())
+      : (rawFile ? [{ docType: typeDisplay, fileName: rawFile, fileUrl: rawFile, uploadedBy: bl.vendorName || 'Vendor' }] : []);
+    if (!docList.length) return res.status(400).json({ success: false, error: 'At least one supporting invoice document is required.' });
     const blWorkflow = await resolveWorkflowFromDB('BL Freight Invoice', numAmount, { currency: curr });
 
     const approval = await createApprovalRecord({
@@ -3783,11 +3899,6 @@ router.post('/vendor-rfqs/:id/bl-entries/:blId/invoices', authenticateToken, asy
       wf: blWorkflow
     });
 
-    const rawFile = String(req.body.fileName || req.body.fileUrl || '').trim();
-    const docList = Array.isArray(req.body.documents) && req.body.documents.length > 0
-      ? req.body.documents
-      : (rawFile ? [{ docType: typeDisplay, fileName: rawFile, fileUrl: rawFile, uploadedBy: bl.vendorName || 'Vendor' }] : []);
-
     const payment = await LogisticsPayment.create({
       logisticsPaymentId: ref, referenceNumber: ref, blId: bl.blId, blNumber: bl.blNumber,
       vendorId: bl.vendorId, vendorName: bl.vendorName, category, typeDisplay, source: 'Vendor', invoiceNumber,
@@ -3800,7 +3911,7 @@ router.post('/vendor-rfqs/:id/bl-entries/:blId/invoices', authenticateToken, asy
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.post('/rfqs/:id/close', authenticateToken, async (req, res) => {
+router.post('/rfqs/:id/close', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
   try {
     const isObjId = mongoose.Types.ObjectId.isValid(req.params.id);
     const query = isObjId
@@ -3809,6 +3920,9 @@ router.post('/rfqs/:id/close', authenticateToken, async (req, res) => {
 
     const rfq = await RfqHeader.findOne(query);
     if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found.' });
+    if (!['published', 'partially_awarded'].includes(String(rfq.status).toLowerCase())) {
+      return res.status(409).json({ success: false, error: `RFQ cannot be closed while it is ${String(rfq.status).replace(/_/g, ' ')}.` });
+    }
 
     rfq.status = 'closed';
     rfq.closedAt = new Date();
@@ -3826,7 +3940,7 @@ router.post('/rfqs/:id/close', authenticateToken, async (req, res) => {
   }
 });
 
-router.post('/rfqs/:id/reopen', authenticateToken, async (req, res) => {
+router.post('/rfqs/:id/reopen', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
   try {
     const isObjId = mongoose.Types.ObjectId.isValid(req.params.id);
     const query = isObjId
@@ -3835,8 +3949,16 @@ router.post('/rfqs/:id/reopen', authenticateToken, async (req, res) => {
 
     const rfq = await RfqHeader.findOne(query);
     if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found.' });
+    const status = String(rfq.status).toLowerCase();
+    const expiredPublishedRfq = status === 'published' && isRfqClosed(rfq.closingDate);
+    if (status !== 'closed' && !expiredPublishedRfq) {
+      return res.status(409).json({ success: false, error: `Only a closed RFQ can be reopened. Current status: ${String(rfq.status).replace(/_/g, ' ')}.` });
+    }
 
     const newClosingDate = req.body.closingDate ? new Date(req.body.closingDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    if (Number.isNaN(newClosingDate.getTime()) || newClosingDate <= new Date()) {
+      return res.status(400).json({ success: false, error: 'Reopened RFQ closing date must be a valid future date and time.' });
+    }
     rfq.status = 'published';
     rfq.closingDate = newClosingDate;
     await rfq.save();
@@ -3855,7 +3977,7 @@ router.post('/rfqs/:id/reopen', authenticateToken, async (req, res) => {
 
 // ─── CUSTOMS BROKER & BL ASSIGNMENT ROUTES ──────────────────────────────────
 
-router.get('/custom-agents/bl-entries', optionalAuth, async (req, res) => {
+router.get('/custom-agents/bl-entries', authenticateToken, async (req, res) => {
   try {
     const entries = await RfqBlEntry.find().sort({ createdAt: -1 }).lean();
     const agents = await CustomAgent.find({ status: 'Active' }).select('agentId agencyName contactPerson email').sort({ agencyName: 1 }).lean();
@@ -3863,7 +3985,7 @@ router.get('/custom-agents/bl-entries', optionalAuth, async (req, res) => {
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.get('/exim/bl-entries', optionalAuth, async (req, res) => {
+router.get('/exim/bl-entries', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'view'), async (req, res) => {
   try {
     const entries = await RfqBlEntry.find().sort({ createdAt: -1 }).lean();
     const agents = await CustomAgent.find({ status: 'Active' }).select('agentId agencyName contactPerson email').sort({ agencyName: 1 }).lean();
@@ -3966,8 +4088,9 @@ router.post('/exim/bl-entries/:blId/action', authenticateToken, async (req, res)
   }
 });
 
-router.get('/customs-agent/assigned', optionalAuth, async (req, res) => {
+router.get('/customs-agent/assigned', authenticateToken, async (req, res) => {
   try {
+    if (req.user?.role === 'Vendor') return res.status(403).json({ success: false, error: 'Customs Agent or internal access is required.' });
     let filter = {};
     if (req.user?.role === 'CustomAgent') {
       filter = { customAgentId: req.user.id };
@@ -3987,8 +4110,9 @@ router.get('/customs-agent/assigned', optionalAuth, async (req, res) => {
   }
 });
 
-router.get('/customs-agent/assigned/:blId', optionalAuth, async (req, res) => {
+router.get('/customs-agent/assigned/:blId', authenticateToken, async (req, res) => {
   try {
+    if (req.user?.role === 'Vendor') return res.status(403).json({ success: false, error: 'Customs Agent or internal access is required.' });
     let query = { $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] };
     if (req.user?.role === 'CustomAgent') {
       query.customAgentId = req.user.id;
@@ -4348,7 +4472,7 @@ router.delete('/logistics-payments/:id', authenticateToken, authorizePermission(
 
 // ─── BL INVOICES ROUTES ──────────────────────────────────────────────────────
 
-router.get('/bl-invoices', optionalAuth, async (req, res) => {
+router.get('/bl-invoices', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'view'), async (req, res) => {
   try {
     let itemsFromBlColl = await BlInvoice.find().sort({ createdAt: -1 }).lean();
     let legacyBlItems = await LogisticsPayment.find({ $or: [{ referenceNumber: /^BLI-/ }, { logisticsPaymentId: /^BLI-/ }] }).sort({ createdAt: -1 }).lean();

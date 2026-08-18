@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSelector } from 'react-redux';
 import {
   Network, List, Search, Loader2, RefreshCw, ChevronDown, ChevronRight,
   ShieldCheck, AlertCircle, Receipt, Building2, Clock, Calendar, Filter,
@@ -6,6 +7,8 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../ui/toast';
+import { isFinanceRole } from '../../lib/permissions';
+
 
 function TreeNode({ node, level = 0 }) {
   const [expanded, setExpanded] = useState(level < 2);
@@ -104,7 +107,10 @@ function TreeNode({ node, level = 0 }) {
 }
 
 export default function HierarchicalReportView() {
+  const { user } = useSelector((state) => state.auth);
+  const userRole = user?.role;
   const [data, setData] = useState(null);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [viewMode, setViewMode] = useState('upcoming7d'); // 'upcoming7d' | 'grid' | 'tree' | 'vendors'
@@ -472,7 +478,17 @@ export default function HierarchicalReportView() {
 
                           {/* Reference ID & Type */}
                           <td className="px-4 py-3.5">
-                            <span className="font-mono font-extrabold text-slate-900 text-xs block">{item.id}</span>
+                            {(() => {
+                              const isFinanceUser = isFinanceRole(userRole);
+                              if (isFinanceUser && !item.dueDate) {
+                                return (
+                                  <span className="font-mono text-xs font-extrabold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 block" title="Request number is hidden for Finance until a due date is specified">
+                                    [Pending Due Date]
+                                  </span>
+                                );
+                              }
+                              return <span className="font-mono font-extrabold text-slate-900 text-xs block">{item.id}</span>;
+                            })()}
                             <span className={`inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-bold border ${typeBadgeCls}`}>
                               {item.type}
                             </span>

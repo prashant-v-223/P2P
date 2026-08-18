@@ -269,6 +269,10 @@ export default function RfqSourcingView() {
                   const origin = rfq.cargoDetails?.portOfOrigin || '—';
                   const dest = rfq.cargoDetails?.portOfDestination || '—';
                   const targetRfqId = rfq.rfqId || rfq._id;
+                  const normalizedStatus = String(rfq.status || '').toLowerCase();
+                  const deadlineExpired = Boolean(rfq.closingDate && new Date(rfq.closingDate) < new Date());
+                  const canReopenRfq = normalizedStatus === 'closed' || (normalizedStatus === 'published' && deadlineExpired);
+                  const canCloseRfq = ['published', 'partially_awarded'].includes(normalizedStatus) && !deadlineExpired;
 
                   return (
                     <tr key={rfq._id} onClick={() => navigate(`/admin/rfqs/${targetRfqId}`)} className="hover:bg-slate-50/80 transition cursor-pointer group">
@@ -335,8 +339,7 @@ export default function RfqSourcingView() {
                           )}
 
                           {/* Close/Reopen Button */}
-                          {canEdit && (
-                            isRfqClosed(rfq) ? (
+                          {canEdit && canReopenRfq && (
                               <ActionButton
                                 onClick={(e) => handleOpenReopenModal(rfq, e)}
                                 icon={RefreshCw}
@@ -344,14 +347,14 @@ export default function RfqSourcingView() {
                                 color="teal"
                                 bordered
                               />
-                            ) : (
+                          )}
+                          {canEdit && canCloseRfq && (
                               <ActionButton
                                 onClick={(e) => handleClose(rfq, e)}
                                 icon={X}
                                 label="Close RFQ"
                                 color="rose"
                               />
-                            )
                           )}
 
                           {/* Delete Button */}

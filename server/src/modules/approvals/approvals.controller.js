@@ -685,7 +685,8 @@ export const processApprovalAction = async (req, res) => {
 
             // Preserve all previously approved allocations from prior cycles
             const existingAllocations = Array.isArray(rfq.awardAllocations) ? rfq.awardAllocations : [];
-            const alreadyApproved = existingAllocations.filter(a => a.approved === true);
+            const isReassignment = Boolean(approval.transactionSnapshot?.isReassignment);
+            const alreadyApproved = isReassignment ? [] : existingAllocations.filter(a => a.approved === true);
             const otherPending = existingAllocations.filter(a => a.approved !== true && a.cycleApprovalId !== approval.id);
 
             const mergedAllocations = [...alreadyApproved, ...newlyApproved, ...otherPending];

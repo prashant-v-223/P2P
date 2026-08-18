@@ -458,7 +458,7 @@ export default function RfqDetailView() {
               <span>Reopen RFQ</span>
             </button>
           )}
-          {canEdit && rfq.status !== 'closed' && (
+          {canEdit && ['published', 'partially_awarded'].includes(rfq.status) && !(rfq.closingDate && new Date(rfq.closingDate) < new Date()) && (
             <button
               onClick={async () => {
                 if (!window.confirm(`Are you sure you want to close RFQ ${rfq.rfqNumber}? Bidding will be locked.`)) return;

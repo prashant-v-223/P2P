@@ -26,6 +26,13 @@ const getCurrencySymbol = (curr) => {
   }
 };
 
+const formatRoleName = (str) => {
+  if (!str) return '';
+  return String(str)
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (l) => l.toUpperCase());
+};
+
 const STEPS = [
   { id: 1, label: 'Select PO', icon: Building2 },
   { id: 2, label: 'Payment Details', icon: IndianRupee },
@@ -54,6 +61,7 @@ export default function CreateAdvancePaymentWizard() {
   const [reason, setReason] = useState('');
   const [paymentMode, setPaymentMode] = useState('NEFT');
   const [bankName, setBankName] = useState('');
+  const [advanceAdjust, setAdvanceAdjust] = useState('');
   const [withGst, setWithGst] = useState(false);
   const [gstType, setGstType] = useState('inter');
   const [cgstPct, setCgstPct] = useState('');
@@ -147,6 +155,17 @@ export default function CreateAdvancePaymentWizard() {
     return () => clearTimeout(timer);
   }, [searchPo, fetchPos]);
 
+  const poOptions = useMemo(() => {
+    return (livePos || []).map(p => {
+      const avail = Math.max(0, Number(p.remainingAdvanceAmount) || 0);
+      const sym = getCurrencySymbol(p.currency);
+      return {
+        value: p.poNumber,
+        label: `${p.poNumber} — ${p.supplierName} (${sym}${fmt(avail)} available)`
+      };
+    });
+  }, [livePos]);
+
   const filteredPos = useMemo(() => {
     if (!searchPo.trim()) {
       if (selectedPo && !livePos.slice(0, 8).some(p => p.poNumber === selectedPo.poNumber)) {
@@ -170,16 +189,19 @@ export default function CreateAdvancePaymentWizard() {
     return amountMode === 'pct' ? Number(pctValue) || 0 : (calculatedAmount / availableBalance) * 100;
   }, [selectedPo, availableBalance, amountMode, pctValue, calculatedAmount]);
 
-  const amountINR = useMemo(() => {
-    return calculatedAmount * activeFxRate;
-  }, [calculatedAmount, activeFxRate]);
+  const advanceAdjustVal = Math.max(0, Number(advanceAdjust) || 0);
+  const netAmountAfterAdjust = Math.max(0, calculatedAmount - advanceAdjustVal);
 
-  const remainingAfter = availableBalance - calculatedAmount;
-  const cgstAmount = withGst && gstType === 'intra' ? calculatedAmount * (Number(cgstPct) / 100) : 0;
-  const sgstAmount = withGst && gstType === 'intra' ? calculatedAmount * (Number(sgstPct) / 100) : 0;
-  const igstAmount = withGst && gstType === 'inter' ? calculatedAmount * (Number(igstPct) / 100) : 0;
+  const amountINR = useMemo(() => {
+    return netAmountAfterAdjust * activeFxRate;
+  }, [netAmountAfterAdjust, activeFxRate]);
+
+  const remainingAfter = availableBalance - calculatedAmount + advanceAdjustVal;
+  const cgstAmount = withGst && gstType === 'intra' ? netAmountAfterAdjust * (Number(cgstPct) / 100) : 0;
+  const sgstAmount = withGst && gstType === 'intra' ? netAmountAfterAdjust * (Number(sgstPct) / 100) : 0;
+  const igstAmount = withGst && gstType === 'inter' ? netAmountAfterAdjust * (Number(igstPct) / 100) : 0;
   const totalGstAmount = cgstAmount + sgstAmount + igstAmount;
-  const grandTotal = calculatedAmount + totalGstAmount;
+  const grandTotal = netAmountAfterAdjust + totalGstAmount;
 
   useEffect(() => {
     const amt = (grandTotal || calculatedAmount || 0) * activeFxRate;
@@ -213,9 +235,19 @@ export default function CreateAdvancePaymentWizard() {
       e.amount = `Exceeds available balance ${currSymbol}${fmt(availableBalance)}.`;
       showToast({ type: 'error', title: 'Amount Exceeded', description: `Advance amount exceeds PO balance of ${currSymbol}${fmt(availableBalance)}.` });
     }
+    if (step === 2 && amountMode === 'pct' && (!Number.isFinite(Number(pctValue)) || Number(pctValue) <= 0 || Number(pctValue) > 100)) {
+      e.amount = 'Percentage must be between 0.01% and 100%.';
+    }
     if (step === 2 && (!reason.trim() || reason.trim().length < 10)) {
       e.reason = 'Please enter a reason (min 10 chars).';
       showToast({ type: 'error', title: 'Reason Required', description: 'Enter a detailed reason for the advance request (min 10 chars).' });
+    }
+    if (step === 2 && withGst) {
+      const gstRates = gstType === 'intra' ? [Number(cgstPct), Number(sgstPct)] : [Number(igstPct)];
+      if (gstRates.some((rate) => !Number.isFinite(rate) || rate <= 0 || rate > 100)) {
+        e.gst = 'Enter valid GST percentages between 0.01% and 100%.';
+        showToast({ type: 'error', title: 'Invalid GST', description: e.gst });
+      }
     }
     if (step === 3 && documents.length === 0) {
       e.docs = 'At least one supporting document is required.';
@@ -271,6 +303,8 @@ export default function CreateAdvancePaymentWizard() {
           fxRate: activeFxRate,
           percentageOfPo: calculatedPct,
           currency: poCurrency,
+          advanceAdjust: advanceAdjustVal,
+          adjustedAmount: advanceAdjustVal,
           cgst: cgstAmount,
           sgst: sgstAmount,
           igst: igstAmount,
@@ -355,89 +389,107 @@ export default function CreateAdvancePaymentWizard() {
     }`;
 
   const Sidebar = () => (
-    <aside className="hidden lg:flex flex-col gap-3.5 w-[320px] xl:w-[360px] shrink-0 sticky top-4">
-      {/* Summary Card */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 bg-gradient-to-r from-teal-50/50 to-white flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Receipt className="w-4 h-4 text-[#0d7676]" />
-            <span className="font-bold text-slate-800 text-xs uppercase tracking-wider">Payment Summary</span>
+    <aside className="w-full lg:w-[380px] xl:w-[420px] shrink-0 flex flex-col gap-6 sticky top-6">
+      {/* Payment Summary Card */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden transition-all">
+        <div className="px-5 py-4 border-b border-slate-100 bg-gradient-to-r from-teal-50/60 to-white flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <Receipt className="w-5 h-5 text-[#0d7676]" />
+            <span className="font-extrabold text-slate-800 text-sm uppercase tracking-wider">Payment Summary</span>
           </div>
           {selectedPo && (
-            <span className="text-[10px] font-extrabold bg-teal-100 text-[#0d7676] px-2 py-0.5 rounded-full font-mono">
+            <span className="text-xs font-mono font-extrabold bg-teal-100 text-[#0d7676] px-2.5 py-1 rounded-full border border-teal-200">
               {poCurrency}
             </span>
           )}
         </div>
-        <div className="p-4 space-y-3">
+
+        <div className="p-5 space-y-4">
           {selectedPo ? (
             <>
-              <div className="space-y-0.5 pb-1 border-b border-slate-100">
-                <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Target PO & Vendor</p>
-                <p className="font-mono font-extrabold text-slate-900 text-sm flex items-center justify-between">
-                  <span>{selectedPo.poNumber}</span>
-                  <span className="text-xs text-sky-600 font-bold font-sans">Open</span>
+              <div className="space-y-1.5 pb-3 border-b border-slate-100">
+                <p className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">Target PO & Vendor</p>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="font-mono font-extrabold text-slate-900 text-base">{selectedPo.poNumber}</span>
+                  <span className="text-xs font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full uppercase">
+                    {selectedPo.status || 'Open'}
+                  </span>
+                </div>
+                <p className="text-sm font-bold text-slate-800 break-words leading-relaxed mt-1">
+                  {selectedPo.supplierName}
                 </p>
-                <p className="text-xs text-slate-600 font-semibold truncate">{selectedPo.supplierName}</p>
+                {selectedPo.supplierId && (
+                  <p className="font-mono text-xs text-slate-500 font-semibold mt-0.5">Code: {selectedPo.supplierId}</p>
+                )}
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5">
-                <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-200">
-                  <p className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">PO Total ({poCurrency})</p>
-                  <p className="font-mono font-extrabold text-slate-800 text-sm mt-0.5">{currSymbol}{fmt(poValue)}</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
+                  <p className="text-[11px] text-slate-500 font-extrabold uppercase tracking-wider">PO Total ({poCurrency})</p>
+                  <p className="font-mono font-extrabold text-slate-900 text-base mt-1 whitespace-nowrap">
+                    {currSymbol}{fmt(poValue)}
+                  </p>
                 </div>
-                <div className="bg-teal-50/70 rounded-xl p-2.5 border border-teal-200">
-                  <p className="text-[10px] text-[#0d7676] font-extrabold uppercase tracking-wider">Available ({poCurrency})</p>
-                  <p className="font-mono font-extrabold text-[#0d7676] text-sm mt-0.5">{currSymbol}{fmt(availableBalance)}</p>
+                <div className="bg-teal-50/80 rounded-xl p-3 border border-teal-200">
+                  <p className="text-[11px] text-[#0d7676] font-extrabold uppercase tracking-wider">Available ({poCurrency})</p>
+                  <p className="font-mono font-extrabold text-[#0d7676] text-base mt-1 whitespace-nowrap">
+                    {currSymbol}{fmt(availableBalance)}
+                  </p>
                 </div>
               </div>
 
               {poCurrency !== 'INR' && (
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-[11px] space-y-1">
-                  <div className="flex justify-between font-semibold text-slate-600">
+                <div className="bg-gradient-to-r from-slate-50 to-teal-50/40 border border-slate-200 rounded-xl p-3.5 space-y-2 text-xs">
+                  <div className="flex justify-between items-center font-semibold text-slate-600">
                     <span>FX Rate ({poCurrency} → INR):</span>
-                    <span className="font-mono text-teal-700">₹{activeFxRate}</span>
+                    <span className="font-mono font-extrabold text-teal-700 whitespace-nowrap">₹{activeFxRate}</span>
                   </div>
-                  <div className="flex justify-between font-bold text-slate-800">
+                  <div className="flex justify-between items-center font-bold text-slate-900 pt-1 border-t border-slate-200/60">
                     <span>Available in INR:</span>
-                    <span className="font-mono text-teal-800">₹{fmt(availableBalance * activeFxRate)}</span>
+                    <span className="font-mono font-extrabold text-teal-800 text-sm whitespace-nowrap">₹{fmt(availableBalance * activeFxRate)}</span>
                   </div>
                 </div>
               )}
             </>
           ) : (
-            <div className="py-5 text-center text-slate-400">
-              <Building2 className="w-7 h-7 mx-auto mb-1.5 opacity-30 text-teal-600" />
-              <p className="text-xs font-semibold text-slate-500">No Purchase Order selected</p>
-              <p className="text-[11px] text-slate-400 mt-0.5">Select a PO in Step 1 to calculate advance</p>
+            <div className="py-6 text-center text-slate-400 space-y-2">
+              <Building2 className="w-8 h-8 mx-auto opacity-30 text-teal-600" />
+              <p className="text-sm font-bold text-slate-600">No Purchase Order Selected</p>
+              <p className="text-xs text-slate-400 max-w-[220px] mx-auto">Select a PO in Step 1 to calculate advance amounts and approval routes</p>
             </div>
           )}
 
           {calculatedAmount > 0 && (
-            <div className="border-t border-slate-100 pt-3 space-y-2">
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-slate-600 font-medium">Advance Amount</span>
-                <span className="font-mono font-extrabold text-teal-700">{currSymbol}{fmt(calculatedAmount)}</span>
+            <div className="border-t-2 border-slate-100 pt-4 space-y-3">
+              <div className="flex justify-between items-center text-xs sm:text-sm">
+                <span className="text-slate-600 font-semibold">Gross Advance</span>
+                <span className="font-mono font-extrabold text-teal-700 text-base whitespace-nowrap">{currSymbol}{fmt(calculatedAmount)}</span>
               </div>
+              {advanceAdjustVal > 0 && (
+                <div className="flex justify-between items-center text-xs text-amber-800 font-semibold bg-amber-50 px-3 py-1 rounded-lg border border-amber-200">
+                  <span>Advance Adjust</span>
+                  <span className="font-mono font-extrabold">-{currSymbol}{fmt(advanceAdjustVal)}</span>
+                </div>
+              )}
               {poCurrency !== 'INR' && (
-                <div className="flex justify-between items-center text-[11px] bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-100">
-                  <span className="text-teal-700 font-medium">INR Equivalent</span>
-                  <span className="font-mono font-bold text-teal-800">₹{fmt(amountINR)}</span>
+                <div className="flex justify-between items-center text-xs bg-teal-50 px-3 py-1.5 rounded-xl border border-teal-100">
+                  <span className="text-teal-800 font-semibold">INR Equivalent</span>
+                  <span className="font-mono font-extrabold text-teal-900 whitespace-nowrap">₹{fmt(amountINR)}</span>
                 </div>
               )}
               {totalGstAmount > 0 && (
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-slate-600 font-medium">GST Breakdown</span>
-                  <span className="font-mono font-extrabold text-amber-600">+{currSymbol}{fmt(totalGstAmount)}</span>
+                <div className="flex justify-between items-center text-xs sm:text-sm">
+                  <span className="text-slate-600 font-semibold">GST Breakdown</span>
+                  <span className="font-mono font-extrabold text-amber-600 whitespace-nowrap">+{currSymbol}{fmt(totalGstAmount)}</span>
                 </div>
               )}
-              <div className="flex justify-between items-center bg-[#0d7676]/10 px-3 py-2 rounded-xl border border-teal-200">
-                <span className="text-xs font-extrabold text-[#0d7676]">Grand Total</span>
-                <span className="font-mono font-extrabold text-[#0d7676] text-sm">{currSymbol}{fmt(grandTotal)}</span>
+              <div className="flex justify-between items-center bg-[#0d7676] text-white px-4 py-3 rounded-xl shadow-xs">
+                <span className="text-xs sm:text-sm font-extrabold uppercase tracking-wider">Grand Total</span>
+                <span className="font-mono font-extrabold text-base sm:text-lg whitespace-nowrap">{currSymbol}{fmt(grandTotal)}</span>
               </div>
-              <div className="flex justify-between items-center text-xs pt-0.5">
-                <span className="text-slate-500 font-medium">Remaining Balance</span>
-                <span className={`font-mono font-extrabold ${remainingAfter < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+              <div className="flex justify-between items-center bg-emerald-50/90 border border-emerald-200 px-4 py-2.5 rounded-xl text-xs sm:text-sm">
+                <span className="text-emerald-900 font-bold">Remaining Balance</span>
+                <span className={`font-mono font-extrabold text-sm sm:text-base whitespace-nowrap ${remainingAfter < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
                   {currSymbol}{fmt(remainingAfter)}
                 </span>
               </div>
@@ -445,9 +497,9 @@ export default function CreateAdvancePaymentWizard() {
           )}
 
           {documents.length > 0 && (
-            <div className="border-t border-slate-100 pt-2.5">
-              <div className="flex items-center gap-2 text-xs text-slate-600 font-medium">
-                <FileText className="w-3.5 h-3.5 text-[#0d7676]" />
+            <div className="border-t border-slate-100 pt-3">
+              <div className="flex items-center gap-2 text-xs text-slate-700 font-bold bg-slate-50 px-3 py-2 rounded-xl border border-slate-200">
+                <FileText className="w-4 h-4 text-[#0d7676]" />
                 <span>{documents.length} document{documents.length > 1 ? 's' : ''} attached</span>
               </div>
             </div>
@@ -455,45 +507,45 @@ export default function CreateAdvancePaymentWizard() {
         </div>
       </div>
 
-      {/* Approval Flow Card */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white flex items-center justify-between">
+      {/* Approval Workflow Card */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-[#0d7676]" />
-            <span className="font-bold text-slate-800 text-xs uppercase tracking-wider">Approval Workflow</span>
+            <TrendingUp className="w-4.5 h-4.5 text-[#0d7676]" />
+            <span className="font-extrabold text-slate-800 text-xs uppercase tracking-wider">Approval Workflow</span>
           </div>
           {dynamicWorkflow?.slab && (
-            <span className="text-[10px] font-extrabold text-[#0d7676] bg-teal-50 px-2 py-0.5 rounded-full border border-teal-200">
+            <span className="text-[10px] font-extrabold text-[#0d7676] bg-teal-50 px-2.5 py-1 rounded-full border border-teal-200">
               {dynamicWorkflow.slab}
             </span>
           )}
         </div>
-        <div className="p-3.5 space-y-2">
+        <div className="p-4 space-y-3">
           {(dynamicWorkflow?.steps || [
             { step: 1, title: 'Purchase Manager Review', roleName: 'Purchase Manager' },
             { step: 2, title: 'Purchase Head Approval', roleName: 'Purchase Head' },
             { step: 3, title: 'CFO Approval', roleName: 'CFO' }
           ]).map((st, i) => (
-            <div key={st.step || i} className="flex items-center gap-2.5">
-              <div className="w-5 h-5 rounded-full bg-teal-50 text-[#0d7676] text-[10px] font-extrabold flex items-center justify-center shrink-0 border border-teal-200">
+            <div key={st.step || i} className="flex items-center gap-3">
+              <div className="w-6 h-6 rounded-full bg-teal-50 text-[#0d7676] text-xs font-extrabold flex items-center justify-center shrink-0 border border-teal-200">
                 {st.step || i + 1}
               </div>
-              <span className="text-xs font-semibold text-slate-700">
-                {st.roleName || st.title}
+              <span className="text-xs sm:text-sm font-bold text-slate-800">
+                {formatRoleName(st.roleName || st.title)}
               </span>
             </div>
           ))}
-          <div className="flex items-center gap-2.5 pt-2 border-t border-slate-100">
-            <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-            <span className="text-xs font-bold text-emerald-700">Payment Dispatched</span>
+          <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
+            <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+            <span className="text-xs sm:text-sm font-extrabold text-emerald-700">Payment Dispatched</span>
           </div>
         </div>
       </div>
 
       {/* Info Notice Card */}
-      <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3 flex gap-2.5">
-        <Info className="w-4 h-4 shrink-0 text-sky-600 mt-0.5" />
-        <p className="text-[11px] text-sky-800 leading-snug font-semibold">
+      <div className="rounded-2xl border border-sky-200 bg-sky-50/80 p-4 flex gap-3 shadow-2xs">
+        <Info className="w-5 h-5 shrink-0 text-sky-600 mt-0.5" />
+        <p className="text-xs text-sky-900 leading-relaxed font-medium">
           Multi-currency payment requests auto-convert to INR using live FX rates for threshold approval routing.
         </p>
       </div>
@@ -501,78 +553,86 @@ export default function CreateAdvancePaymentWizard() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50/90 font-sans text-slate-800 pb-8 text-left">
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4">
+    <div className="min-h-screen bg-slate-50/90 font-sans text-slate-800 pb-12 text-left">
 
-        {/* Top Action Bar */}
-        <div className="flex items-center justify-between mb-4 bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
-          <div className="flex items-center gap-2 text-xs text-slate-500 font-semibold">
-            <Link to="/p2p/advances" className="hover:text-[#0d7676] transition-colors flex items-center gap-1">
-              <ArrowLeft className="w-4 h-4" />
-              Advance Payments
-            </Link>
-            <ChevronRight className="w-3.5 h-3.5 text-slate-300" />
-            <span className="text-slate-900 font-extrabold">New Advance Payment Request</span>
+        {/* Unified Header & Stepper Card */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mb-5 overflow-hidden">
+          {/* Top Action Bar Row */}
+          <div className="flex items-center justify-between gap-4 px-5 py-3 border-b border-slate-100 bg-slate-50/50">
+            <div className="flex min-w-0 items-center gap-2 text-xs sm:text-sm text-slate-500 font-semibold">
+              <Link to="/p2p/advances" className="hover:text-[#0d7676] transition-colors flex items-center gap-1">
+                <ArrowLeft className="w-4 h-4" />
+                Advance Payments
+              </Link>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-300" />
+              <span className="text-slate-900 font-extrabold truncate">New Advance Payment Request</span>
+            </div>
+
+            <button
+              onClick={() => navigate('/p2p/advances')}
+              className="shrink-0 px-3.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-600 font-bold text-xs transition-colors flex items-center gap-1.5 shadow-2xs"
+            >
+              <X className="w-3.5 h-3.5" />
+              Cancel
+            </button>
           </div>
 
-          <button
-            onClick={() => navigate('/p2p/advances')}
-            className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 font-bold text-xs transition-colors flex items-center gap-1.5"
-          >
-            <X className="w-3.5 h-3.5" />
-            Cancel
-          </button>
-        </div>
-
-        {/* Compact Stepper */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-2xs px-6 py-3.5 mb-4">
-          <div className="flex items-center justify-between relative">
-            <div className="absolute inset-x-12 top-4 h-0.5 bg-slate-100" />
-            <div
-              className="absolute left-12 top-4 h-0.5 bg-[#0d7676] transition-all duration-500"
-              style={{ width: `calc(${((currentStep - 1) / (STEPS.length - 1)) * 100}% - 90px / ${STEPS.length})` }}
-            />
-            {STEPS.map((step) => {
-              const done = currentStep > step.id;
-              const active = currentStep === step.id;
-              const Icon = step.icon;
-              return (
-                <button
-                  key={step.id}
-                  type="button"
-                  onClick={() => {
-                    if (step.id < currentStep) {
-                      setErrors({});
-                      setCurrentStep(step.id);
-                    }
-                  }}
-                  className={`relative flex flex-col items-center gap-1 z-10 ${step.id < currentStep ? 'cursor-pointer' : 'cursor-default'}`}
-                >
-                  <div className={`
-                    w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all text-xs font-bold
-                    ${done ? 'bg-[#0d7676] border-[#0d7676] text-white shadow-2xs' :
-                      active ? 'bg-white border-[#0d7676] text-[#0d7676] shadow-2xs' :
-                        'bg-white border-slate-200 text-slate-400'}
-                  `}>
-                    {done ? <Check className="w-3.5 h-3.5" /> : <Icon className="w-3.5 h-3.5" />}
-                  </div>
-                  <span className={`text-[11px] font-extrabold whitespace-nowrap ${done || active ? 'text-[#0d7676]' : 'text-slate-400'}`}>
-                    {step.label}
-                  </span>
-                </button>
-              );
-            })}
+          {/* Compact Stepper Row */}
+          <div className="px-4 sm:px-10 py-2.5 bg-slate-50/30">
+            <div className="flex items-center justify-between relative">
+              <div className="absolute inset-x-8 top-1/2 -translate-y-1/2 h-0.5 bg-slate-200" />
+              <div
+                className="absolute left-8 top-1/2 -translate-y-1/2 h-0.5 bg-[#0d7676] transition-all duration-500"
+                style={{ width: `calc(${((currentStep - 1) / (STEPS.length - 1)) * 100}% - 64px / ${STEPS.length})` }}
+              />
+              {STEPS.map((step) => {
+                const done = currentStep > step.id;
+                const active = currentStep === step.id;
+                const Icon = step.icon;
+                return (
+                  <button
+                    key={step.id}
+                    type="button"
+                    onClick={() => {
+                      if (step.id < currentStep) {
+                        setErrors({});
+                        setCurrentStep(step.id);
+                      }
+                    }}
+                    className={`relative z-10 flex items-center gap-2 px-3 py-1 rounded-full border transition-all bg-white shadow-2xs ${
+                      done
+                        ? 'border-teal-500 bg-teal-50/90 text-[#0d7676]'
+                        : active
+                        ? 'border-teal-600 bg-teal-50 text-[#0d7676] ring-2 ring-teal-500/20'
+                        : 'border-slate-200 text-slate-400 hover:border-slate-300'
+                    } ${step.id < currentStep ? 'cursor-pointer' : 'cursor-default'}`}
+                  >
+                    <div className={`
+                      w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-colors
+                      ${done ? 'bg-[#0d7676] text-white' :
+                        active ? 'bg-[#0d7676] text-white' :
+                          'bg-slate-100 text-slate-400'}
+                    `}>
+                      {done ? <Check className="w-3.5 h-3.5" /> : <Icon className="w-3.5 h-3.5" />}
+                    </div>
+                    <span className={`hidden sm:block text-xs font-extrabold whitespace-nowrap ${done || active ? 'text-[#0d7676]' : 'text-slate-500'}`}>
+                      {step.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 
         {/* Layout: Steps + Sidebar */}
-        <div className="flex gap-4 items-start">
-          <div className="flex-1 min-w-0">
+        <div className="flex flex-col lg:flex-row gap-8 items-start">
+          <div className="flex-1 min-w-0 w-full">
 
             {/* ════ STEP 1: SELECT PO ════ */}
             {currentStep === 1 && (
               <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-white flex items-center gap-3">
+                <div className="px-4 sm:px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-white flex items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center border border-teal-100">
                     <Building2 className="w-4 h-4" />
                   </div>
@@ -582,112 +642,79 @@ export default function CreateAdvancePaymentWizard() {
                   </div>
                 </div>
 
-                <div className="p-6 space-y-4">
+                <div className="p-4 sm:p-6 space-y-5">
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-1.5">
-                      Search Purchase Order <span className="text-rose-500">*</span>
+                      Select Purchase Order <span className="text-rose-500">*</span>
                     </label>
-                    <div className="relative">
-                      <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                      {loadingPos && <Loader2 className="w-4 h-4 absolute right-3.5 top-1/2 -translate-y-1/2 text-teal-500 animate-spin" />}
-                      <input
-                        type="text"
-                        placeholder="Type PO number, vendor name or code…"
-                        value={searchPo}
-                        onChange={(e) => { setSearchPo(e.target.value); setErrors(p => ({ ...p, po: null })); }}
-                        className={inp(errors.po) + ' pl-10 pr-10'}
-                      />
-                    </div>
-                    {errors.po && (
-                      <p className="text-sm font-semibold text-rose-600 mt-1.5 flex items-center gap-1.5">
-                        <AlertCircle className="w-4 h-4" /> {errors.po}
-                      </p>
-                    )}
+                    <SearchableSelect
+                      options={poOptions}
+                      value={selectedPo?.poNumber || ''}
+                      onChange={(val) => {
+                        const found = livePos.find((p) => String(p.poNumber) === String(val));
+                        if (found) {
+                          handleSelectPo(found);
+                        }
+                      }}
+                      placeholder={loadingPos ? 'Loading purchase orders…' : 'Search & select purchase order…'}
+                      searchPlaceholder="Type PO number, vendor name or code…"
+                      error={errors.po}
+                      disabled={loadingPos}
+                      size="md"
+                    />
                   </div>
 
-                  {/* Selected PO banner */}
+                  {/* Selected PO Card */}
                   {selectedPo && (
-                    <div className="flex items-center justify-between p-4 rounded-xl bg-teal-50/80 border-2 border-teal-200">
-                      <div className="flex items-center gap-3">
-                        <CheckCircle2 className="w-5 h-5 text-teal-600 shrink-0" />
-                        <div>
-                          <p className="font-mono font-bold text-slate-900 text-sm">{selectedPo.poNumber}</p>
-                          <p className="text-sm text-slate-600">{selectedPo.supplierName}</p>
+                    <div className="p-6 rounded-2xl bg-gradient-to-br from-teal-50/90 to-emerald-50/40 border-2 border-teal-200/90 shadow-sm space-y-4">
+                      <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div className="flex items-start gap-3 min-w-0">
+                          <CheckCircle2 className="w-6 h-6 text-teal-600 shrink-0 mt-0.5" />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2.5 flex-wrap">
+                              <span className="font-mono font-extrabold text-slate-900 text-lg sm:text-xl">{selectedPo.poNumber}</span>
+                              <span className={`text-xs font-bold px-3 py-0.5 rounded-full uppercase ${selectedPo.status === 'open' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-slate-100 text-slate-600'}`}>
+                                {selectedPo.status || 'Open'}
+                              </span>
+                              <span className="text-xs font-extrabold bg-slate-100 text-slate-800 px-2.5 py-0.5 rounded-md font-mono border border-slate-200">
+                                {poCurrency}
+                              </span>
+                            </div>
+                            <p className="text-base font-bold text-slate-800 mt-1.5 break-words leading-relaxed">
+                              {selectedPo.supplierName}
+                            </p>
+                            {selectedPo.supplierId && (
+                              <span className="inline-block mt-1 font-mono text-xs font-semibold text-slate-500 bg-white/80 px-2.5 py-1 rounded-md border border-slate-200">
+                                Code: {selectedPo.supplierId}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-xs font-extrabold text-teal-700 uppercase tracking-wider">Available Balance</p>
+                          <p className="font-mono font-extrabold text-teal-700 text-xl sm:text-2xl mt-0.5 whitespace-nowrap">{currSymbol}{fmt(availableBalance)}</p>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <p className="text-[10px] font-bold text-teal-700 uppercase tracking-wider">Available ({poCurrency})</p>
-                        <p className="font-mono font-bold text-teal-700 text-base">{currSymbol}{fmt(availableBalance)}</p>
+
+                      <div className="pt-4 border-t border-teal-200/80 grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+                        <div className="bg-white/80 p-3.5 rounded-xl border border-teal-100">
+                          <span className="text-slate-500 block text-xs font-semibold uppercase tracking-wider">Total PO Amount</span>
+                          <span className="font-mono font-extrabold text-slate-900 text-base sm:text-lg whitespace-nowrap mt-0.5 block">{currSymbol}{fmt(poValue)}</span>
+                        </div>
+                        <div className="bg-white/80 p-3.5 rounded-xl border border-teal-100">
+                          <span className="text-slate-500 block text-xs font-semibold uppercase tracking-wider">Advance Paid</span>
+                          <span className="font-mono font-extrabold text-slate-800 text-base sm:text-lg whitespace-nowrap mt-0.5 block">{currSymbol}{fmt(selectedPo.advancePaid || 0)}</span>
+                        </div>
+                        <div className="bg-white/80 p-3.5 rounded-xl border border-teal-100">
+                          <span className="text-slate-500 block text-xs font-semibold uppercase tracking-wider">PO Currency</span>
+                          <span className="font-mono font-extrabold text-slate-800 text-base sm:text-lg mt-0.5 block">{poCurrency}</span>
+                        </div>
                       </div>
                     </div>
                   )}
-
-                  {/* PO list */}
-                  <div className="border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="bg-slate-50/70 px-4 py-2.5 flex items-center justify-between border-b border-slate-200">
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Purchase Orders</span>
-                      {!loadingPos && <span className="text-xs text-slate-400">{filteredPos.length} result{filteredPos.length !== 1 ? 's' : ''}</span>}
-                    </div>
-                    <div className="max-h-60 overflow-y-auto divide-y divide-slate-100">
-                      {loadingPos ? (
-                        <div className="flex items-center justify-center py-10 gap-3 text-slate-500 text-sm">
-                          <Loader2 className="w-5 h-5 animate-spin text-teal-600" />
-                          Loading purchase orders…
-                        </div>
-                      ) : filteredPos.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-10 gap-2 text-slate-400">
-                          <Search className="w-6 h-6 opacity-40" />
-                          <p className="text-sm font-semibold text-slate-500">
-                            {searchPo ? `No results for "${searchPo}"` : 'No POs found'}
-                          </p>
-                        </div>
-                      ) : (
-                        filteredPos.map((p) => {
-                          const avail = Math.max(0, p.totalAmount - (p.advancePaid || 0));
-                          const isSel = selectedPo?.poNumber === p.poNumber;
-                          const sym = getCurrencySymbol(p.currency);
-                          return (
-                            <button
-                              key={p.poNumber}
-                              onClick={() => handleSelectPo(p)}
-                              className={`w-full px-4 py-3.5 flex items-center justify-between text-left transition-all border-l-4 ${isSel
-                                ? 'bg-teal-50/60 border-l-teal-500'
-                                : 'hover:bg-slate-50/80 border-l-transparent'
-                                }`}
-                            >
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-mono font-bold text-sm text-slate-900">{p.poNumber}</span>
-                                  <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase ${p.status === 'open' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
-                                    }`}>
-                                    {p.status}
-                                  </span>
-                                  <span className="text-[10px] font-extrabold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-mono">
-                                    {p.currency || 'INR'}
-                                  </span>
-                                  {isSel && (
-                                    <span className="text-[10px] font-bold bg-teal-600 text-white px-2.5 py-0.5 rounded-full uppercase">
-                                      Selected
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="text-sm text-slate-500 mt-0.5 truncate">
-                                  {p.supplierName} · <span className="font-mono text-slate-400">{p.supplierId}</span>
-                                </p>
-                              </div>
-                              <div className="text-right shrink-0 ml-4">
-                                <p className="font-mono font-bold text-sm text-slate-800">{sym}{fmt(avail)}</p>
-                                <p className="text-[10px] text-slate-400 font-semibold">{p.currency || 'INR'}</p>
-                              </div>
-                            </button>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
                 </div>
 
-                <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/30 flex justify-end">
+                <div className="sticky bottom-0 z-20 px-4 sm:px-6 py-3.5 border-t border-slate-200 bg-white/95 backdrop-blur flex justify-end shadow-[0_-8px_24px_rgba(15,23,42,0.06)]">
                   <button
                     onClick={goNext}
                     disabled={!selectedPo}
@@ -702,7 +729,7 @@ export default function CreateAdvancePaymentWizard() {
             {/* ════ STEP 2: PAYMENT DETAILS ════ */}
             {currentStep === 2 && (
               <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-                <div className="px-6 py-3 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-white flex items-center gap-3">
+                <div className="px-4 sm:px-6 py-3 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-white flex flex-wrap items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center border border-teal-100">
                     <IndianRupee className="w-4 h-4" />
                   </div>
@@ -710,7 +737,7 @@ export default function CreateAdvancePaymentWizard() {
                     <h2 className="font-bold text-slate-900 text-base">Payment Details ({poCurrency})</h2>
                     <p className="text-sm text-slate-400">Set advance amount and currency breakdown</p>
                   </div>
-                  <div className="ml-auto flex items-center gap-2 bg-teal-50 border border-teal-200 px-3 py-1.5 rounded-xl">
+                  <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-2 bg-teal-50 border border-teal-200 px-3 py-1.5 rounded-xl">
                     <span className="text-[10px] font-bold text-teal-700 uppercase">PO</span>
                     <span className="font-mono font-bold text-sm text-slate-800">{selectedPo?.poNumber}</span>
                     <span className="text-teal-300">·</span>
@@ -718,16 +745,16 @@ export default function CreateAdvancePaymentWizard() {
                   </div>
                 </div>
 
-                <div className="p-6 space-y-5">
+                <div className="p-4 sm:p-5 space-y-4">
                   
                   {/* Amount Inputs */}
-                  <div className="space-y-3">
-                    <label className="text-sm font-bold text-slate-700 uppercase tracking-wider block">
+                  <div className="space-y-2.5">
+                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
                       Advance Amount ({poCurrency}) <span className="text-rose-500">*</span>
                     </label>
 
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm text-slate-400 font-medium">Quick %:</span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs text-slate-400 font-semibold mr-1">Quick %:</span>
                       {[10, 20, 25, 30, 50].map(pct => (
                         <button
                           key={pct}
@@ -737,9 +764,9 @@ export default function CreateAdvancePaymentWizard() {
                             setPctValue(pct.toString());
                             setErrors(p => ({ ...p, amount: null }));
                           }}
-                          className={`px-3.5 py-1.5 rounded-xl text-sm font-bold border-2 transition-all ${amountMode === 'pct' && Number(pctValue) === pct
-                            ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
-                            : 'bg-white text-slate-600 border-slate-200 hover:border-teal-400 hover:shadow-sm'
+                          className={`px-3 py-1 rounded-lg text-xs font-bold border transition-all ${amountMode === 'pct' && Number(pctValue) === pct
+                            ? 'bg-[#0d7676] text-white border-[#0d7676] shadow-2xs'
+                            : 'bg-white text-slate-600 border-slate-200 hover:border-teal-400 hover:shadow-2xs'
                             }`}
                         >
                           {pct}%
@@ -747,33 +774,35 @@ export default function CreateAdvancePaymentWizard() {
                       ))}
                     </div>
 
-                    <div className="grid lg:grid-cols-2 gap-5">
-                      <div className="space-y-3">
-                        <div className="flex rounded-xl border-2 border-slate-200 overflow-hidden">
+                    <div className="grid lg:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)] gap-4">
+                      <div className="space-y-2.5">
+                        <div className="flex rounded-xl border border-slate-200 overflow-hidden bg-slate-50 p-1 gap-1">
                           <button
                             type="button"
                             onClick={() => setAmountMode('pct')}
-                            className={`flex-1 py-2.5 text-sm font-bold transition-all flex items-center justify-center gap-2 ${amountMode === 'pct' ? 'bg-teal-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
+                            className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${amountMode === 'pct' ? 'bg-[#0d7676] text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
                               }`}
                           >
-                            <Percent className="w-4 h-4" /> Percentage
+                            <Percent className="w-3.5 h-3.5" /> Percentage
                           </button>
                           <button
                             type="button"
                             onClick={() => setAmountMode('amount')}
-                            className={`flex-1 py-2.5 text-sm font-bold transition-all flex items-center justify-center gap-2 ${amountMode === 'amount' ? 'bg-teal-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
+                            className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${amountMode === 'amount' ? 'bg-[#0d7676] text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
                               }`}
                           >
                             <span>{currSymbol}</span> Amount ({poCurrency})
                           </button>
                         </div>
                         <div className="relative">
-                          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-base font-bold text-slate-400">
+                          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">
                             {amountMode === 'pct' ? '%' : currSymbol}
                           </span>
                           <input
                             type="number"
-                            min="0"
+                            min="0.01"
+                            max={amountMode === 'pct' ? 100 : availableBalance}
+                            step="0.01"
                             value={amountMode === 'amount' ? amountValue : pctValue}
                             onChange={(e) => {
                               if (amountMode === 'amount') setAmountValue(e.target.value);
@@ -781,61 +810,73 @@ export default function CreateAdvancePaymentWizard() {
                               setErrors(p => ({ ...p, amount: null }));
                             }}
                             placeholder="0.00"
-                            className={inp(errors.amount) + ' pl-10 font-mono font-bold text-base py-3'}
+                            className={inp(errors.amount) + ' pl-10 font-mono font-bold text-sm py-2'}
                           />
                         </div>
                         {errors.amount && (
-                          <p className="text-sm text-rose-600 font-semibold flex items-center gap-1.5">
-                            <AlertCircle className="w-4 h-4" /> {errors.amount}
+                          <p className="text-xs text-rose-600 font-semibold flex items-center gap-1">
+                            <AlertCircle className="w-3.5 h-3.5" /> {errors.amount}
                           </p>
                         )}
 
-
                         {/* Reason */}
                         <div>
-                          <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                          <label className="block text-xs font-bold text-slate-700 mb-1">
                             Reason for Advance <span className="text-rose-500">*</span>
                           </label>
                           <textarea
                             value={reason}
                             onChange={(e) => { setReason(e.target.value); setErrors(p => ({ ...p, reason: null })); }}
                             rows={2}
+                            maxLength={500}
                             placeholder="e.g. Vendor requires 20% advance before shipment as per PO payment terms…"
-                            className={inp(errors.reason) + ' resize-none'}
+                            className={inp(errors.reason) + ' resize-none py-2 text-xs'}
                           />
+                          <div className="mt-0.5 flex items-center justify-between gap-3">
+                            <span className="text-[10px] font-medium text-slate-400">Minimum 10 characters</span>
+                            <span className={`text-[10px] font-bold ${reason.trim().length >= 10 ? 'text-emerald-600' : 'text-slate-400'}`}>{reason.length}/500</span>
+                          </div>
                           {errors.reason && (
-                            <p className="text-sm text-rose-600 font-semibold mt-1 flex items-center gap-1.5">
-                              <AlertCircle className="w-4 h-4" /> {errors.reason}
+                            <p className="text-xs text-rose-600 font-semibold mt-0.5 flex items-center gap-1">
+                              <AlertCircle className="w-3.5 h-3.5" /> {errors.reason}
                             </p>
                           )}
                         </div>
                       </div>
 
                       {/* Live calc box */}
-                      <div className="bg-gradient-to-br from-teal-50/80 to-emerald-50/80 rounded-xl border-2 border-teal-200 p-5 space-y-3 shadow-sm">
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm font-semibold text-slate-600">Requesting ({poCurrency})</span>
-                          <span className="font-mono font-bold text-teal-700 text-lg">{currSymbol}{fmt(calculatedAmount)}</span>
-                        </div>
-                        {poCurrency !== 'INR' && (
-                          <div className="flex justify-between items-center text-xs border-b border-teal-200/60 pb-2">
-                            <span className="font-semibold text-slate-600">INR Equivalent</span>
-                            <span className="font-mono font-bold text-teal-800">₹{fmt(amountINR)}</span>
+                      <div className="bg-gradient-to-br from-teal-50/70 to-emerald-50/70 rounded-xl border border-teal-200/80 p-4 space-y-2.5 shadow-2xs flex flex-col justify-between">
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="font-semibold text-slate-600">Gross Requesting ({poCurrency})</span>
+                            <span className="font-mono font-bold text-teal-800 text-base">{currSymbol}{fmt(calculatedAmount)}</span>
                           </div>
-                        )}
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm font-semibold text-slate-600">Of available PO balance</span>
-                          <span className="font-mono font-bold text-slate-700 text-base">{calculatedPct.toFixed(1)}%</span>
+                          {advanceAdjustVal > 0 && (
+                            <div className="flex justify-between items-center text-xs text-amber-800 font-bold bg-amber-50/80 px-2 py-1 rounded-lg border border-amber-200/80">
+                              <span>Advance Adjust</span>
+                              <span className="font-mono">-{currSymbol}{fmt(advanceAdjustVal)}</span>
+                            </div>
+                          )}
+                          {poCurrency !== 'INR' && (
+                            <div className="flex justify-between items-center text-xs border-b border-teal-200/60 pb-1.5">
+                              <span className="font-semibold text-slate-600">INR Equivalent</span>
+                              <span className="font-mono font-bold text-teal-900">₹{fmt(amountINR)}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="font-semibold text-slate-600">Of available PO balance</span>
+                            <span className="font-mono font-bold text-slate-700">{calculatedPct.toFixed(1)}%</span>
+                          </div>
+                          <div className="h-2 rounded-full bg-teal-100/80 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all ${calculatedAmount > availableBalance ? 'bg-rose-500' : 'bg-[#0d7676]'}`}
+                              style={{ width: `${Math.min(100, availableBalance > 0 ? (calculatedAmount / availableBalance) * 100 : 0)}%` }}
+                            />
+                          </div>
                         </div>
-                        <div className="h-2.5 rounded-full bg-teal-100 overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all ${calculatedAmount > availableBalance ? 'bg-rose-500' : 'bg-teal-500'}`}
-                            style={{ width: `${Math.min(100, availableBalance > 0 ? (calculatedAmount / availableBalance) * 100 : 0)}%` }}
-                          />
-                        </div>
-                        <div className="flex justify-between items-center border-t-2 border-teal-200 pt-3">
-                          <span className="text-sm font-semibold text-slate-600">Remaining Balance ({poCurrency})</span>
-                          <span className={`font-mono font-bold text-base ${remainingAfter < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                        <div className="flex justify-between items-center border-t border-teal-200/80 pt-2 text-xs">
+                          <span className="font-bold text-slate-700">Remaining Balance ({poCurrency})</span>
+                          <span className={`font-mono font-extrabold text-sm ${remainingAfter < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
                             {currSymbol}{fmt(remainingAfter)}
                           </span>
                         </div>
@@ -843,10 +884,10 @@ export default function CreateAdvancePaymentWizard() {
                     </div>
                   </div>
 
-                  {/* Payment mode + Bank */}
-                  <div className="grid lg:grid-cols-2 gap-5">
+                  {/* Payment mode + Bank + Advance Adjust */}
+                  <div className="grid md:grid-cols-3 gap-3.5 items-start">
                     <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-1.5">Payment Mode</label>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">Payment Mode</label>
                       <SearchableSelect
                         options={[
                           { label: 'NEFT', value: 'NEFT' },
@@ -863,7 +904,7 @@ export default function CreateAdvancePaymentWizard() {
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-1.5">
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
                         Bank Name <span className="text-slate-400 font-normal">(optional)</span>
                       </label>
                       <input
@@ -871,8 +912,28 @@ export default function CreateAdvancePaymentWizard() {
                         value={bankName}
                         onChange={(e) => setBankName(e.target.value)}
                         placeholder="e.g. HDFC Bank / Citibank…"
-                        className={inp(false) + ' py-2.5'}
+                        className={inp(false) + ' h-10 py-2.5 text-sm'}
                       />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Advance Adjust <span className="text-slate-400 font-normal">(optional)</span>
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">
+                          {currSymbol}
+                        </span>
+                        <input
+                          type="number"
+                          min="0"
+                          max={calculatedAmount}
+                          step="0.01"
+                          value={advanceAdjust}
+                          onChange={(e) => setAdvanceAdjust(e.target.value)}
+                          placeholder="0.00 (prior advance/credit)"
+                          className={inp(false) + ' h-10 pl-8 py-2.5 text-sm font-mono font-bold text-slate-900'}
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -880,7 +941,10 @@ export default function CreateAdvancePaymentWizard() {
                   <div className={`rounded-xl border-2 transition-all ${withGst ? 'border-amber-300 bg-gradient-to-br from-amber-50/80 to-orange-50/80' : 'border-slate-200 bg-white'}`}>
                     <button
                       type="button"
-                      onClick={() => setWithGst(prev => !prev)}
+                      onClick={() => {
+                        setWithGst(prev => !prev);
+                        setErrors(prev => ({ ...prev, gst: null }));
+                      }}
                       className="w-full flex items-center justify-between px-5 py-3.5"
                     >
                       <div className="flex items-center gap-3">
@@ -920,8 +984,11 @@ export default function CreateAdvancePaymentWizard() {
                                 <label className="block text-xs font-bold text-slate-700 mb-1.5">CGST %</label>
                                 <input
                                   type="number"
+                                  min="0.01"
+                                  max="100"
+                                  step="0.01"
                                   value={cgstPct}
-                                  onChange={e => setCgstPct(e.target.value)}
+                                  onChange={e => { setCgstPct(e.target.value); setErrors(prev => ({ ...prev, gst: null })); }}
                                   placeholder="9.00"
                                   className={inp(false) + ' font-mono font-bold py-2.5'}
                                 />
@@ -930,8 +997,11 @@ export default function CreateAdvancePaymentWizard() {
                                 <label className="block text-xs font-bold text-slate-700 mb-1.5">SGST %</label>
                                 <input
                                   type="number"
+                                  min="0.01"
+                                  max="100"
+                                  step="0.01"
                                   value={sgstPct}
-                                  onChange={e => setSgstPct(e.target.value)}
+                                  onChange={e => { setSgstPct(e.target.value); setErrors(prev => ({ ...prev, gst: null })); }}
                                   placeholder="9.00"
                                   className={inp(false) + ' font-mono font-bold py-2.5'}
                                 />
@@ -942,8 +1012,11 @@ export default function CreateAdvancePaymentWizard() {
                               <label className="block text-xs font-bold text-slate-700 mb-1.5">IGST %</label>
                               <input
                                 type="number"
+                                min="0.01"
+                                max="100"
+                                step="0.01"
                                 value={igstPct}
-                                onChange={e => setIgstPct(e.target.value)}
+                                onChange={e => { setIgstPct(e.target.value); setErrors(prev => ({ ...prev, gst: null })); }}
                                 placeholder="18.00"
                                 className={inp(false) + ' font-mono font-bold py-2.5'}
                               />
@@ -956,12 +1029,15 @@ export default function CreateAdvancePaymentWizard() {
                             <span className="font-mono font-bold text-amber-700 text-base">+{currSymbol}{fmt(totalGstAmount)}</span>
                           </div>
                         )}
+                        {errors.gst && (
+                          <p className="flex items-center gap-1.5 text-sm font-semibold text-rose-600"><AlertCircle className="h-4 w-4" />{errors.gst}</p>
+                        )}
                       </div>
                     )}
                   </div>
                 </div>
 
-                <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/30 flex items-center justify-between">
+                <div className="sticky bottom-0 z-20 px-4 sm:px-6 py-3.5 border-t border-slate-200 bg-white/95 backdrop-blur flex items-center justify-between shadow-[0_-8px_24px_rgba(15,23,42,0.06)]">
                   <button
                     onClick={goBack}
                     className="h-10 px-4 rounded-xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all flex items-center gap-2"
@@ -981,7 +1057,7 @@ export default function CreateAdvancePaymentWizard() {
             {/* ════ STEP 3: DOCUMENTS ════ */}
             {currentStep === 3 && (
               <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-white flex items-center gap-3">
+                <div className="px-4 sm:px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-white flex flex-wrap items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center border border-teal-100">
                     <FileText className="w-4 h-4" />
                   </div>
@@ -994,7 +1070,7 @@ export default function CreateAdvancePaymentWizard() {
                   </span>
                 </div>
 
-                <div className="p-6 space-y-4">
+                <div className="p-4 sm:p-6 space-y-4">
                   {errors.docs && (
                     <div className="flex items-center gap-2.5 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm font-semibold">
                       <AlertCircle className="w-4 h-4 shrink-0" /> {errors.docs}
@@ -1011,7 +1087,7 @@ export default function CreateAdvancePaymentWizard() {
                   />
                 </div>
 
-                <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/30 flex items-center justify-between">
+                <div className="sticky bottom-0 z-20 px-4 sm:px-6 py-3.5 border-t border-slate-200 bg-white/95 backdrop-blur flex items-center justify-between shadow-[0_-8px_24px_rgba(15,23,42,0.06)]">
                   <button
                     onClick={goBack}
                     className="h-10 px-4 rounded-xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all flex items-center gap-2"
@@ -1031,7 +1107,7 @@ export default function CreateAdvancePaymentWizard() {
             {/* ════ STEP 4: REVIEW & SUBMIT ════ */}
             {currentStep === 4 && (
               <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-white flex items-center gap-3">
+                <div className="px-4 sm:px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-white flex items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center border border-teal-100">
                     <ShieldCheck className="w-4 h-4" />
                   </div>
@@ -1041,7 +1117,7 @@ export default function CreateAdvancePaymentWizard() {
                   </div>
                 </div>
 
-                <div className="p-6 space-y-4">
+                <div className="p-4 sm:p-6 space-y-4">
                   {/* PO + Vendor */}
                   <div>
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">Purchase Order Details</p>
@@ -1069,9 +1145,15 @@ export default function CreateAdvancePaymentWizard() {
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">Payment Details ({poCurrency})</p>
                     <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 text-sm overflow-hidden">
                       <div className="flex justify-between px-4 py-3">
-                        <span className="text-slate-600 font-medium">Advance Amount</span>
+                        <span className="text-slate-600 font-medium">Gross Advance Amount</span>
                         <span className="font-mono font-bold">{currSymbol}{fmt(calculatedAmount)} <span className="text-slate-400 font-normal">({calculatedPct.toFixed(1)}%)</span></span>
                       </div>
+                      {advanceAdjustVal > 0 && (
+                        <div className="flex justify-between px-4 py-3 bg-amber-50/70">
+                          <span className="text-amber-900 font-bold">Advance Adjust</span>
+                          <span className="font-mono font-bold text-amber-800">-{currSymbol}{fmt(advanceAdjustVal)}</span>
+                        </div>
+                      )}
                       {poCurrency !== 'INR' && (
                         <div className="flex justify-between px-4 py-3 bg-teal-50/70">
                           <span className="text-teal-900 font-bold">INR Equivalent (Rate: 1 {poCurrency} = ₹{activeFxRate})</span>
@@ -1139,7 +1221,7 @@ export default function CreateAdvancePaymentWizard() {
                       ]).map((st, i) => (
                         <React.Fragment key={st.step || i}>
                           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold text-teal-700 bg-teal-100 border-teal-200">
-                            <Clock className="w-4 h-4 text-teal-600" /> {st.roleName || st.title}
+                            <Clock className="w-4 h-4 text-teal-600" /> {formatRoleName(st.roleName || st.title)}
                           </div>
                           <ChevronRight className="w-4 h-4 text-slate-300" />
                         </React.Fragment>
@@ -1151,7 +1233,7 @@ export default function CreateAdvancePaymentWizard() {
                   </div>
                 </div>
 
-                <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/30 flex items-center justify-between">
+                <div className="sticky bottom-0 z-20 px-4 sm:px-6 py-3.5 border-t border-slate-200 bg-white/95 backdrop-blur flex items-center justify-between shadow-[0_-8px_24px_rgba(15,23,42,0.06)]">
                   <button
                     onClick={goBack}
                     className="h-10 px-4 rounded-xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all flex items-center gap-2"
@@ -1176,7 +1258,6 @@ export default function CreateAdvancePaymentWizard() {
 
           {/* Sidebar */}
           <Sidebar />
-        </div>
       </div>
     </div>
   );

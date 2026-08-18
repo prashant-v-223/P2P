@@ -148,7 +148,7 @@ export default function FreightRfqDetailPage() {
 
           <div className="flex flex-col sm:items-end gap-2 shrink-0">
             <div className="text-xs text-slate-500 font-medium">
-              Closing Date : <strong className="text-slate-800 font-bold">{rfq.closingDate ? new Date(rfq.closingDate).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : '08 Aug 2026, 11:24 am'}</strong>
+              Closing Date : <strong className="text-slate-800 font-bold">{rfq.closingDate ? new Date(rfq.closingDate).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : '—'}</strong>
             </div>
 
             {rfq.myAllocation && (
@@ -174,7 +174,7 @@ export default function FreightRfqDetailPage() {
 
             <div>
               <span className="text-[11px] text-slate-400 font-semibold block">Port of Loading</span>
-              <span className="font-bold text-slate-800 mt-0.5 block">{cargo.portOfOrigin || 'SHANGGHAI'}</span>
+              <span className="font-bold text-slate-800 mt-0.5 block">{cargo.portOfOrigin || '—'}</span>
             </div>
 
             <div>
@@ -184,7 +184,7 @@ export default function FreightRfqDetailPage() {
 
             <div>
               <span className="text-[11px] text-slate-400 font-semibold block">Cargo Type</span>
-              <span className="font-bold text-slate-800 mt-0.5 block">{cargo.cargoType || 'SOLAR CELL'}</span>
+              <span className="font-bold text-slate-800 mt-0.5 block">{cargo.cargoType || '—'}</span>
             </div>
 
             <div>
@@ -194,7 +194,7 @@ export default function FreightRfqDetailPage() {
 
             <div>
               <span className="text-[11px] text-slate-400 font-semibold block">No. of Containers</span>
-              <span className="font-bold text-slate-800 mt-0.5 block">{rfq.myAllocation?.containers || cargo.numberOfContainers || cargo.containerCount || 5}</span>
+              <span className="font-bold text-slate-800 mt-0.5 block">{rfq.myAllocation?.containers || cargo.numberOfContainers || cargo.containerCount || '—'}</span>
             </div>
           </div>
         </div>

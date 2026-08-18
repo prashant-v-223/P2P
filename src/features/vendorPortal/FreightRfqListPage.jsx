@@ -85,9 +85,9 @@ export default function FreightRfqListPage() {
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
               {paginated.map((rfq, idx) => {
-                const isAwarded = rfq.status === 'awarded' || Boolean(rfq.myAllocation);
-                const containerCount = rfq.myAllocation?.containersAllocated || rfq.cargoDetails?.numberOfContainers || 5;
-                const cargoType = rfq.cargoDetails?.cargoType || 'SOLAR CELL';
+                const isAwarded = ['partially_awarded', 'awarded'].includes(rfq.status) || Boolean(rfq.myAllocation);
+                const containerCount = rfq.myAllocation?.containers || rfq.cargoDetails?.containerCount || '—';
+                const cargoType = rfq.cargoDetails?.cargoType || '—';
 
                 // Calculate days left
                 const closing = rfq.closingDate ? new Date(rfq.closingDate) : null;
@@ -99,13 +99,13 @@ export default function FreightRfqListPage() {
                     <td className="p-3.5 pl-4 text-slate-400 font-mono text-xs">{(page - 1) * pageSize + idx + 1}</td>
                     <td className="p-3.5 font-mono font-bold text-slate-700 text-xs">{rfq.rfqNumber}</td>
                     <td className="p-3.5 font-bold text-slate-900 uppercase">{rfq.title}</td>
-                    <td className="p-3.5 font-mono text-slate-600">{rfq.poId || '4300001538'}</td>
+                    <td className="p-3.5 font-mono text-slate-600">{rfq.poId || rfq.sapPoNumber || '—'}</td>
                     <td className="p-3.5 font-bold text-slate-700">
                       {containerCount} <span className="text-slate-400 font-semibold text-[11px]">({cargoType})</span>
                     </td>
                     <td className="p-3.5">
                       <div className="font-bold text-slate-700">
-                        {closing ? closing.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '08 Aug 2026'}
+                        {closing ? closing.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
                       </div>
                       {daysLeft !== null && (
                         <div className="text-[10px] font-extrabold text-emerald-600">

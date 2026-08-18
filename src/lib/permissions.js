@@ -213,6 +213,15 @@ export const ROUTE_PERMISSIONS = {
 const ADMIN_ROLES = new Set(['admin', 'systemadmin', 'superadmin', 'system admin', 'super admin']);
 
 /**
+ * Check if a role belongs to the Finance team (Finance, CFO, Accounts, etc.)
+ */
+export const isFinanceRole = (userRole) => {
+  if (!userRole) return false;
+  const r = String(userRole).toLowerCase().trim();
+  return r.includes('finance') || r.includes('cfo') || r.includes('account');
+};
+
+/**
  * Normalize a role name for alias matching.
  */
 const normalizeRole = (role) => String(role || '').toLowerCase().replace(/[\s_-]+/g, '').trim();
@@ -308,6 +317,12 @@ export function userHasPermission(userRole, permissionKey, customPermissions) {
 export function userCanAccessRoute(userRole, routePath, customPermissions) {
   // Normalize path (strip query params / trailing slashes)
   const cleanPath = (routePath || '/').split('?')[0].replace(/\/$/, '') || '/';
+
+  // Hierarchy Report (7-Day Payment Report): Accessible to users with reports or approvals permissions
+  if (cleanPath === '/admin/hierarchy-report') {
+    return userHasPermission(userRole, 'reports.view', customPermissions) ||
+           userHasPermission(userRole, 'approvals.view', customPermissions);
+  }
 
   // Find matching route permission (exact match first)
   let permKey = ROUTE_PERMISSIONS[cleanPath];

@@ -59,7 +59,8 @@ const NAV_SECTIONS = [
     id: 'approvals',
     title: 'APPROVALS',
     items: [
-      { path: '/approvals', label: 'Pending Approvals', icon: CheckSquare, badge: 'pendingCount' }
+      { path: '/approvals', label: 'Pending Approvals', icon: CheckSquare, badge: 'pendingCount' },
+      { path: '/admin/hierarchy-report', label: '7-Day Payment Report', icon: Network }
     ]
   },
   {
@@ -70,8 +71,7 @@ const NAV_SECTIONS = [
       { path: '/management/custom-agents', label: 'Custom Agents', icon: Shield },
       { path: '/management/logistics-providers', label: 'Logistics Providers', icon: Building2 },
       { path: '/admin/users', label: 'Users', icon: Users },
-      { path: '/admin/roles', label: 'Roles & Permissions', icon: Lock },
-      // { path: '/admin/hierarchy-report', label: 'Hierarchy Reports', icon: Network }
+      { path: '/admin/roles', label: 'Roles & Permissions', icon: Lock }
     ]
   },
   {
@@ -228,7 +228,6 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
       )}>
         <Link to={homePath} onClick={onNavigate} className="flex items-center gap-3 overflow-hidden transition-all duration-200">
           {collapsed ? (
-
             <img src="/favicon.ico" alt="logo" width={30} height={20} />
           ) : (
             <>

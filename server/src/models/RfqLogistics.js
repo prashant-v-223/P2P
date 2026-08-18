@@ -58,6 +58,7 @@ const rfqQuoteSchema = new mongoose.Schema({
   stChargesInr: { type: Number, default: 25000 },
   otherChargesInr: { type: Number, default: 0 },
   totalInr: { type: Number, default: 1461531 },
+  exchangeRate: { type: Number, min: 0 },
   freightAmount: { type: Number, required: true },
   destinationCharges: { type: Number, default: 0 },
   transitDays: { type: Number, default: 18 },
