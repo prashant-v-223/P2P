@@ -200,9 +200,11 @@ export default function InvoicePaymentFormView() {
 
   const calculateDueDate = () => {
     if (!poNumber) return 'Select Purchase Order';
-    if (!invoiceDate) return 'Select Supplier Invoice Date';
-    if (dueDays === '' || dueDays === null || dueDays === undefined) return 'Select Purchase Order';
-    const d = new Date(`${invoiceDate}T00:00:00`);
+    const baseDate = (isImportVendor && blDate) ? blDate : invoiceDate;
+    if (isImportVendor && !blDate) return 'Enter BL Date to calculate due date';
+    if (!invoiceDate && !isImportVendor) return 'Select Supplier Invoice Date';
+    if (!baseDate || dueDays === '' || dueDays === null || dueDays === undefined) return isImportVendor ? 'Enter BL Date' : 'Select Supplier Invoice Date';
+    const d = new Date(`${baseDate}T00:00:00`);
     d.setDate(d.getDate() + Number(dueDays || 0));
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   };
@@ -913,7 +915,13 @@ export default function InvoicePaymentFormView() {
                 className="w-full px-3 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-slate-600 text-xs font-medium cursor-not-allowed"
               />
               <p className="text-[10px] text-[#0d7676] font-semibold">
-                {dueDays !== '' ? `Auto-calculated: Invoice Date + ${dueDays} days` : 'Select a Purchase Order to compute due date'}
+                {dueDays !== '' ? (
+                  isImportVendor
+                    ? (blDate ? `Auto-calculated: BL Date (${blDate}) + ${dueDays} days` : 'Enter BL Date to compute due date')
+                    : (invoiceDate ? `Auto-calculated: Invoice Date (${invoiceDate}) + ${dueDays} days` : 'Select Invoice Date to compute due date')
+                ) : (
+                  'Select a Purchase Order to compute due date'
+                )}
               </p>
             </div>
 

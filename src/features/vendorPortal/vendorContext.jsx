@@ -96,22 +96,46 @@ export const VendorProvider = ({ children }) => {
         setPurchaseOrders(pos);
         localStorage.setItem('rayzon_vendor_pos', JSON.stringify(pos));
 
-        const invs = (json.invoices || []).map(i => ({
+        const invs = (json.invoices || []).map(i => {
+          const isImport = String(i.poNumber || i.sapPoNumber || '').startsWith('43') || String(i.poNumber || i.sapPoNumber || '').startsWith('PO-43') || String(vendorProfile?.vendorType || '').toLowerCase().includes('import');
+          let formattedDueDate = '—';
+          if (i.paymentDueDate || i.dueDate) {
+            const d = new Date(i.paymentDueDate || i.dueDate);
+            if (!isNaN(d.getTime())) {
+              formattedDueDate = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+            }
+          } else {
+            const baseDateStr = (isImport && i.blDate) ? i.blDate : i.invoiceDate;
+            if (baseDateStr) {
+              const d = new Date(baseDateStr);
+              if (!isNaN(d.getTime())) {
+                d.setDate(d.getDate() + Number(i.dueDays || 30));
+                formattedDueDate = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+              }
+            }
+          }
+
+          const gross = Number(i.grossAmount || i.invoiceAmount) || 0;
+          const adv = Number(i.advanceAdjusted || i.advanceAdjust) || 0;
+          const calculatedNet = Math.max(0, gross - adv);
+          const netPayableVal = Number(i.netPayableAmount ?? i.netPayable) || calculatedNet || gross;
+
+          return {
             id: i.invoicePaymentId || i.invoiceNumber || i._id,
             invoicePaymentId: i.invoicePaymentId || i.id,
             invoiceNumber: i.invoiceNumber,
             poNumber: i.sapPoNumber || i.poId,
             createdAt: i.createdAt ? new Date(i.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today',
             rawCreatedAt: i.createdAt,
-            paymentDueDate: i.paymentDueDate || i.dueDate
-              ? new Date(i.paymentDueDate || i.dueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-              : '—',
+            paymentDueDate: formattedDueDate,
             rawPaymentDueDate: i.paymentDueDate || i.dueDate,
             invoiceDate: i.invoiceDate ? new Date(i.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '',
             rawInvoiceDate: i.invoiceDate,
             status: formatStatus(i.status),
-            invoiceAmount: Number(i.grossAmount) || 0,
-            grossAmount: Number(i.grossAmount) || 0,
+            invoiceAmount: gross,
+            grossAmount: gross,
+            netPayableAmount: netPayableVal,
+            netPayable: netPayableVal,
             currency: i.currency || 'INR',
             grnNo: i.grnNumber || '',
             asnNumber: i.asnNumber || '',
@@ -126,14 +150,14 @@ export const VendorProvider = ({ children }) => {
             gstAmount: Number(i.gstAmount || (Number(i.cgstAmount || 0) + Number(i.sgstAmount || 0) + Number(i.igstAmount || 0))) || 0,
             tdsPercentage: i.tdsPercentage || 0,
             tdsAmount: Number(i.tdsAmount) || 0,
-            advanceAdjusted: Number(i.advanceAdjusted || i.advanceAdjust) || 0,
-            netPayable: Number(i.netPayable) || 0,
+            advanceAdjusted: adv,
             remarks: i.remarks || '',
             dueDays: i.dueDays || 30,
             supportingDocuments: i.supportingDocuments || [],
             fileName: i.supportingDocuments?.[0]?.originalName || i.supportingDocuments?.[0]?.fileName || 'Invoice-Document.pdf',
             rawInvoice: i
-          }));
+          };
+        });
         setInvoices(invs);
         localStorage.setItem('rayzon_vendor_invoices', JSON.stringify(invs));
 

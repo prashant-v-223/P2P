@@ -318,17 +318,19 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
   }, [poNumber, selectedPOObj, vendorProfile, isViewMode, id, initialPO]);
 
   const calculateDueDateISO = () => {
-    if (!invoiceDate || dueDays === '' || dueDays === null || dueDays === undefined) return null;
-    const d = new Date(`${invoiceDate}T00:00:00`);
+    const baseDate = (isImportVendor && blDate) ? blDate : invoiceDate;
+    if (!baseDate || dueDays === '' || dueDays === null || dueDays === undefined) return null;
+    const d = new Date(`${baseDate}T00:00:00`);
     d.setDate(d.getDate() + Number(dueDays || 0));
     return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
   };
 
   const calculateDueDate = () => {
     if (!poNumber) return 'Select Purchase Order';
-    if (!invoiceDate) return 'Select Supplier Invoice Date';
+    if (isImportVendor && !blDate) return 'Enter BL Date to calculate due date';
+    if (!invoiceDate && !isImportVendor) return 'Select Supplier Invoice Date';
     const iso = calculateDueDateISO();
-    if (!iso) return 'Select Supplier Invoice Date';
+    if (!iso) return isImportVendor ? 'Enter BL Date' : 'Select Supplier Invoice Date';
     return new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB', {
       day: '2-digit', month: 'short', year: 'numeric'
     });
@@ -866,7 +868,9 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
               />
               <p className="text-[10px] text-[#0d7676] font-semibold">
                 {dueDays !== '' ? (
-                  `Auto-computed: Invoice Date (${invoiceDate || 'Selected'}) + ${dueDays} days`
+                  isImportVendor
+                    ? (blDate ? `Auto-computed: BL Date (${blDate}) + ${dueDays} days` : 'Enter BL Date to compute due date')
+                    : (invoiceDate ? `Auto-computed: Invoice Date (${invoiceDate}) + ${dueDays} days` : 'Select Invoice Date to compute due date')
                 ) : (
                   'Select a Purchase Order to compute due date'
                 )}

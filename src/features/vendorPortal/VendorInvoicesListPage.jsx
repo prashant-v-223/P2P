@@ -103,7 +103,7 @@ export default function VendorInvoicesListPage() {
                     <th className="p-4 whitespace-nowrap">PO Number</th>
                     <th className="p-4 whitespace-nowrap">Date</th>
                     <th className="p-4 whitespace-nowrap">Due Date</th>
-                    <th className="p-4 whitespace-nowrap">Amount</th>
+                    <th className="p-4 whitespace-nowrap">Net Payable Amount</th>
                     <th className="p-4 whitespace-nowrap">Approval Stage</th>
                     <th className="p-4 whitespace-nowrap">Status</th>
                     <th className="p-4 whitespace-nowrap text-right">Actions</th>
@@ -113,6 +113,7 @@ export default function VendorInvoicesListPage() {
                   {paginatedInvoices.map((inv) => {
                     const invId = inv.id || inv.invoicePaymentId || inv.invoiceNumber;
                     const isEditable = ['pending', 'in progress', 'in_progress', 'draft'].includes(String(inv.status || '').toLowerCase());
+                    const displayAmt = inv.netPayableAmount ?? inv.netPayable ?? inv.grossAmount ?? inv.invoiceAmount;
                     return (
                       <tr key={inv.id} className="hover:bg-slate-50/70 transition">
                         <td className="p-4 font-bold font-mono whitespace-nowrap">
@@ -128,7 +129,7 @@ export default function VendorInvoicesListPage() {
                         <td className="p-4 text-slate-500 whitespace-nowrap">{inv.invoiceDate || inv.createdAt || '—'}</td>
                         <td className="p-4 text-slate-500 whitespace-nowrap">{inv.paymentDueDate || '—'}</td>
                         <td className="p-4 font-bold text-slate-900 font-mono whitespace-nowrap">
-                          {formatCurrency(inv.grossAmount || inv.invoiceAmount, inv.currency)}
+                          {formatCurrency(displayAmt, inv.currency)}
                         </td>
                         <td className="p-4 whitespace-nowrap">
                           {isEditable ? (
