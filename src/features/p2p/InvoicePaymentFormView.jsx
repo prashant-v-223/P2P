@@ -266,6 +266,30 @@ export default function InvoicePaymentFormView() {
             setTdsPercentage(`${inv.tdsPercentage || 0}%`);
             setAdvanceAdjust(inv.advanceAdjusted || '0');
             setSendApprovalTo(inv.approvalTo || '');
+
+            // Load existing attached documents in Edit Mode
+            apiFetch(`/api/documents?documentableType=InvoicePayment&documentableId=${id}`)
+              .then(r => r.json())
+              .then(docData => {
+                const apiDocs = docData.success && Array.isArray(docData.data) ? docData.data : [];
+                const invDocs = Array.isArray(inv.supportingDocuments) ? inv.supportingDocuments : [];
+                const combined = [...invDocs, ...apiDocs];
+                const unique = [];
+                const seen = new Set();
+                for (const d of combined) {
+                  const key = d.documentId || d.fileUrl || d.fileName;
+                  if (key && !seen.has(key)) {
+                    seen.add(key);
+                    unique.push(d);
+                  }
+                }
+                setDocuments(unique);
+              })
+              .catch(() => {
+                if (Array.isArray(inv.supportingDocuments) && inv.supportingDocuments.length > 0) {
+                  setDocuments(inv.supportingDocuments);
+                }
+              });
           }
         })
         .catch(err => console.error(err));
@@ -273,22 +297,37 @@ export default function InvoicePaymentFormView() {
   }, [id]);
 
   useEffect(() => {
-    if (!poNumber || selectedPoObj || purchaseOrders.length === 0) return;
+    if (!poNumber || selectedPoObj) return;
     const po = purchaseOrders.find((item) => (item.sapPoNumber || item.poNumber) === poNumber);
-    if (!po) return;
-    setSelectedPoObj(po);
-    if (po.currency) setCurrency(po.currency);
-    const terms = po.paymentTerms || po.creditDays;
-    if (terms) {
-      setDueDays(parseDaysFromPaymentTerms(terms, 30));
+    if (po) {
+      setSelectedPoObj(po);
+      if (po.currency) setCurrency(po.currency);
+      const terms = po.paymentTerms || po.creditDays;
+      if (terms) {
+        setDueDays(parseDaysFromPaymentTerms(terms, 30));
+      }
+    } else {
+      apiFetch(`/api/p2p/purchase-orders?search=${encodeURIComponent(poNumber)}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.data && data.data.length > 0) {
+            const foundPo = data.data.find(item => (item.sapPoNumber || item.poNumber) === poNumber) || data.data[0];
+            setSelectedPoObj(foundPo);
+            if (foundPo.currency) setCurrency(foundPo.currency);
+            const terms = foundPo.paymentTerms || foundPo.creditDays;
+            if (terms) {
+              setDueDays(parseDaysFromPaymentTerms(terms, 30));
+            }
+            setPurchaseOrders(prev => {
+              const key = foundPo.sapPoNumber || foundPo.poNumber;
+              if (prev.some(p => (p.sapPoNumber || p.poNumber) === key)) return prev;
+              return [foundPo, ...prev];
+            });
+          }
+        })
+        .catch(() => {});
     }
-    const isImport = String(po.vendorType || '').toLowerCase().includes('import');
-    if (isImport && !asnNumber) {
-      setAsnNumber(generateASNNumber());
-    } else if (!isImport) {
-      setAsnNumber('');
-    }
-  }, [poNumber, purchaseOrders, selectedPoObj, asnNumber]);
+  }, [poNumber, purchaseOrders, selectedPoObj]);
 
   // Debounced API search when user types in search box
   useEffect(() => {
@@ -336,7 +375,11 @@ export default function InvoicePaymentFormView() {
     setErrorMsg('');
   };
 
-  const handleFileRemove = (index) => {
+  const handleFileRemove = async (index, targetDoc) => {
+    const doc = targetDoc || documents[index];
+    if (doc?.documentId) {
+      apiFetch(`/api/documents/${doc.documentId}`, { method: 'DELETE' }).catch(() => {});
+    }
     setDocuments(docs => docs.filter((_, i) => i !== index));
   };
 
@@ -440,7 +483,8 @@ export default function InvoicePaymentFormView() {
         grnNumber: grnNo || '',
         remarks: remarks.trim(),
         approvalTo: sendApprovalTo,
-        vendorType: selectedPoObj?.vendorType || ''
+        vendorType: selectedPoObj?.vendorType || '',
+        supportingDocuments: documents.filter(d => !d.file)
       };
 
       const url = isEditMode ? `/api/p2p/invoices/${id}` : '/api/p2p/invoices/create';
@@ -454,12 +498,13 @@ export default function InvoicePaymentFormView() {
 
       if (res.ok) {
         const data = await res.json();
-        const invoiceId = data.data?.invoicePaymentId || data.data?.invoiceId;
+        const invoiceId = data.data?.invoicePaymentId || data.data?.invoiceId || id;
 
-        // Step 2: Upload documents if any are attached (only for new invoices)
-        if (!isEditMode && documents.length > 0 && invoiceId) {
+        // Step 2: Upload documents if any new files are attached (both Create and Edit mode)
+        const newFiles = documents.filter(doc => doc.file);
+        if (newFiles.length > 0 && invoiceId) {
           const formData = new FormData();
-          documents.forEach(doc => {
+          newFiles.forEach(doc => {
             formData.append('files', doc.file);
           });
           formData.append('documentType', 'vendor_invoice');
@@ -936,7 +981,7 @@ export default function InvoicePaymentFormView() {
                 value={invoiceQuantity}
                 onChange={(e) => { setInvoiceQuantity(e.target.value); setErrorMsg(''); }}
                 placeholder="Enter quantity delivered"
-                disabled={!selectedPoObj}
+                disabled={!poNumber && !selectedPoObj}
                 size="md"
               />
               {Number(selectedPoObj?.totalQuantity) > 0 && (

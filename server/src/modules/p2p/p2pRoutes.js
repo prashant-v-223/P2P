@@ -8,6 +8,7 @@ import { UPLOAD_DIR, toLocalPath, openDownloadStream, fileExistsInS3, uploadToS3
 import { PurchaseOrder } from '../../models/PurchaseOrder.js';
 import { InvoicePayment } from '../../models/InvoicePayment.js';
 import { AdvancePayment } from '../../models/AdvancePayment.js';
+import { Document } from '../../models/Document.js';
 import { PaymentLedger } from '../../models/PaymentLedger.js';
 import { Approval } from '../../models/Approval.js';
 import { Workflow } from '../../models/Workflow.js';
@@ -2796,7 +2797,7 @@ router.put('/invoices/:id', authenticateToken, async (req, res) => {
 
     const { poNumber, invoiceNumber, grossAmount, gstAmount, tdsAmount,
       tdsPercentage, advanceAdjusted, grnNumber, remarks, approvalTo, asnNumber,
-      invoiceType, gstSubtype, cgstAmount, sgstAmount, igstAmount } = req.body;
+      invoiceType, gstSubtype, cgstAmount, sgstAmount, igstAmount, supportingDocuments } = req.body;
 
     if (invoiceNumber) invoice.invoiceNumber = invoiceNumber.trim();
     if (asnNumber !== undefined) invoice.asnNumber = asnNumber.trim();
@@ -2817,6 +2818,28 @@ router.put('/invoices/:id', authenticateToken, async (req, res) => {
     if (grnNumber !== undefined) invoice.grnNumber = grnNumber.trim();
     if (remarks !== undefined) invoice.remarks = remarks.trim();
     if (approvalTo !== undefined) invoice.approvalTo = approvalTo;
+    if (Array.isArray(supportingDocuments)) {
+      invoice.supportingDocuments = supportingDocuments;
+
+      // Clean up Document collection records for removed files
+      const keepIds = supportingDocuments.map(d => d.documentId).filter(Boolean);
+      const keepUrls = supportingDocuments.map(d => d.fileUrl).filter(Boolean);
+      const invRefs = [invoice.invoicePaymentId, invoice.invoiceNumber, invoice.id, invoice._id?.toString()].filter(Boolean);
+
+      const filterCond = {
+        documentableType: 'InvoicePayment',
+        documentableId: { $in: invRefs }
+      };
+
+      if (keepIds.length > 0 || keepUrls.length > 0) {
+        filterCond.$and = [
+          { documentId: { $nin: keepIds } },
+          { fileUrl: { $nin: keepUrls } }
+        ];
+      }
+
+      await Document.deleteMany(filterCond).catch(() => {});
+    }
 
     invoice.netPayable = Math.max(0,
       (invoice.grossAmount || 0) + (invoice.gstAmount || 0)

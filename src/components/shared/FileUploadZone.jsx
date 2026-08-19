@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Upload, X, FileText } from 'lucide-react';
+import { Upload, X, FileText, Download, Trash2, Eye } from 'lucide-react';
+import { apiFetch } from '../../services/api';
 
 /**
  * Reusable File Upload Zone Component
@@ -12,6 +13,7 @@ import { Upload, X, FileText } from 'lucide-react';
  * @param {Function} props.onFilesSelected - Callback when files are selected
  * @param {Array} props.selectedFiles - Array of selected file objects
  * @param {Function} props.onFileRemove - Callback to remove a file
+ * @param {Function} props.onFileDownload - Callback to download a file
  * @param {string} props.className - Additional CSS classes
  */
 export default function FileUploadZone({
@@ -21,6 +23,7 @@ export default function FileUploadZone({
   onFilesSelected,
   selectedFiles = [],
   onFileRemove,
+  onFileDownload,
   className = ''
 }) {
   const [dragging, setDragging] = useState(false);
@@ -78,9 +81,46 @@ export default function FileUploadZone({
   };
 
   const getAcceptedTypesLabel = () => {
-    const types = accept.split(',').map(t => t.replace('.', '').toUpperCase());
+    const types = (accept || '').split(',').map(t => t.replace('.', '').toUpperCase());
     if (types.length > 5) return `${types.slice(0, 5).join(', ')}, etc.`;
     return types.join(', ');
+  };
+
+  const handleDownloadDoc = async (doc) => {
+    if (onFileDownload) {
+      onFileDownload(doc);
+      return;
+    }
+    if (doc.file) {
+      const url = URL.createObjectURL(doc.file);
+      window.open(url, '_blank');
+      return;
+    }
+    if (doc.documentId) {
+      try {
+        const res = await apiFetch(`/api/documents/${doc.documentId}/download`);
+        const json = await res.json();
+        if (res.ok && json.success && json.data?.downloadUrl) {
+          window.open(json.data.downloadUrl, '_blank');
+          return;
+        }
+      } catch (_) {}
+    }
+    if (doc.fileUrl) {
+      if (doc.fileUrl.startsWith('http://') || doc.fileUrl.startsWith('https://') || doc.fileUrl.startsWith('/uploads/')) {
+        window.open(doc.fileUrl, '_blank');
+        return;
+      }
+      try {
+        const res = await apiFetch(`/api/documents/resolve-url?fileUrl=${encodeURIComponent(doc.fileUrl)}`);
+        const json = await res.json();
+        if (res.ok && json.success && json.downloadUrl) {
+          window.open(json.downloadUrl, '_blank');
+          return;
+        }
+      } catch (_) {}
+      window.open(doc.fileUrl, '_blank');
+    }
   };
 
   return (
@@ -136,29 +176,46 @@ export default function FileUploadZone({
             {selectedFiles.map((doc, idx) => (
               <div
                 key={idx}
-                className="flex items-center justify-between p-3.5 rounded-xl bg-white border border-slate-200/90 shadow-2xs hover:border-teal-300 transition-all"
+                className="flex items-center justify-between p-3.5 rounded-xl bg-white border border-slate-200/90 shadow-2xs hover:border-teal-300 transition-all gap-2"
               >
-                <div className="flex items-center gap-3 min-w-0">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div className="w-9 h-9 rounded-xl bg-teal-50 border border-teal-100 text-[#0d7676] flex items-center justify-center shrink-0">
                     <FileText className="w-4 h-4" />
                   </div>
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="font-bold text-slate-800 text-xs sm:text-sm truncate">
-                      {doc.name}
+                      {doc.name || doc.fileName || doc.title || doc.originalname || 'Document.pdf'}
                     </p>
-                    <p className="text-[11px] font-semibold text-slate-400 mt-0.5">{doc.size}</p>
+                    <p className="text-[11px] font-semibold text-slate-400 mt-0.5">
+                      {doc.size || (doc.fileSize ? formatFileSize(doc.fileSize) : '')}
+                    </p>
                   </div>
                 </div>
-                {onFileRemove && (
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {/* Download / View Button */}
                   <button
                     type="button"
-                    onClick={() => onFileRemove(idx)}
-                    className="w-7 h-7 rounded-lg bg-rose-50 text-rose-500 hover:bg-rose-100 hover:text-rose-700 flex items-center justify-center shrink-0 transition-colors ml-2"
-                    title="Remove document"
+                    onClick={() => handleDownloadDoc(doc)}
+                    className="h-8 px-2.5 rounded-lg border border-teal-200 bg-teal-50/60 text-[#0d7676] hover:bg-teal-100 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                    title="Download / View Document"
                   >
-                    <X className="w-4 h-4" />
+                    <Download className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">View</span>
                   </button>
-                )}
+
+                  {/* Remove / Delete Button */}
+                  {onFileRemove && (
+                    <button
+                      type="button"
+                      onClick={() => onFileRemove(idx, doc)}
+                      className="w-8 h-8 rounded-lg bg-rose-50 border border-rose-200 text-rose-600 hover:bg-rose-100 hover:text-rose-700 flex items-center justify-center shrink-0 transition-all cursor-pointer"
+                      title="Remove / Delete document"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>

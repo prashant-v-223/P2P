@@ -150,11 +150,30 @@ export const uploadMultipleDocuments = async (req, res) => {
           }
         });
 
-        uploadedDocuments.push({
+        const docObj = {
           documentId: document.documentId,
           fileName: document.fileName,
-          fileSize: document.fileSize
-        });
+          fileSize: document.fileSize,
+          fileUrl: document.fileUrl,
+          createdAt: document.createdAt
+        };
+        uploadedDocuments.push(docObj);
+
+        // Sync to InvoicePayment supportingDocuments if documentableType is InvoicePayment
+        if (documentableType === 'InvoicePayment') {
+          const { InvoicePayment } = await import('../../models/InvoicePayment.js');
+          const isObjId = /^[0-9a-fA-F]{24}$/.test(documentableId);
+          await InvoicePayment.updateMany(
+            {
+              $or: [
+                { invoicePaymentId: documentableId },
+                { invoiceNumber: documentableId },
+                ...(isObjId ? [{ _id: documentableId }] : [])
+              ]
+            },
+            { $push: { supportingDocuments: docObj } }
+          ).catch(() => {});
+        }
       } catch (error) {
         errors.push({
           fileName: file.originalname,
@@ -250,18 +269,54 @@ export const listDocuments = async (req, res) => {
 
     const filter = { isDeleted: { $ne: true } };
     if (documentableType) filter.documentableType = documentableType;
-    if (documentableId) filter.documentableId = documentableId;
     if (documentType) filter.documentType = documentType;
 
-    const documents = await Document.find(filter)
+    let idList = [documentableId].filter(Boolean);
+    let invSupportingDocs = [];
+
+    if (documentableType === 'InvoicePayment' && documentableId) {
+      const { InvoicePayment } = await import('../../models/InvoicePayment.js');
+      const isObjId = /^[0-9a-fA-F]{24}$/.test(documentableId);
+      const inv = await InvoicePayment.findOne({
+        $or: [
+          { invoicePaymentId: documentableId },
+          { invoiceNumber: documentableId },
+          ...(isObjId ? [{ _id: documentableId }] : [])
+        ]
+      }).lean();
+
+      if (inv) {
+        idList = [inv.invoicePaymentId, inv.invoiceNumber, inv.id, inv._id?.toString()].filter(Boolean);
+        if (Array.isArray(inv.supportingDocuments)) {
+          invSupportingDocs = inv.supportingDocuments;
+        }
+      }
+    }
+
+    if (idList.length > 0) {
+      filter.documentableId = idList.length === 1 ? idList[0] : { $in: idList };
+    }
+
+    const dbDocs = await Document.find(filter)
       .sort({ createdAt: -1 })
       .select('-metadata')
       .lean();
 
+    const combined = [...invSupportingDocs, ...dbDocs];
+    const uniqueDocs = [];
+    const seen = new Set();
+    for (const d of combined) {
+      const key = d.documentId || d.fileUrl || d.fileName;
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        uniqueDocs.push(d);
+      }
+    }
+
     return res.json({
       success: true,
-      count: documents.length,
-      data: documents
+      count: uniqueDocs.length,
+      data: uniqueDocs
     });
   } catch (error) {
     console.error('[Documents] List Error:', error);
@@ -312,6 +367,32 @@ export const deleteDocument = async (req, res) => {
       await deleteFromS3(document.fileUrl, document.storageType || document.metadata?.storageType || 's3');
     } catch (storageError) {
       console.error('[Documents] Storage Delete Warning:', storageError.message);
+    }
+
+    // Also pull from InvoicePayment supportingDocuments if applicable
+    if (document.documentableType === 'InvoicePayment' && document.documentableId) {
+      const { InvoicePayment } = await import('../../models/InvoicePayment.js');
+      const isObjId = /^[0-9a-fA-F]{24}$/.test(document.documentableId);
+      await InvoicePayment.updateMany(
+        {
+          $or: [
+            { invoicePaymentId: document.documentableId },
+            { invoiceNumber: document.documentableId },
+            ...(isObjId ? [{ _id: document.documentableId }] : [])
+          ]
+        },
+        {
+          $pull: {
+            supportingDocuments: {
+              $or: [
+                { documentId: document.documentId },
+                { fileUrl: document.fileUrl },
+                { fileName: document.fileName }
+              ]
+            }
+          }
+        }
+      ).catch(() => {});
     }
 
     // Delete from MongoDB
