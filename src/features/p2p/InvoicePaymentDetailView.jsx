@@ -438,6 +438,7 @@ export default function InvoicePaymentDetailView() {
               documentableType="InvoicePayment"
               documentableId={invoice.invoicePaymentId}
               documentType="vendor_invoice"
+              existingDocuments={invoice.supportingDocuments || []}
               multiple={true}
               readOnly={true}
             />

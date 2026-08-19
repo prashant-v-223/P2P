@@ -353,7 +353,7 @@ const getInitials = (name) => {
                 <th className="py-3.5 px-3.5">PO NUMBER</th>
                 <th className="py-3.5 px-3.5">INVOICE NO.</th>
                 <th className="py-3.5 px-3.5">VENDOR</th>
-                <th className="py-3.5 px-3.5 whitespace-nowrap">PURCHASE CONNECTION</th>
+                {/* <th className="py-3.5 px-3.5 whitespace-nowrap">PURCHASE CONNECTION</th> */}
                 <th className="py-3.5 px-3.5 text-right">INVOICE AMT</th>
                 <th className="py-3.5 px-2.5 text-center whitespace-nowrap">TDS</th>
                 <th className="py-3.5 px-3.5 text-right">NET PAYABLE</th>
@@ -444,14 +444,14 @@ const getInitials = (name) => {
                       </td>
 
                       {/* PURCHASE CONNECTION */}
-                      <td className="py-3 px-3.5 whitespace-nowrap">
+                      {/* <td className="py-3 px-3.5 whitespace-nowrap">
                         <div className="flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 rounded-full bg-teal-500 shrink-0" />
                           <span className="font-bold text-slate-800 text-xs">
                             {inv.purchaseConnectionName || inv.buyerName || inv.requestedBy || inv.createdBy || 'Procurement Team'}
                           </span>
                         </div>
-                      </td>
+                      </td> */}
 
                       {/* INVOICE AMT */}
                       <td className="py-3 px-3.5 text-right font-mono font-extrabold text-slate-900 whitespace-nowrap">

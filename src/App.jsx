@@ -2,6 +2,7 @@ import React, { useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchPendingApprovals } from './features/approvals/approvalsSlice';
+import { updateSessionTokens, logout } from './features/auth/authSlice';
 import { useRealtimeNotifications } from './hooks/useRealtimeNotifications';
 import { Loader2 } from 'lucide-react';
 

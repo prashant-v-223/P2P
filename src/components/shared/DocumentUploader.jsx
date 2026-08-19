@@ -118,28 +118,55 @@ export default function DocumentUploader({
     try {
       const res = await apiFetch(`/api/documents?documentableType=${documentableType}&documentableId=${documentableId}`);
       const json = await res.json();
-      if (json.success) {
-        const docs = json.data || [];
-        setDocuments(docs);
-        if (onDocumentsChange) onDocumentsChange(docs);
+      const apiDocs = json.success && Array.isArray(json.data) ? json.data : [];
+      
+      const combined = [...(existingDocuments || []), ...apiDocs];
+      const seen = new Set();
+      const uniqueDocs = [];
+      for (const d of combined) {
+        const key = d.documentId || d.fileUrl || d.fileName;
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          uniqueDocs.push(d);
+        }
       }
+      setDocuments(uniqueDocs);
+      if (onDocumentsChange) onDocumentsChange(uniqueDocs);
     } catch (error) {
       console.error('Failed to load documents:', error);
+      if (existingDocuments?.length > 0) setDocuments(existingDocuments);
     }
   };
 
   const handleDownload = async (doc) => {
     try {
-      const res = await apiFetch(`/api/documents/${doc.documentId}/download`);
-      const json = await res.json();
-      
-      if (res.ok && json.success && json.data?.downloadUrl) {
-        window.open(json.data.downloadUrl, '_blank');
-      } else {
-        downloadDocumentFile(doc.fileName || doc.title || 'Document.pdf');
+      if (doc.documentId) {
+        const res = await apiFetch(`/api/documents/${doc.documentId}/download`);
+        const json = await res.json();
+        if (res.ok && json.success && json.data?.downloadUrl) {
+          window.open(json.data.downloadUrl, '_blank');
+          return;
+        }
       }
+
+      if (doc.fileUrl) {
+        if (doc.fileUrl.startsWith('http://') || doc.fileUrl.startsWith('https://') || doc.fileUrl.startsWith('/uploads/')) {
+          window.open(doc.fileUrl, '_blank');
+          return;
+        }
+
+        const res = await apiFetch(`/api/documents/resolve-url?fileUrl=${encodeURIComponent(doc.fileUrl)}`);
+        const json = await res.json();
+        if (res.ok && json.success && json.downloadUrl) {
+          window.open(json.downloadUrl, '_blank');
+          return;
+        }
+      }
+
+      downloadDocumentFile(doc.fileName || doc.originalName || doc.title || 'Document.pdf');
     } catch (error) {
-      downloadDocumentFile(doc.fileName || doc.title || 'Document.pdf');
+      console.error('Download error:', error);
+      downloadDocumentFile(doc.fileName || doc.originalName || doc.title || 'Document.pdf');
     }
   };
 

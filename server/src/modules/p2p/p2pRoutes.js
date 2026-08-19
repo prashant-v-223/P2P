@@ -2562,6 +2562,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
     const vendorIdFinal = req.user?.role === 'Vendor' ? (req.user.sapVendorCode || po.supplierId) : (vendorId || po.supplierId || 'VEND-00000');
     const poRef = po?.sapPoNumber || poNumber || '4300001510';
 
+    const numGross = Number(grossAmount) || 0;
     const numCgst = Number(req.body.cgstAmount) || 0;
     const numSgst = Number(req.body.sgstAmount) || 0;
     const numIgst = Number(req.body.igstAmount) || 0;

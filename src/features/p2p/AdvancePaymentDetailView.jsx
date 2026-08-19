@@ -398,6 +398,7 @@ export default function AdvancePaymentDetailView() {
               documentableType="AdvancePayment"
               documentableId={id}
               documentType="advance_request"
+              existingDocuments={advance.supportingDocuments || advance.documents || []}
               multiple={true}
               readOnly={true}
             />

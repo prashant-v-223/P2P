@@ -5,12 +5,16 @@ import {
   uploadDocument,
   uploadMultipleDocuments,
   getDocumentDownloadUrl,
+  resolveFileUrl,
   listDocuments,
   deleteDocument,
   getDocument
 } from './documents.controller.js';
 
 const router = express.Router();
+
+// Resolve any fileUrl to browser HTTP URL
+router.get('/resolve-url', authenticateToken, resolveFileUrl);
 
 // Upload single document
 router.post(

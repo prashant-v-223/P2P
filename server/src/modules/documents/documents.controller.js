@@ -217,6 +217,30 @@ export const getDocumentDownloadUrl = async (req, res) => {
 };
 
 /**
+ * Resolve any stored file URL (e.g. s3://... or /uploads/...) to a browser-viewable HTTP URL
+ * GET /api/documents/resolve-url?fileUrl=...
+ */
+export const resolveFileUrl = async (req, res) => {
+  try {
+    const fileUrl = req.query.fileUrl || req.body?.fileUrl;
+    if (!fileUrl) {
+      return res.status(400).json({ success: false, error: 'fileUrl parameter is required' });
+    }
+
+    try {
+      const downloadUrl = await getDownloadUrl(fileUrl, 3600, req);
+      return res.json({ success: true, downloadUrl });
+    } catch (err) {
+      const key = String(fileUrl).replace(/^s3:\/\/[^\/]+\//, '').replace(/^\/+/, '');
+      const localWebUrl = `/uploads/${key}`;
+      return res.json({ success: true, downloadUrl: localWebUrl });
+    }
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
  * List documents for an entity
  * GET /api/documents?documentableType=RfqHeader&documentableId=RFQ-001
  */
