@@ -662,12 +662,9 @@ export default function InvoicePaymentFormView() {
         <div className="bg-white rounded-xl p-3.5 border border-slate-200 shadow-2xs space-y-2 w-full">
           <h2 className="text-[11px] font-bold text-slate-800 uppercase tracking-wider border-b border-slate-100 pb-1.5 flex items-center justify-between">
             <span>SELECT PURCHASE ORDER</span>
-            <span className="text-[10px] font-semibold text-slate-400 normal-case">
-              {purchaseOrders.length} POs loaded
-            </span>
           </h2>
 
-          <div className="space-y-1.5 relative" ref={dropdownRef}>
+          <div className="space-y-1.5 relative z-50" ref={dropdownRef}>
             <label className="block text-xs font-semibold text-slate-700">
               Purchase Order <span className="text-rose-500">*</span>
             </label>
@@ -699,7 +696,7 @@ export default function InvoicePaymentFormView() {
 
             {/* Dropdown Menu */}
             {isPoDropdownOpen && (
-              <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-30 overflow-hidden animate-in fade-in-50 zoom-in-95">
+              <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] overflow-hidden animate-in fade-in-50 zoom-in-95">
                 <div className="p-2 border-b border-slate-100 bg-slate-50/70">
                   <div className="relative">
                     <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />

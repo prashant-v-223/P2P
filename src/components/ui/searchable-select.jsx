@@ -21,6 +21,7 @@ export function SearchableSelect({
   options = [],
   value,
   onChange,
+  onSearchChange,
   placeholder = 'Select an option',
   searchPlaceholder = 'Search options...',
   error,
@@ -179,8 +180,10 @@ export function SearchableSelect({
                     autoFocus
                     value={query}
                     onChange={(e) => {
-                      setQuery(e.target.value);
+                      const newQuery = e.target.value;
+                      setQuery(newQuery);
                       setHighlighted(0);
+                      if (onSearchChange) onSearchChange(newQuery);
                     }}
                     onKeyDown={handleKeys}
                     placeholder={searchPlaceholder}

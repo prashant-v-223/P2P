@@ -7,7 +7,7 @@ import FileUploadZone from '../../components/shared/FileUploadZone';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import {
   Search, Check, Upload, X, FileText, Loader2, AlertCircle,
-  ChevronRight, Building2, IndianRupee, Percent, ArrowLeft, Send,
+  ChevronRight, ChevronDown, Building2, IndianRupee, Percent, ArrowLeft, Send,
   ShieldCheck, Banknote, TrendingUp, Info, CheckCircle2, Clock,
   Receipt, DollarSign, Globe
 } from 'lucide-react';
@@ -55,6 +55,8 @@ export default function CreateAdvancePaymentWizard() {
   const [searchPo, setSearchPo] = useState('');
   const [loadingPos, setLoadingPos] = useState(false);
   const [selectedPo, setSelectedPo] = useState(null);
+  const [isPoDropdownOpen, setIsPoDropdownOpen] = useState(false);
+  const poDropdownRef = useRef(null);
   const [amountMode, setAmountMode] = useState('pct');
   const [amountValue, setAmountValue] = useState('');
   const [pctValue, setPctValue] = useState('');
@@ -87,6 +89,16 @@ export default function CreateAdvancePaymentWizard() {
         }
       })
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (poDropdownRef.current && !poDropdownRef.current.contains(e.target)) {
+        setIsPoDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
   const poCurrency = selectedPo?.currency || 'INR';
@@ -612,8 +624,8 @@ export default function CreateAdvancePaymentWizard() {
 
             {/* ════ STEP 1: SELECT PO ════ */}
             {currentStep === 1 && (
-              <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-                <div className="px-4 sm:px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-white flex items-center gap-3">
+              <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-visible">
+                <div className="px-4 sm:px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-white flex items-center gap-3 rounded-t-2xl">
                   <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center border border-teal-100">
                     <Building2 className="w-4 h-4" />
                   </div>
@@ -625,24 +637,115 @@ export default function CreateAdvancePaymentWizard() {
 
                 <div className="p-4 sm:p-6 space-y-5">
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-1.5">
-                      Select Purchase Order <span className="text-rose-500">*</span>
-                    </label>
-                    <SearchableSelect
-                      options={poOptions}
-                      value={selectedPo?.poNumber || ''}
-                      onChange={(val) => {
-                        const found = livePos.find((p) => String(p.poNumber) === String(val));
-                        if (found) {
-                          handleSelectPo(found);
-                        }
-                      }}
-                      placeholder={loadingPos ? 'Loading purchase orders…' : 'Search & select purchase order…'}
-                      searchPlaceholder="Type PO number, vendor name or code…"
-                      error={errors.po}
-                      disabled={loadingPos}
-                      size="md"
-                    />
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-sm font-bold text-slate-700">
+                        Purchase Order <span className="text-rose-500">*</span>
+                      </label>
+                    </div>
+
+                    <div className="relative z-50" ref={poDropdownRef}>
+                      <div
+                        onClick={() => setIsPoDropdownOpen(!isPoDropdownOpen)}
+                        className={`w-full px-3.5 py-2.5 bg-slate-50 border rounded-xl flex items-center justify-between cursor-pointer transition-all ${
+                          isPoDropdownOpen ? 'border-[#0d7676] ring-2 ring-teal-500/20 bg-white' : errors.po ? 'border-rose-400 bg-rose-50/20' : 'border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 overflow-hidden">
+                          <Search className="w-4 h-4 text-slate-400 shrink-0" />
+                          {selectedPo ? (
+                            <span className="text-xs font-bold text-slate-900 font-mono truncate">
+                              {selectedPo.poNumber} — {selectedPo.supplierName} ({currSymbol}{fmt(availableBalance)} available)
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-400 font-medium">
+                              Type PO number to search...
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {loadingPos && <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0d7676]" />}
+                          <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isPoDropdownOpen ? 'rotate-180' : ''}`} />
+                        </div>
+                      </div>
+                      {errors.po && <p className="mt-1 text-xs font-medium text-rose-600">{errors.po}</p>}
+
+                      {/* Floating Dropdown Menu */}
+                      {isPoDropdownOpen && (
+                        <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] overflow-hidden animate-in fade-in-50 zoom-in-95">
+                          <div className="p-2 border-b border-slate-100 bg-slate-50/70">
+                            <div className="relative">
+                              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
+                              <input
+                                type="text"
+                                autoFocus
+                                placeholder="Type PO number or vendor name to search API..."
+                                value={searchPo}
+                                onChange={(e) => setSearchPo(e.target.value)}
+                                className="w-full pl-8 pr-8 py-1.5 text-xs border border-slate-200 rounded-lg bg-white outline-none focus:ring-2 focus:ring-[#0d7676]"
+                              />
+                              {loadingPos ? (
+                                <Loader2 className="w-3.5 h-3.5 absolute right-2.5 top-2.5 text-[#0d7676] animate-spin" />
+                              ) : searchPo ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setSearchPo('')}
+                                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          <div className="max-h-60 overflow-y-auto divide-y divide-slate-100">
+                            {loadingPos ? (
+                              <div className="p-4 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                                <Loader2 className="w-4 h-4 animate-spin text-[#0d7676]" />
+                                <span>Loading Purchase Orders...</span>
+                              </div>
+                            ) : filteredPos.length === 0 ? (
+                              <div className="p-4 text-center text-xs text-slate-400">
+                                No Purchase Orders found matching "{searchPo}".
+                              </div>
+                            ) : (
+                              filteredPos.map((po) => {
+                                const isSelected = selectedPo?.poNumber === po.poNumber;
+                                const avail = Math.max(0, Number(po.remainingAdvanceAmount) || 0);
+                                const sym = getCurrencySymbol(po.currency);
+                                return (
+                                  <div
+                                    key={po.poNumber}
+                                    onClick={() => {
+                                      handleSelectPo(po);
+                                      setIsPoDropdownOpen(false);
+                                    }}
+                                    className={`p-3 text-xs cursor-pointer flex items-center justify-between transition-colors ${
+                                      isSelected ? 'bg-teal-50/90 text-[#0d7676] font-bold' : 'hover:bg-slate-50 text-slate-800'
+                                    }`}
+                                  >
+                                    <div>
+                                      <div className="font-mono font-bold text-slate-900">{po.poNumber}</div>
+                                      <div className="text-[11px] text-slate-500 font-medium">{po.supplierName}</div>
+                                    </div>
+                                    <div className="text-right flex items-center gap-2">
+                                      <div>
+                                        <div className="font-mono font-bold text-slate-900">
+                                          {sym}{fmt(avail)} available
+                                        </div>
+                                        <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                          {po.status || 'Open'}
+                                        </span>
+                                      </div>
+                                      {isSelected && <Check className="w-4 h-4 text-[#0d7676] shrink-0" />}
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Selected PO Card */}

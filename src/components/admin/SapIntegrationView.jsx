@@ -145,14 +145,31 @@ export default function SapIntegrationView() {
               onChange={(event) => setPoInput(event.target.value)}
               onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ',') { event.preventDefault(); addPoNumbers(poInput); } }}
               onPaste={(event) => { const value = event.clipboardData.getData('text'); if (/[\s,\n]/.test(value)) { event.preventDefault(); addPoNumbers(value); } }}
-              placeholder="Type a PO number and press Enter — e.g. 4500101234"
+              placeholder="Type a PO number (e.g. 4300001226) and click Pull from SAP or press Enter"
               className="h-10 min-w-0 flex-1 rounded-lg border border-slate-200 px-3 text-xs focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
             />
-            <button disabled={!poNumbers.length || Boolean(syncing)} onClick={() => runSync('purchase-orders', poNumbers)} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-teal-700 px-4 text-xs font-bold text-white hover:bg-teal-800 disabled:opacity-50">
+            <button
+              disabled={(!poNumbers.length && !poInput.trim()) || Boolean(syncing)}
+              onClick={() => {
+                let targets = [...poNumbers];
+                if (poInput.trim()) {
+                  const added = poInput.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+                  added.forEach(num => {
+                    if (!targets.includes(num)) targets.push(num);
+                  });
+                  setPoNumbers(targets);
+                  setPoInput('');
+                }
+                if (targets.length) {
+                  runSync('purchase-orders', targets);
+                }
+              }}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-teal-700 px-4 text-xs font-bold text-white hover:bg-teal-800 disabled:opacity-50 cursor-pointer"
+            >
               {syncing === 'purchase-orders' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Pull from SAP
             </button>
           </div>
-          <p className="mt-1.5 text-[10px] text-slate-400">Press Enter or comma to add · Paste a comma, space, or line-separated list · Maximum 100 POs</p>
+          <p className="mt-1.5 text-[10px] text-slate-400">Type PO number & click Pull from SAP, or press Enter/comma to add multiple POs (up to 100 POs)</p>
         </div>
       </section>
 
