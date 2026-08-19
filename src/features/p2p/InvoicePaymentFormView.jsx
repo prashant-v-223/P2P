@@ -80,7 +80,7 @@ export default function InvoicePaymentFormView() {
   const [blDate, setBlDate] = useState('');
   const [invoiceDate, setInvoiceDate] = useState('');
   const [currency, setCurrency] = useState('INR');
-  const [dueDays, setDueDays] = useState(30);
+  const [dueDays, setDueDays] = useState('');
   const [invoiceAmount, setInvoiceAmount] = useState('');
   const [grnNo, setGrnNo] = useState('');
   const [remarks, setRemarks] = useState('');
@@ -199,26 +199,27 @@ export default function InvoicePaymentFormView() {
   const [documents, setDocuments] = useState([]);
 
   const calculateDueDate = () => {
+    if (!poNumber) return 'Select Purchase Order';
     if (!invoiceDate) return 'Select Supplier Invoice Date';
+    if (dueDays === '' || dueDays === null || dueDays === undefined) return 'Select Purchase Order';
     const d = new Date(`${invoiceDate}T00:00:00`);
-    d.setDate(d.getDate() + Number(dueDays || 30));
+    d.setDate(d.getDate() + Number(dueDays || 0));
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
-  // Fetch POs from API (10 records initially, server-side filtered when searching)
+  // Fetch POs from API (server-side filtered when searching)
   const fetchPurchaseOrders = async (searchTerm = '') => {
     try {
       if (searchTerm) setSearching(true);
       else setLoading(true);
 
-      const limit = searchTerm ? 20 : 10;
-      const query = searchTerm ? `?search=${encodeURIComponent(searchTerm)}&pageSize=${limit}` : `?pageSize=${limit}`;
+      const limit = 50;
+      const query = searchTerm ? `?q=${encodeURIComponent(searchTerm)}&size=${limit}` : `?size=${limit}`;
       const res = await apiFetch(`/api/p2p/purchase-orders${query}`);
       const data = await res.json();
       if (res.ok && data.data) {
         setPurchaseOrders(data.data.filter((po) =>
-          !['closed', 'cancelled', 'canceled', 'blocked'].includes(String(po.status || '').toLowerCase()) &&
-          Number(po.remainingInvoiceAmount ?? po.totalAmount) > 0
+          !['closed', 'cancelled', 'canceled', 'blocked'].includes(String(po.status || '').toLowerCase())
         ));
       }
     } catch (e) {
@@ -912,7 +913,7 @@ export default function InvoicePaymentFormView() {
                 className="w-full px-3 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-slate-600 text-xs font-medium cursor-not-allowed"
               />
               <p className="text-[10px] text-[#0d7676] font-semibold">
-                Auto-calculated from today's date
+                {dueDays !== '' ? `Auto-calculated: Invoice Date + ${dueDays} days` : 'Select a Purchase Order to compute due date'}
               </p>
             </div>
 
@@ -927,14 +928,19 @@ export default function InvoicePaymentFormView() {
                 </span>
               </div>
               <input
-                type="number"
-                value={dueDays}
+                type="text"
+                value={dueDays !== '' && dueDays !== null && dueDays !== undefined ? dueDays : ''}
                 readOnly
                 aria-readonly="true"
+                placeholder="Select PO to display credit days"
                 className="w-full px-3 py-2 bg-slate-100/90 border border-slate-200 rounded-xl text-slate-700 text-xs font-bold font-mono cursor-not-allowed select-none"
               />
               <p className="text-[10px] text-slate-400 font-medium">
-                Auto-set to {dueDays} days according to Payment Terms ({selectedPoObj?.paymentTerms || 'Standard Terms'}).
+                {poNumber && dueDays !== '' ? (
+                  `Auto-set to ${dueDays} days according to Payment Terms (${selectedPoObj?.paymentTerms || selectedPoObj?.creditDays || `${dueDays} Days`}).`
+                ) : (
+                  'Select a Purchase Order to view Payment Credit Days.'
+                )}
               </p>
             </div>
 

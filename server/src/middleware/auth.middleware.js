@@ -135,7 +135,7 @@ const findActiveTokenUser = async (tokenUser) => {
 
 export const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const token = (authHeader && authHeader.split(' ')[1]) || req.query?.token || req.body?.token;
 
   if (!token) {
     return res.status(401).json({ 
@@ -167,7 +167,7 @@ export const authenticateToken = (req, res, next) => {
 // Optional middleware for routes that work with or without auth
 export const optionalAuth = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const token = (authHeader && authHeader.split(' ')[1]) || req.query?.token || req.body?.token;
 
   if (!token) {
     req.user = null;

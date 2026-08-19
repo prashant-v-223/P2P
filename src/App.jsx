@@ -164,6 +164,8 @@ export default function App() {
                 <Route path="dashboard" element={<VendorDashboardPage />} />
                 <Route path="invoices" element={<VendorInvoicesListPage />} />
                 <Route path="invoices/upload" element={<VendorUploadInvoicePage />} />
+                <Route path="invoices/edit/:id" element={<VendorUploadInvoicePage mode="edit" />} />
+                <Route path="invoices/view/:id" element={<VendorUploadInvoicePage mode="view" />} />
                 <Route path="advances" element={<VendorAdvancesPage />} />
                 <Route path="profile" element={<VendorProfilePage />} />
                 <Route path="rfqs" element={<FreightRfqListPage />} />

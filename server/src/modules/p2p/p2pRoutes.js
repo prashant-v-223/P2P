@@ -16,6 +16,7 @@ import { RfqHeader, RfqQuote, RfqBlEntry, CustomDutyPayment } from '../../models
 import { LogisticsPayment } from '../../models/LogisticsPayment.js';
 import { BlInvoice } from '../../models/BlInvoice.js';
 import { Vendor } from '../../models/Vendor.js';
+import { Supplier } from '../../models/Supplier.js';
 import { LogisticsProvider } from '../../models/LogisticsProvider.js';
 import { CustomAgent } from '../../models/CustomAgent.js';
 import { User } from '../../models/User.js';
@@ -860,14 +861,23 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
         $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }],
         status: { $in: activePaymentStatuses }
       }).select('poId sapPoNumber amount adjustedAmount status').lean(),
-      vendorKeys.length ? Vendor.find({
-        $or: [
-          { id: { $in: vendorKeys } },
-          { sapVendorCode: { $in: vendorKeys } },
-          { supplierId: { $in: vendorKeys } },
-          { companyName: { $in: vendorKeys } }
-        ]
-      }).select('id sapVendorCode supplierId companyName vendorType paymentTerms creditDays gstin pan').lean() : []
+      vendorKeys.length ? Promise.all([
+        Vendor.find({
+          $or: [
+            { id: { $in: vendorKeys } },
+            { sapVendorCode: { $in: vendorKeys } },
+            { supplierId: { $in: vendorKeys } },
+            { companyName: { $in: vendorKeys } }
+          ]
+        }).select('id sapVendorCode supplierId companyName vendorType paymentTerms creditDays gstin pan').lean(),
+        Supplier.find({
+          $or: [
+            { supplierId: { $in: vendorKeys } },
+            { sapVendorCode: { $in: vendorKeys } },
+            { companyName: { $in: vendorKeys } }
+          ]
+        }).select('supplierId sapVendorCode companyName vendorType paymentTerms gstin pan').lean()
+      ]).then(([vList, sList]) => [...vList, ...sList]) : []
     ]);
 
     const enrichedPos = pos.map((po) => {
@@ -895,7 +905,7 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
       );
       return {
         ...po,
-        paymentTerms: po.paymentTerms || vendor?.paymentTerms || (vendor?.creditDays ? `${vendor.creditDays} Days` : 'Net 30'),
+        paymentTerms: po.paymentTerms || vendor?.paymentTerms || (vendor?.creditDays ? `${vendor.creditDays} Days` : ''),
         creditDays: po.creditDays || vendor?.creditDays,
         vendorType: vendor?.vendorType || '',
         vendorGstin: vendor?.gstin || '',
@@ -2794,6 +2804,10 @@ router.put('/invoices/:id', authenticateToken, async (req, res) => {
   try {
     const invoice = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
     if (!invoice) return res.status(404).json({ success: false, error: 'Invoice payment not found' });
+
+    if (['approved', 'paid'].includes(String(invoice.status || '').toLowerCase())) {
+      return res.status(400).json({ success: false, error: 'Approved or paid invoices cannot be edited.' });
+    }
 
     const { poNumber, invoiceNumber, grossAmount, gstAmount, tdsAmount,
       tdsPercentage, advanceAdjusted, grnNumber, remarks, approvalTo, asnNumber,

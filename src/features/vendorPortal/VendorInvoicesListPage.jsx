@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useVendor } from './vendorContext';
-import { FileText, Plus, Search, Filter, Eye, Download, CheckCircle, Clock, XCircle } from 'lucide-react';
+import { FileText, Plus, Search, Filter, Eye, Pencil, Download, CheckCircle, Clock, XCircle } from 'lucide-react';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { ServerPagination } from '../../components/ui/server-pagination';
 import { formatCurrency } from '../../utils/formatCurrency';
@@ -75,7 +75,7 @@ export default function VendorInvoicesListPage() {
         </div>
       </div>
 
-      {/* Main Table / Empty State */}
+      {/* Main Invoices Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         {filteredInvoices.length === 0 ? (
           <div className="py-20 px-4 flex flex-col items-center justify-center text-center space-y-2">
@@ -106,44 +106,82 @@ export default function VendorInvoicesListPage() {
                     <th className="p-4 whitespace-nowrap">Amount</th>
                     <th className="p-4 whitespace-nowrap">Approval Stage</th>
                     <th className="p-4 whitespace-nowrap">Status</th>
+                    <th className="p-4 whitespace-nowrap text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                  {paginatedInvoices.map((inv) => (
-                    <tr key={inv.id} className="hover:bg-slate-50/70 transition">
-                      <td className="p-4 font-bold text-slate-900 font-mono whitespace-nowrap">{inv.invoiceNumber || inv.id}</td>
-                      <td className="p-4 text-slate-800 font-mono font-bold whitespace-nowrap">{inv.poNumber}</td>
-                      <td className="p-4 text-slate-500 whitespace-nowrap">{inv.invoiceDate || inv.createdAt || '—'}</td>
-                      <td className="p-4 text-slate-500 whitespace-nowrap">{inv.paymentDueDate || '—'}</td>
-                      <td className="p-4 font-bold text-slate-900 font-mono whitespace-nowrap">
-                        {formatCurrency(inv.invoiceAmount, inv.currency)}
-                      </td>
-                      <td className="p-4 whitespace-nowrap">
-                        {inv.status === 'Pending' || inv.status === 'In Progress' ? (
-                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">
-                            Purchase Manager
+                  {paginatedInvoices.map((inv) => {
+                    const invId = inv.id || inv.invoicePaymentId || inv.invoiceNumber;
+                    const isEditable = ['pending', 'in progress', 'in_progress', 'draft'].includes(String(inv.status || '').toLowerCase());
+                    return (
+                      <tr key={inv.id} className="hover:bg-slate-50/70 transition">
+                        <td className="p-4 font-bold font-mono whitespace-nowrap">
+                          <Link
+                            to={`/vendor/invoices/view/${encodeURIComponent(invId)}`}
+                            className="text-[#0d7676] hover:underline font-bold"
+                            title="Click to view full invoice entry"
+                          >
+                            {inv.invoiceNumber || inv.id}
+                          </Link>
+                        </td>
+                        <td className="p-4 text-slate-800 font-mono font-bold whitespace-nowrap">{inv.poNumber}</td>
+                        <td className="p-4 text-slate-500 whitespace-nowrap">{inv.invoiceDate || inv.createdAt || '—'}</td>
+                        <td className="p-4 text-slate-500 whitespace-nowrap">{inv.paymentDueDate || '—'}</td>
+                        <td className="p-4 font-bold text-slate-900 font-mono whitespace-nowrap">
+                          {formatCurrency(inv.grossAmount || inv.invoiceAmount, inv.currency)}
+                        </td>
+                        <td className="p-4 whitespace-nowrap">
+                          {isEditable ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">
+                              Purchase Manager
+                            </span>
+                          ) : String(inv.status).toLowerCase() === 'approved' ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                              ✓ Approved
+                            </span>
+                          ) : '—'}
+                        </td>
+                        <td className="p-4 whitespace-nowrap">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1 ${
+                              String(inv.status).toLowerCase() === 'approved'
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                : String(inv.status).toLowerCase() === 'paid'
+                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                : 'bg-amber-100 text-amber-800 border border-amber-200'
+                            }`}
+                          >
+                            {inv.status}
                           </span>
-                        ) : inv.status === 'Approved' ? (
-                          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700">
-                            ✓ Approved
-                          </span>
-                        ) : '—'}
-                      </td>
-                      <td className="p-4">
-                        <span
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1 ${
-                            inv.status === 'Approved'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : inv.status === 'Paid'
-                              ? 'bg-blue-100 text-blue-800'
-                              : 'bg-teal-100 text-teal-800'
-                          }`}
-                        >
-                          {inv.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="p-4 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/vendor/invoices/view/${encodeURIComponent(invId)}`)}
+                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer"
+                              title="View Full Invoice Details"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-slate-500" />
+                              <span>View</span>
+                            </button>
+
+                            {isEditable && (
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/vendor/invoices/edit/${encodeURIComponent(invId)}`)}
+                                className="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-[#0d7676] font-extrabold text-[11px] rounded-lg transition-colors border border-teal-200 inline-flex items-center gap-1 cursor-pointer"
+                                title="Edit & Update Invoice Details"
+                              >
+                                <Pencil className="w-3.5 h-3.5 text-[#0d7676]" />
+                                <span>Edit</span>
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

@@ -85,6 +85,8 @@ export const VendorProvider = ({ children }) => {
             amount: formatCurrency(p.totalAmount, p.currency || 'INR'),
             status: p.status || 'Open',
             currency: p.currency || 'INR',
+            paymentTerms: p.paymentTerms || p.creditDays || '',
+            creditDays: p.creditDays || p.paymentTerms || '',
             numericAmount: Number(p.totalAmount) || 0,
             remainingInvoiceAmount: Number(p.remainingInvoiceAmount) || 0,
             remainingAdvanceAmount: Number(p.remainingAdvanceAmount) || 0,
@@ -95,19 +97,42 @@ export const VendorProvider = ({ children }) => {
         localStorage.setItem('rayzon_vendor_pos', JSON.stringify(pos));
 
         const invs = (json.invoices || []).map(i => ({
-            id: i.invoicePaymentId || i.invoiceNumber,
+            id: i.invoicePaymentId || i.invoiceNumber || i._id,
+            invoicePaymentId: i.invoicePaymentId || i.id,
             invoiceNumber: i.invoiceNumber,
             poNumber: i.sapPoNumber || i.poId,
             createdAt: i.createdAt ? new Date(i.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Today',
+            rawCreatedAt: i.createdAt,
             paymentDueDate: i.paymentDueDate || i.dueDate
               ? new Date(i.paymentDueDate || i.dueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
               : '—',
+            rawPaymentDueDate: i.paymentDueDate || i.dueDate,
             invoiceDate: i.invoiceDate ? new Date(i.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '',
+            rawInvoiceDate: i.invoiceDate,
             status: formatStatus(i.status),
             invoiceAmount: Number(i.grossAmount) || 0,
+            grossAmount: Number(i.grossAmount) || 0,
             currency: i.currency || 'INR',
             grnNo: i.grnNumber || '',
-            fileName: 'Invoice-Document.pdf'
+            asnNumber: i.asnNumber || '',
+            blNumber: i.blNumber || '',
+            blDate: i.blDate ? new Date(i.blDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '',
+            rawBlDate: i.blDate,
+            invoiceType: i.invoiceType || 'With GST',
+            gstSubtype: i.gstSubtype || (i.igstAmount > 0 ? 'inter' : 'intra'),
+            cgstAmount: Number(i.cgstAmount) || 0,
+            sgstAmount: Number(i.sgstAmount) || 0,
+            igstAmount: Number(i.igstAmount) || 0,
+            gstAmount: Number(i.gstAmount || (Number(i.cgstAmount || 0) + Number(i.sgstAmount || 0) + Number(i.igstAmount || 0))) || 0,
+            tdsPercentage: i.tdsPercentage || 0,
+            tdsAmount: Number(i.tdsAmount) || 0,
+            advanceAdjusted: Number(i.advanceAdjusted || i.advanceAdjust) || 0,
+            netPayable: Number(i.netPayable) || 0,
+            remarks: i.remarks || '',
+            dueDays: i.dueDays || 30,
+            supportingDocuments: i.supportingDocuments || [],
+            fileName: i.supportingDocuments?.[0]?.originalName || i.supportingDocuments?.[0]?.fileName || 'Invoice-Document.pdf',
+            rawInvoice: i
           }));
         setInvoices(invs);
         localStorage.setItem('rayzon_vendor_invoices', JSON.stringify(invs));
@@ -324,6 +349,44 @@ export const VendorProvider = ({ children }) => {
     return json;
   };
 
+  const updateInvoice = async (invoiceId, updatedInvoice) => {
+    const targetId = invoiceId || updatedInvoice.id || updatedInvoice.invoicePaymentId || updatedInvoice.invoiceNumber;
+    const payload = {
+      poNumber: updatedInvoice.poNumber,
+      invoiceNumber: updatedInvoice.invoiceNumber,
+      asnNumber: updatedInvoice.asnNumber || '',
+      invoiceDate: updatedInvoice.invoiceDate,
+      paymentDueDate: updatedInvoice.paymentDueDate,
+      grossAmount: Number(updatedInvoice.invoiceAmount) || Number(updatedInvoice.grossAmount) || 0,
+      invoiceQuantity: Number(updatedInvoice.invoiceQuantity) || undefined,
+      currency: updatedInvoice.currency || 'INR',
+      invoiceType: updatedInvoice.invoiceType || 'With GST',
+      gstSubtype: updatedInvoice.gstSubtype || 'intra',
+      cgstAmount: Number(updatedInvoice.cgstAmount || 0),
+      sgstAmount: Number(updatedInvoice.sgstAmount || 0),
+      igstAmount: Number(updatedInvoice.igstAmount || 0),
+      gstAmount: Number(updatedInvoice.cgstAmount || 0) + Number(updatedInvoice.sgstAmount || 0) + Number(updatedInvoice.igstAmount || 0),
+      tdsPercentage: Number.parseFloat(updatedInvoice.tdsPercentage) || 0,
+      tdsAmount: (Number(updatedInvoice.invoiceAmount) || 0) * (Number.parseFloat(updatedInvoice.tdsPercentage) || 0) / 100,
+      advanceAdjusted: Number(updatedInvoice.advanceAdjust || updatedInvoice.advanceAdjusted || 0),
+      remarks: updatedInvoice.remarks,
+      supportingDocuments: updatedInvoice.supportingDocuments
+    };
+
+    const res = await apiFetch(`/api/p2p/invoices/${encodeURIComponent(targetId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || 'Failed to update invoice.');
+    }
+
+    await fetchPortalData(vendorProfile.sapVendorCode || vendorUser?.sapVendorCode, vendorProfile.email || vendorUser?.email);
+    return json.data;
+  };
+
   return (
     <VendorContext.Provider
       value={{
@@ -335,6 +398,7 @@ export const VendorProvider = ({ children }) => {
         loginVendor,
         logoutVendor,
         addInvoice,
+        updateInvoice,
         addAdvanceRequest,
         updateProfile,
         changePassword,

@@ -105,7 +105,7 @@ export default function CreateAdvancePaymentWizard() {
     totalAmount: p.totalAmount || 0,
     advancePaid: p.advancePaid || 0,
     advanceCommitted: p.advanceCommitted || 0,
-    remainingAdvanceAmount: Number(p.remainingAdvanceAmount ?? p.totalAmount) || 0,
+    remainingAdvanceAmount: p.remainingAdvanceAmount !== undefined && p.remainingAdvanceAmount !== null ? Number(p.remainingAdvanceAmount) : Number(p.totalAmount || 0),
     currency: p.currency || 'INR',
     status: p.status || 'open',
   })).filter((p) => !['closed', 'cancelled', 'canceled', 'blocked'].includes(String(p.status).toLowerCase()));

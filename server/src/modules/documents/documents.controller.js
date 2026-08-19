@@ -246,12 +246,20 @@ export const resolveFileUrl = async (req, res) => {
       return res.status(400).json({ success: false, error: 'fileUrl parameter is required' });
     }
 
+    const shouldRedirect = req.query.redirect === 'true' || req.query.redirect === '1' || req.headers.accept?.includes('text/html');
+
     try {
       const downloadUrl = await getDownloadUrl(fileUrl, 3600, req);
+      if (shouldRedirect) {
+        return res.redirect(302, downloadUrl);
+      }
       return res.json({ success: true, downloadUrl });
     } catch (err) {
       const key = String(fileUrl).replace(/^s3:\/\/[^\/]+\//, '').replace(/^\/+/, '');
       const localWebUrl = `/uploads/${key}`;
+      if (shouldRedirect) {
+        return res.redirect(302, localWebUrl);
+      }
       return res.json({ success: true, downloadUrl: localWebUrl });
     }
   } catch (error) {

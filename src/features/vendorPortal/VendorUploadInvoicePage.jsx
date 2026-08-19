@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link, useParams } from 'react-router-dom';
 import { useVendor } from './vendorContext';
 import { useToast } from '../../components/ui/toast';
 import { apiFetch } from '../../services/api';
 import {
   CloudUpload, FileText, CheckCircle2, AlertCircle, X, Search, ChevronDown, Check,
   Calculator, Info, ArrowLeft, ShieldCheck, Banknote, Sparkles, Building2, Calendar,
-  Receipt, DollarSign, ChevronRight, Loader2, Lock
+  Receipt, DollarSign, ChevronRight, Loader2, Lock, ExternalLink, Pencil, Eye
 } from 'lucide-react';
 import { CustomSelect } from '../../components/ui/custom-select';
 import { CustomDatePicker } from '../../components/ui/custom-date-picker';
@@ -14,7 +14,7 @@ import { CustomFileUpload } from '../../components/ui/custom-file-upload';
 import { formatCurrency } from '../../utils/formatCurrency';
 
 const parseDaysFromPaymentTerms = (termsStr, fallbackDays = 30) => {
-  if (!termsStr) return fallbackDays;
+  if (!termsStr && termsStr !== 0) return fallbackDays;
   const str = String(termsStr).trim();
   const match = str.match(/\d+/);
   if (match) {
@@ -30,13 +30,37 @@ const getLocalISODate = () => {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().split('T')[0];
 };
 
-export default function VendorUploadInvoicePage() {
-  const { vendorProfile, purchaseOrders, invoices, addInvoice } = useVendor();
-  const { showToast } = useToast();
-  const navigate = useNavigate();
+const resolveDocumentHref = (doc) => {
+  const url = doc?.fileUrl || doc?.url || doc?.fileName || '';
+  if (!url) return '#';
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('/uploads/')) {
+    return url;
+  }
+  const token = (typeof window !== 'undefined' && (
+    localStorage.getItem('rayzon_vendor_token') ||
+    localStorage.getItem('rayzon_access_token') ||
+    localStorage.getItem('rayzon_token')
+  )) || '';
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+  return `/api/documents/resolve-url?fileUrl=${encodeURIComponent(url)}&redirect=true${tokenParam}`;
+};
+
+export default function VendorUploadInvoicePage({ mode: propMode }) {
+  const { id } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
+
+  const isViewMode = propMode === 'view' || location.pathname.includes('/view/');
+  const isEditMode = propMode === 'edit' || location.pathname.includes('/edit/') || Boolean(id && !isViewMode);
+  const isCreateMode = !id && !isViewMode && !isEditMode;
+
+  const { vendorProfile, purchaseOrders, invoices, addInvoice, updateInvoice } = useVendor();
+  const { showToast } = useToast();
 
   const initialPO = location.state?.selectedPO || '';
+
+  const [loadingInvoice, setLoadingInvoice] = useState(Boolean(id));
+  const [existingInvoiceObj, setExistingInvoiceObj] = useState(null);
 
   const [poNumber, setPoNumber] = useState(initialPO);
   const [poSearch, setPoSearch] = useState('');
@@ -54,36 +78,10 @@ export default function VendorUploadInvoicePage() {
   const [blDate, setBlDate] = useState('');
   const [invoiceDate, setInvoiceDate] = useState('');
   const [currency, setCurrency] = useState('INR');
-  const [dueDays, setDueDays] = useState(30);
+  const [dueDays, setDueDays] = useState(initialPO ? 30 : '');
   const [invoiceAmount, setInvoiceAmount] = useState('');
   const [invoiceQuantity, setInvoiceQuantity] = useState('');
   const [remarks, setRemarks] = useState('');
-
-  // Live Invoice Number Uniqueness Validation
-  useEffect(() => {
-    const invNo = invoiceNumber.trim();
-    if (!invNo || invNo.length < 3) {
-      setDuplicateError('');
-      return;
-    }
-    const timer = setTimeout(async () => {
-      try {
-        setCheckingUnique(true);
-        const res = await apiFetch(`/api/p2p/invoices/check-unique?invoiceNumber=${encodeURIComponent(invNo)}`);
-        const data = await res.json();
-        if (res.ok && !data.unique) {
-          setDuplicateError(data.error || `Invoice Number "${invNo}" already exists in the system.`);
-        } else {
-          setDuplicateError('');
-        }
-      } catch (err) {
-        setDuplicateError('');
-      } finally {
-        setCheckingUnique(false);
-      }
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [invoiceNumber]);
 
   // GST & Tax State
   const [invoiceType, setInvoiceType] = useState('With GST');
@@ -100,6 +98,113 @@ export default function VendorUploadInvoicePage() {
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // Load existing invoice data if in Edit or View mode
+  useEffect(() => {
+    if (!id) return;
+    let active = true;
+    const fetchInvoiceDetails = async () => {
+      try {
+        setLoadingInvoice(true);
+        const localInv = (invoices || []).find(i =>
+          String(i.id) === String(id) ||
+          String(i.invoicePaymentId) === String(id) ||
+          String(i.invoiceNumber) === String(id)
+        );
+        let fetchedData = localInv?.rawInvoice || localInv;
+
+        try {
+          const res = await apiFetch(`/api/p2p/invoices/${encodeURIComponent(id)}`);
+          const json = await res.json();
+          if (res.ok && json.data) {
+            fetchedData = json.data;
+          }
+        } catch (_) {}
+
+        if (active && fetchedData) {
+          setExistingInvoiceObj(fetchedData);
+          setPoNumber(fetchedData.sapPoNumber || fetchedData.poId || fetchedData.poNumber || '');
+          setInvoiceNumber(fetchedData.invoiceNumber || '');
+          setAsnNumber(fetchedData.asnNumber || '');
+          setBlNumber(fetchedData.blNumber || '');
+
+          let bDate = '';
+          if (fetchedData.blDate) {
+            try { bDate = new Date(fetchedData.blDate).toISOString().split('T')[0]; } catch (_) {}
+          }
+          setBlDate(bDate);
+
+          let iDate = '';
+          if (fetchedData.invoiceDate) {
+            try { iDate = new Date(fetchedData.invoiceDate).toISOString().split('T')[0]; } catch (_) {}
+          }
+          setInvoiceDate(iDate);
+
+          setCurrency(fetchedData.currency || 'INR');
+          setDueDays(fetchedData.dueDays || parseDaysFromPaymentTerms(vendorProfile?.paymentTerms, 30));
+          setInvoiceAmount(String(fetchedData.grossAmount || fetchedData.invoiceAmount || ''));
+          if (fetchedData.threeWayMatch?.invoiceQuantity || fetchedData.invoiceQuantity) {
+            setInvoiceQuantity(String(fetchedData.threeWayMatch?.invoiceQuantity || fetchedData.invoiceQuantity));
+          }
+          setRemarks(fetchedData.remarks || '');
+          setInvoiceType(fetchedData.invoiceType || 'With GST');
+          setGstSubtype(fetchedData.gstSubtype || (fetchedData.igstAmount > 0 ? 'inter' : 'intra'));
+          setCgstAmount(String(fetchedData.cgstAmount || '0'));
+          setSgstAmount(String(fetchedData.sgstAmount || '0'));
+          setIgstAmount(String(fetchedData.igstAmount || '0'));
+          setTdsPercentage(`${fetchedData.tdsPercentage || 0}%`);
+          setAdvanceAdjust(String(fetchedData.advanceAdjusted || fetchedData.advanceAdjust || '0'));
+
+          if (Array.isArray(fetchedData.supportingDocuments)) {
+            setSelectedFiles(fetchedData.supportingDocuments.map(d => ({
+              name: d.originalName || d.fileName || 'Document.pdf',
+              originalName: d.originalName || d.fileName,
+              fileName: d.fileName || d.s3Key,
+              s3Key: d.s3Key || d.fileName,
+              fileUrl: d.fileUrl || d.url,
+              size: d.size || d.fileSize || 1024,
+              type: d.mimeType || 'application/pdf',
+              uploaded: true
+            })));
+          }
+        }
+      } catch (err) {
+        console.error('Fetch invoice details error:', err);
+      } finally {
+        if (active) setLoadingInvoice(false);
+      }
+    };
+    fetchInvoiceDetails();
+    return () => { active = false; };
+  }, [id, invoices, vendorProfile]);
+
+  // Live Invoice Number Uniqueness Validation
+  useEffect(() => {
+    if (isViewMode) return;
+    const invNo = invoiceNumber.trim();
+    if (!invNo || (existingInvoiceObj && invNo === existingInvoiceObj.invoiceNumber) || invNo.length < 3) {
+      setDuplicateError('');
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        setCheckingUnique(true);
+        const queryId = id ? `&currentId=${encodeURIComponent(id)}` : '';
+        const res = await apiFetch(`/api/p2p/invoices/check-unique?invoiceNumber=${encodeURIComponent(invNo)}${queryId}`);
+        const data = await res.json();
+        if (res.ok && !data.unique) {
+          setDuplicateError(data.error || `Invoice Number "${invNo}" already exists in the system.`);
+        } else {
+          setDuplicateError('');
+        }
+      } catch (err) {
+        setDuplicateError('');
+      } finally {
+        setCheckingUnique(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [invoiceNumber, id, existingInvoiceObj, isViewMode]);
+
   useEffect(() => {
     const handleOutside = (e) => {
       if (poContainerRef.current && !poContainerRef.current.contains(e.target)) {
@@ -110,9 +215,9 @@ export default function VendorUploadInvoicePage() {
     return () => document.removeEventListener('mousedown', handleOutside);
   }, []);
 
-  // Live backend PO search whenever vendor types in the search box
+  // Live backend PO search whenever vendor types in search box
   useEffect(() => {
-    if (!isPoOpen) return;
+    if (!isPoOpen || isViewMode) return;
     const q = poSearch.trim();
     if (!q || q.length < 2) {
       setApiSearchResults([]);
@@ -132,6 +237,8 @@ export default function VendorUploadInvoicePage() {
             amount: formatCurrency(p.totalAmount, p.currency || 'INR'),
             status: p.status || 'Open',
             currency: p.currency || 'INR',
+            paymentTerms: p.paymentTerms || p.creditDays || '',
+            creditDays: p.creditDays || p.paymentTerms || '',
             numericAmount: p.totalAmount || 0,
             remainingInvoiceAmount: p.remainingInvoiceAmount,
             remainingQuantity: p.remainingQuantity,
@@ -142,15 +249,23 @@ export default function VendorUploadInvoicePage() {
       } catch (e) {}
     }, 150);
     return () => { active = false; clearTimeout(timer); };
-  }, [poSearch, isPoOpen]);
+  }, [poSearch, isPoOpen, isViewMode]);
 
   const combinedPOs = useMemo(() => {
     const map = new Map();
     (purchaseOrders || []).forEach(p => {
+      const mainKey = String(p.sapPoNumber || p.poNumber || p.id || '').toLowerCase();
+      if (mainKey) map.set(mainKey, p);
       if (p.id) map.set(String(p.id).toLowerCase(), p);
+      if (p.poNumber) map.set(String(p.poNumber).toLowerCase(), p);
+      if (p.sapPoNumber) map.set(String(p.sapPoNumber).toLowerCase(), p);
     });
     (apiSearchResults || []).forEach(p => {
+      const mainKey = String(p.sapPoNumber || p.poNumber || p.id || '').toLowerCase();
+      if (mainKey) map.set(mainKey, p);
       if (p.id) map.set(String(p.id).toLowerCase(), p);
+      if (p.poNumber) map.set(String(p.poNumber).toLowerCase(), p);
+      if (p.sapPoNumber) map.set(String(p.sapPoNumber).toLowerCase(), p);
     });
     return Array.from(map.values());
   }, [purchaseOrders, apiSearchResults]);
@@ -171,36 +286,47 @@ export default function VendorUploadInvoicePage() {
   }, [combinedPOs, poSearch]);
 
   const selectedPOObj = useMemo(() => {
-    return combinedPOs.find((p) => p.id === poNumber) || null;
+    if (!poNumber) return null;
+    const target = String(poNumber).trim().toLowerCase();
+    return combinedPOs.find((p) => 
+      String(p.id || '').toLowerCase() === target ||
+      String(p.poNumber || '').toLowerCase() === target ||
+      String(p.sapPoNumber || '').toLowerCase() === target
+    ) || null;
   }, [combinedPOs, poNumber]);
 
   useEffect(() => {
-    if (!isImportVendor) return;
+    if (!isImportVendor || isViewMode || isEditMode) return;
     const year = new Date().getFullYear();
     const currentMax = (invoices || []).reduce((max, invoice) => {
       const match = String(invoice.asnNumber || '').match(new RegExp(`^ASN-${year}-(\\d+)$`));
       return Math.max(max, match ? Number(match[1]) : 0);
     }, 0);
     setAsnNumber(`ASN-${year}-${String(currentMax + 1).padStart(3, '0')}`);
-  }, [isImportVendor, invoices]);
+  }, [isImportVendor, invoices, isViewMode, isEditMode]);
 
-  // Auto-set Payment Credit Days (Net Days) based on Vendor / PO Payment Terms
+  // Auto-set Payment Credit Days based on Vendor / PO Payment Terms
   useEffect(() => {
-    const terms = selectedPOObj?.paymentTerms || selectedPOObj?.creditDays || vendorProfile?.paymentTerms || vendorProfile?.creditDays;
-    if (terms) {
+    if (isViewMode) return;
+    if (poNumber) {
+      const terms = selectedPOObj?.paymentTerms || selectedPOObj?.creditDays || vendorProfile?.paymentTerms || vendorProfile?.creditDays;
       const parsedDays = parseDaysFromPaymentTerms(terms, 30);
       setDueDays(parsedDays);
+    } else if (!id && !initialPO) {
+      setDueDays('');
     }
-  }, [selectedPOObj, vendorProfile]);
+  }, [poNumber, selectedPOObj, vendorProfile, isViewMode, id, initialPO]);
 
   const calculateDueDateISO = () => {
-    if (!invoiceDate) return null;
+    if (!invoiceDate || dueDays === '' || dueDays === null || dueDays === undefined) return null;
     const d = new Date(`${invoiceDate}T00:00:00`);
-    d.setDate(d.getDate() + Number(dueDays || 30));
+    d.setDate(d.getDate() + Number(dueDays || 0));
     return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
   };
 
   const calculateDueDate = () => {
+    if (!poNumber) return 'Select Purchase Order';
+    if (!invoiceDate) return 'Select Supplier Invoice Date';
     const iso = calculateDueDateISO();
     if (!iso) return 'Select Supplier Invoice Date';
     return new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB', {
@@ -208,7 +334,7 @@ export default function VendorUploadInvoicePage() {
     });
   };
 
-  // Financial Auto-Calculations
+  // Financial Calculations
   const invoiceAmountNum = Number(invoiceAmount) || 0;
   const cgstNum = invoiceType === 'With GST' && gstSubtype === 'intra' ? (Number(cgstAmount) || 0) : 0;
   const sgstNum = invoiceType === 'With GST' && gstSubtype === 'intra' ? (Number(sgstAmount) || 0) : 0;
@@ -218,10 +344,11 @@ export default function VendorUploadInvoicePage() {
   const tdsPctNum = parseFloat(tdsPercentage) || 0;
   const tdsDeduction = (invoiceAmountNum * tdsPctNum) / 100;
   const advanceAdjNum = Number(advanceAdjust) || 0;
-  const netPayable = Math.max(0, grossTotal - tdsDeduction - advanceAdjNum);
+  const netPayable = Math.max(0, grossTotal - advanceAdjNum);
 
-  // Helper function to auto-compute GST based on standard percentage presets
+  // Apply GST rate presets
   const applyGstPresetRate = (ratePercent) => {
+    if (isViewMode) return;
     if (!invoiceAmountNum || invoiceAmountNum <= 0) {
       showToast({ title: 'Enter Base Amount', description: 'Please enter invoice base amount first.', type: 'info' });
       return;
@@ -244,46 +371,14 @@ export default function VendorUploadInvoicePage() {
     });
   };
 
-  const handleGstSubtypeChange = (targetSubtype) => {
-    if (targetSubtype === gstSubtype) return;
-
-    if (targetSubtype === 'inter') {
-      const intraTotal = (Number(cgstAmount) || 0) + (Number(sgstAmount) || 0);
-      if (intraTotal > 0) {
-        setIgstAmount(intraTotal.toFixed(2));
-      }
-      setGstSubtype('inter');
-    } else {
-      const currentIgst = Number(igstAmount) || 0;
-      if (currentIgst > 0) {
-        const half = (currentIgst / 2).toFixed(2);
-        setCgstAmount(half);
-        setSgstAmount(half);
-      }
-      setGstSubtype('intra');
-    }
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isViewMode) return;
 
-    // CUSTOM TOAST VALIDATIONS
     if (!poNumber) {
       const msg = 'Please select a Purchase Order to continue.';
       setErrorMsg(msg);
       showToast({ title: 'Purchase Order Required', description: msg, type: 'error' });
-      return;
-    }
-    if (!selectedPOObj) {
-      const msg = 'Please select a valid open Purchase Order from the list.';
-      setErrorMsg(msg);
-      showToast({ title: 'Invalid Purchase Order', description: msg, type: 'error' });
-      return;
-    }
-    if (!['open', 'partially_delivered'].includes(String(selectedPOObj.status || '').toLowerCase())) {
-      const msg = `Invoices cannot be submitted against a ${selectedPOObj.status || 'closed'} Purchase Order.`;
-      setErrorMsg(msg);
-      showToast({ title: 'Purchase Order Not Open', description: msg, type: 'error' });
       return;
     }
     if (!invoiceNumber.trim()) {
@@ -295,12 +390,6 @@ export default function VendorUploadInvoicePage() {
     if (duplicateError) {
       setErrorMsg(duplicateError);
       showToast({ title: 'Duplicate Invoice Number', description: duplicateError, type: 'error' });
-      return;
-    }
-    if (!/^[A-Za-z0-9][A-Za-z0-9/_-]{2,49}$/.test(invoiceNumber.trim())) {
-      const msg = 'Invoice Number must be 3–50 characters and may contain letters, numbers, /, _ and - only.';
-      setErrorMsg(msg);
-      showToast({ title: 'Invalid Invoice Number', description: msg, type: 'error' });
       return;
     }
     if (!invoiceDate) {
@@ -315,128 +404,95 @@ export default function VendorUploadInvoicePage() {
       showToast({ title: 'Invalid Invoice Date', description: msg, type: 'error' });
       return;
     }
-    if (!currency) {
-      const msg = 'Currency is required.';
-      setErrorMsg(msg);
-      showToast({ title: 'Currency Required', description: msg, type: 'error' });
-      return;
-    }
-    if (selectedPOObj?.currency && currency !== selectedPOObj.currency) {
-      const msg = `Invoice currency must match the Purchase Order (${selectedPOObj.currency}). Convert the invoice before submitting.`;
-      setErrorMsg(msg);
-      showToast({ title: 'Currency Mismatch', description: msg, type: 'error' });
-      return;
-    }
-    if (!Number.isInteger(Number(dueDays)) || Number(dueDays) < 1 || Number(dueDays) > 365) {
-      const msg = 'Net Days must be a whole number between 1 and 365.';
-      setErrorMsg(msg);
-      showToast({ title: 'Net Days Required', description: msg, type: 'error' });
-      return;
-    }
     if (!invoiceAmount || Number(invoiceAmount) <= 0) {
       const msg = 'Please enter a valid positive invoice amount.';
       setErrorMsg(msg);
       showToast({ title: 'Invoice Amount Required', description: msg, type: 'error' });
       return;
     }
-    if (selectedPOObj?.remainingInvoiceAmount !== undefined && Number(invoiceAmount) > Number(selectedPOObj.remainingInvoiceAmount)) {
-      const msg = `Invoice amount cannot exceed the remaining PO balance (${selectedPOObj?.currency || currency} ${Number(selectedPOObj.remainingInvoiceAmount || 0).toLocaleString('en-IN')}).`;
-      setErrorMsg(msg);
-      showToast({ title: 'Amount Exceeds PO Balance', description: msg, type: 'error' });
-      return;
-    }
-    if (Number(selectedPOObj?.totalQuantity) > 0 && (!invoiceQuantity || Number(invoiceQuantity) <= 0)) {
-      const msg = 'Invoice quantity is required and must be greater than zero.';
-      setErrorMsg(msg);
-      showToast({ title: 'Quantity Required', description: msg, type: 'error' });
-      return;
-    }
-    if (Number(selectedPOObj?.totalQuantity) > 0 && Number(invoiceQuantity) > Number(selectedPOObj?.remainingQuantity)) {
-      const msg = `Invoice quantity cannot exceed the remaining PO quantity (${selectedPOObj.remainingQuantity}).`;
-      setErrorMsg(msg);
-      showToast({ title: 'Quantity Exceeds PO', description: msg, type: 'error' });
-      return;
-    }
-    if ([cgstNum, sgstNum, igstNum].some((v) => v < 0) || advanceAdjNum < 0) {
-      const msg = 'GST amounts and advance adjustment cannot be negative.';
-      setErrorMsg(msg);
-      showToast({ title: 'Invalid Adjustment', description: msg, type: 'error' });
-      return;
-    }
-    if (advanceAdjNum > grossTotal) {
-      const msg = 'Advance adjustment cannot exceed the total invoice gross amount.';
-      setErrorMsg(msg);
-      showToast({ title: 'Invalid Advance Adjustment', description: msg, type: 'error' });
-      return;
-    }
-    if (!invoiceType) {
-      const msg = 'Invoice Type is required.';
-      setErrorMsg(msg);
-      showToast({ title: 'Invoice Type Required', description: msg, type: 'error' });
-      return;
-    }
-    if (!Array.isArray(selectedFiles) || selectedFiles.length === 0) {
-      const msg = 'At least one invoice supporting document is required.';
-      setErrorMsg(msg);
-      showToast({ title: 'Invoice File Required', description: msg, type: 'error' });
-      return;
-    }
-    if (selectedFiles.length > 10) {
-      const msg = 'A maximum of 10 supporting documents can be uploaded.';
-      setErrorMsg(msg);
-      showToast({ title: 'Too Many Documents', description: msg, type: 'error' });
-      return;
-    }
-
-    // ASN validation for Import vendors
-    const cleanAsn = asnNumber.trim().toUpperCase();
-    if (isImportVendor && !/^ASN-\d{4}-\d{3,}$/.test(cleanAsn)) {
-      const msg = 'Invalid ASN Number. ASN Number (Advance Shipping Notice) is required for import invoice entries.';
-      setErrorMsg(msg);
-      showToast({ title: 'Invalid ASN Number', description: msg, type: 'error' });
-      return;
-    }
-    const finalAsn = isImportVendor ? cleanAsn : cleanAsn;
 
     setIsSubmitting(true);
     try {
-      const createdInvoice = await addInvoice({
-        poNumber,
-        invoiceNumber: invoiceNumber.trim(),
-        asnNumber: finalAsn,
-        blNumber: blNumber.trim(),
-        blDate: blDate || undefined,
-        invoiceDate,
-        currency,
-        dueDays,
-        paymentDueDate: calculateDueDateISO(),
-        invoiceAmount,
-        invoiceQuantity: Number(invoiceQuantity) || undefined,
-        remarks: remarks.trim(),
-        invoiceType,
-        cgstAmount: cgstNum.toString(),
-        sgstAmount: sgstNum.toString(),
-        igstAmount: igstNum.toString(),
-        tdsPercentage,
-        advanceAdjust,
-        fileName: selectedFiles[0].name,
-        supportingDocuments: selectedFiles.map((file) => ({
-          fileName: file.s3Key || file.name,
-          originalName: file.name,
-          fileUrl: file.fileUrl,
-          size: file.size,
-          mimeType: file.type
-        }))
-      });
-      if (createdInvoice?.asnNumber) setAsnNumber(createdInvoice.asnNumber);
-      setIsSubmitting(false);
-      setShowSuccessModal(true);
+      if (isEditMode && id) {
+        await updateInvoice(id, {
+          poNumber,
+          invoiceNumber: invoiceNumber.trim(),
+          asnNumber: asnNumber.trim(),
+          blNumber: blNumber.trim(),
+          blDate: blDate || undefined,
+          invoiceDate,
+          currency,
+          dueDays,
+          paymentDueDate: calculateDueDateISO(),
+          invoiceAmount,
+          invoiceQuantity: Number(invoiceQuantity) || undefined,
+          remarks: remarks.trim(),
+          invoiceType,
+          gstSubtype,
+          cgstAmount: cgstNum.toString(),
+          sgstAmount: sgstNum.toString(),
+          igstAmount: igstNum.toString(),
+          tdsPercentage,
+          advanceAdjust,
+          supportingDocuments: (selectedFiles || []).map((file) => ({
+            fileName: file.s3Key || file.fileName || file.name,
+            originalName: file.originalName || file.name,
+            fileUrl: file.fileUrl || file.url || '',
+            size: file.size || file.fileSize || 1024,
+            mimeType: file.type || file.mimeType || 'application/pdf'
+          }))
+        });
+        setIsSubmitting(false);
+        showToast({ title: 'Invoice Updated', description: `Invoice "${invoiceNumber}" saved successfully.`, type: 'success' });
+        navigate('/vendor/invoices');
+      } else {
+        const createdInvoice = await addInvoice({
+          poNumber,
+          invoiceNumber: invoiceNumber.trim(),
+          asnNumber: asnNumber.trim(),
+          blNumber: blNumber.trim(),
+          blDate: blDate || undefined,
+          invoiceDate,
+          currency,
+          dueDays,
+          paymentDueDate: calculateDueDateISO(),
+          invoiceAmount,
+          invoiceQuantity: Number(invoiceQuantity) || undefined,
+          remarks: remarks.trim(),
+          invoiceType,
+          cgstAmount: cgstNum.toString(),
+          sgstAmount: sgstNum.toString(),
+          igstAmount: igstNum.toString(),
+          tdsPercentage,
+          advanceAdjust,
+          fileName: selectedFiles[0]?.name || selectedFiles[0]?.fileName || 'Invoice.pdf',
+          supportingDocuments: (selectedFiles || []).map((file) => ({
+            fileName: file.s3Key || file.fileName || file.name,
+            originalName: file.originalName || file.name,
+            fileUrl: file.fileUrl || file.url || '',
+            size: file.size || file.fileSize || 1024,
+            mimeType: file.type || file.mimeType || 'application/pdf'
+          }))
+        });
+        if (createdInvoice?.asnNumber) setAsnNumber(createdInvoice.asnNumber);
+        setIsSubmitting(false);
+        setShowSuccessModal(true);
+      }
     } catch (err) {
       setIsSubmitting(false);
       setErrorMsg(err.message || 'Invoice submission failed.');
       showToast({ title: 'Submission Error', description: err.message || 'Failed to submit invoice.', type: 'error' });
     }
   };
+
+  if (loadingInvoice) {
+    return (
+      <div className="py-24 flex flex-col items-center justify-center text-slate-500 text-xs font-semibold gap-2">
+        <Loader2 className="w-8 h-8 animate-spin text-[#0d7676]" />
+        <span>Loading invoice entry details...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="font-sans max-w-6xl mx-auto pb-16 antialiased text-left space-y-6">
@@ -446,31 +502,54 @@ export default function VendorUploadInvoicePage() {
           <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 mb-1">
             <Link to="/vendor/invoices" className="hover:text-[#0d7676] transition-colors">Invoices</Link>
             <ChevronRight className="w-3.5 h-3.5" />
-            <span className="text-slate-700 font-bold">New Invoice Entry</span>
+            <span className="text-slate-700 font-bold">
+              {isViewMode ? 'Invoice Entry Details' : isEditMode ? 'Edit Invoice Entry' : 'New Invoice Entry'}
+            </span>
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2.5">
-            <Receipt className="w-6 h-6 text-[#0d7676]" />
-            Upload & Submit Invoice
+            {isViewMode ? <Eye className="w-6 h-6 text-[#0d7676]" /> : isEditMode ? <Pencil className="w-6 h-6 text-[#0d7676]" /> : <Receipt className="w-6 h-6 text-[#0d7676]" />}
+            {isViewMode ? 'View Submitted Invoice' : isEditMode ? 'Edit & Resubmit Invoice' : 'Upload & Submit Invoice'}
+            {isViewMode && (
+              <span className="ml-2 px-2.5 py-0.5 text-[10px] font-extrabold bg-slate-100 text-slate-700 border border-slate-200 rounded-full uppercase tracking-wider">
+                Read-Only Entry
+              </span>
+            )}
           </h1>
           <p className="text-xs text-slate-500 font-medium mt-0.5">
-            Submit your invoice against an open Purchase Order for 3-Way Match validation & Purchase Manager approval.
+            {isViewMode
+              ? `Inspecting complete submitted invoice details against Purchase Order ${poNumber || ''}.`
+              : isEditMode
+              ? 'Update invoice details and resubmit for 3-Way Match validation & Purchase Manager approval.'
+              : 'Submit your invoice against an open Purchase Order for 3-Way Match validation & Purchase Manager approval.'}
           </p>
         </div>
 
-        {/* Right Vendor Badge */}
-        <div className="flex items-center gap-3 bg-white p-2.5 rounded-2xl border border-slate-200 shadow-2xs self-start sm:self-auto">
-          <div className="w-9 h-9 rounded-xl bg-teal-50 border border-teal-200 text-[#0d7676] font-black text-xs flex items-center justify-center">
-            {vendorProfile?.companyName ? vendorProfile.companyName.slice(0, 2).toUpperCase() : 'VN'}
+        {/* Right Vendor Badge & Actions */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 bg-white p-2.5 rounded-2xl border border-slate-200 shadow-2xs self-start sm:self-auto">
+            <div className="w-9 h-9 rounded-xl bg-teal-50 border border-teal-200 text-[#0d7676] font-black text-xs flex items-center justify-center">
+              {vendorProfile?.companyName ? vendorProfile.companyName.slice(0, 2).toUpperCase() : 'VN'}
+            </div>
+            <div className="text-left pr-2">
+              <span className="block text-[10px] font-extrabold uppercase text-slate-400">Vendor Account</span>
+              <span className="block text-xs font-bold text-slate-900 truncate max-w-[180px]">
+                {vendorProfile?.companyName || 'Vendor Company'}
+              </span>
+              <span className="block text-[10px] font-mono font-semibold text-[#0d7676]">
+                Code: {vendorProfile?.sapVendorCode || '30000111'}
+              </span>
+            </div>
           </div>
-          <div className="text-left pr-2">
-            <span className="block text-[10px] font-extrabold uppercase text-slate-400">Vendor Account</span>
-            <span className="block text-xs font-bold text-slate-900 truncate max-w-[180px]">
-              {vendorProfile?.companyName || 'Vendor Company'}
-            </span>
-            <span className="block text-[10px] font-mono font-semibold text-[#0d7676]">
-              Code: {vendorProfile?.sapVendorCode || '30000111'}
-            </span>
-          </div>
+
+          {isViewMode && ['pending', 'in progress', 'in_progress', 'draft'].includes(String(existingInvoiceObj?.status || '').toLowerCase()) && (
+            <Link
+              to={`/vendor/invoices/edit/${encodeURIComponent(id)}`}
+              className="px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+            >
+              <Pencil className="w-4 h-4" />
+              <span>Edit Invoice</span>
+            </Link>
+          )}
         </div>
       </div>
 
@@ -514,47 +593,59 @@ export default function VendorUploadInvoicePage() {
                 <Search className="w-4 h-4 text-slate-400 absolute left-3.5 pointer-events-none" />
                 <input
                   type="text"
-                  value={isPoOpen ? poSearch : (selectedPOObj ? `${selectedPOObj.id} — ${selectedPOObj.amount}` : poSearch)}
+                  disabled={isViewMode}
+                  readOnly={isViewMode}
+                  value={isPoOpen ? poSearch : (selectedPOObj ? `${selectedPOObj.id || selectedPOObj.sapPoNumber || selectedPOObj.poNumber} — ${selectedPOObj.amount}` : (poNumber || poSearch))}
                   onFocus={() => {
+                    if (isViewMode) return;
                     setIsPoOpen(true);
-                    setPoSearch('');
+                    setPoSearch(poNumber || '');
                   }}
                   onChange={(e) => {
+                    if (isViewMode) return;
                     setPoSearch(e.target.value);
                     setIsPoOpen(true);
                     setErrorMsg('');
                   }}
                   placeholder="Type PO number or amount to search (e.g. 4300001510)..."
-                  className="w-full pl-10 pr-20 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white transition-all shadow-2xs"
+                  className={`w-full pl-10 pr-20 py-2.5 border rounded-xl text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] transition-all shadow-2xs ${
+                    isViewMode ? 'bg-slate-100 cursor-not-allowed text-slate-600 border-slate-200' : 'bg-slate-50 border-slate-200 focus:bg-white'
+                  }`}
                 />
 
-                <div className="absolute right-2.5 flex items-center gap-1">
-                  {poNumber && (
+                {!isViewMode && (
+                  <div className="absolute right-2.5 flex items-center gap-1">
+                    {poNumber && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPoNumber('');
+                          setPoSearch('');
+                          setIsPoOpen(false);
+                          setDueDays('');
+                        }}
+                        className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100 transition-colors"
+                        title="Clear selection"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => {
-                        setPoNumber('');
-                        setPoSearch('');
-                        setIsPoOpen(false);
+                        if (!isPoOpen) setPoSearch(poNumber || '');
+                        setIsPoOpen(!isPoOpen);
                       }}
-                      className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100 transition-colors"
-                      title="Clear selection"
+                      className="p-1 text-slate-400 hover:text-slate-700 rounded-lg"
                     >
-                      <X className="w-3.5 h-3.5" />
+                      <ChevronDown className={`w-4 h-4 transition-transform ${isPoOpen ? 'rotate-180' : ''}`} />
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setIsPoOpen(!isPoOpen)}
-                    className="p-1 text-slate-400 hover:text-slate-700 rounded-lg"
-                  >
-                    <ChevronDown className={`w-4 h-4 transition-transform ${isPoOpen ? 'rotate-180' : ''}`} />
-                  </button>
-                </div>
+                  </div>
+                )}
               </div>
 
               {/* Floating Dropdown List */}
-              {isPoOpen && (
+              {isPoOpen && !isViewMode && (
                 <div className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-64 overflow-y-auto divide-y divide-slate-100 animate-in fade-in-50">
                   {filteredPOs.length === 0 ? (
                     <div className="p-4 text-center space-y-1">
@@ -565,19 +656,20 @@ export default function VendorUploadInvoicePage() {
                     </div>
                   ) : (
                     filteredPOs.map((po) => {
-                      const isSelected = po.id === poNumber;
+                      const poVal = po.id || po.sapPoNumber || po.poNumber;
+                      const isSelected = String(poVal).toLowerCase() === String(poNumber).toLowerCase();
                       return (
                         <div
-                          key={po.id}
+                          key={poVal}
                           onClick={() => {
-                            setPoNumber(po.id);
-                            setPoSearch(String(po.id));
+                            setPoNumber(poVal);
+                            setPoSearch(String(poVal));
                             setIsPoOpen(false);
                             setErrorMsg('');
                             if (po.currency) setCurrency(po.currency);
-                            if (po.paymentTerms) {
-                              const match = String(po.paymentTerms).match(/\d+/);
-                              if (match) setDueDays(Number(match[0]));
+                            const terms = po.paymentTerms || po.creditDays || vendorProfile?.paymentTerms || vendorProfile?.creditDays;
+                            if (terms) {
+                              setDueDays(parseDaysFromPaymentTerms(terms, 30));
                             }
                           }}
                           className={`p-3 text-xs cursor-pointer flex items-center justify-between transition-colors ${
@@ -607,28 +699,28 @@ export default function VendorUploadInvoicePage() {
             </div>
 
             {/* Active Selected PO Summary Card */}
-            {selectedPOObj && (
+            {(selectedPOObj || poNumber) && (
               <div className="p-4 bg-teal-50/70 border border-teal-200 rounded-xl grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs mt-3 shadow-2xs">
                 <div className="space-y-0.5">
                   <span className="text-[10px] font-extrabold text-[#0d7676] uppercase tracking-wider block">Selected PO Number</span>
-                  <div className="font-mono font-bold text-slate-900 text-sm">{selectedPOObj.id}</div>
-                  <span className="text-[10px] text-slate-500 font-medium">Issue Date: {selectedPOObj.date}</span>
+                  <div className="font-mono font-bold text-slate-900 text-sm">{poNumber}</div>
+                  <span className="text-[10px] text-slate-500 font-medium">Issue Date: {selectedPOObj?.date || 'Registered'}</span>
                 </div>
 
                 <div className="space-y-0.5">
                   <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Total PO Value</span>
-                  <div className="font-mono font-bold text-slate-900 text-sm">{selectedPOObj.amount}</div>
+                  <div className="font-mono font-bold text-slate-900 text-sm">{selectedPOObj?.amount || `${currency} ${Number(invoiceAmount || 0).toLocaleString('en-IN')}`}</div>
                   <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full inline-block border border-emerald-200">
-                    Status: {selectedPOObj.status}
+                    Status: {selectedPOObj?.status || 'Open'}
                   </span>
                 </div>
 
                 <div className="space-y-0.5">
                   <span className="text-[10px] font-extrabold text-[#0d7676] uppercase tracking-wider block">Remaining Invoice Balance</span>
                   <div className="font-mono font-extrabold text-[#0d7676] text-sm">
-                    {selectedPOObj.currency || currency} {Number(selectedPOObj.remainingInvoiceAmount ?? selectedPOObj.numericAmount ?? 0).toLocaleString('en-IN')}
+                    {selectedPOObj?.currency || currency} {Number(selectedPOObj?.remainingInvoiceAmount ?? selectedPOObj?.numericAmount ?? 0).toLocaleString('en-IN')}
                   </div>
-                  {Number(selectedPOObj.remainingQuantity) > 0 && (
+                  {Number(selectedPOObj?.remainingQuantity) > 0 && (
                     <span className="text-[10px] text-slate-500 font-semibold block">
                       Remaining Qty: {selectedPOObj.remainingQuantity} units
                     </span>
@@ -656,6 +748,8 @@ export default function VendorUploadInvoicePage() {
               </label>
               <input
                 type="text"
+                disabled={isViewMode}
+                readOnly={isViewMode}
                 value={invoiceNumber}
                 onChange={(e) => {
                   setInvoiceNumber(e.target.value);
@@ -663,8 +757,8 @@ export default function VendorUploadInvoicePage() {
                   setErrorMsg('');
                 }}
                 placeholder="Enter vendor invoice number (e.g. INV/2026/001)"
-                className={`w-full px-3.5 py-2.5 bg-slate-50 border rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white ${
-                  duplicateError ? 'border-rose-400 focus:ring-rose-500' : 'border-slate-200'
+                className={`w-full px-3.5 py-2.5 border rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] ${
+                  isViewMode ? 'bg-slate-100 cursor-not-allowed text-slate-700 border-slate-200' : duplicateError ? 'border-rose-400 focus:ring-rose-500 bg-slate-50' : 'bg-slate-50 border-slate-200 focus:bg-white'
                 }`}
               />
               {checkingUnique && (
@@ -673,13 +767,11 @@ export default function VendorUploadInvoicePage() {
                 </p>
               )}
               {duplicateError && (
-                <p className="text-[11px] text-rose-600 font-bold mt-0.5">
-                  ❌ {duplicateError}
-                </p>
+                <p className="text-[11px] text-rose-600 font-bold mt-0.5">❌ {duplicateError}</p>
               )}
             </div>
 
-            {/* Sequential ASN Number - Import vendors only */}
+            {/* Sequential ASN Number */}
             {isImportVendor && (
               <div className="space-y-1.5">
                 <label className="block text-xs font-semibold text-slate-700">
@@ -697,22 +789,9 @@ export default function VendorUploadInvoicePage() {
               </div>
             )}
 
-            {/* BL Number & BL Date */}
-            {/* <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-slate-700">
-                BL Number (Bill of Lading Number)
-              </label>
-              <input
-                type="text"
-                value={blNumber}
-                onChange={(e) => setBlNumber(e.target.value)}
-                placeholder="e.g. BL-2026-9901"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
-              />
-            </div> */}
-
             <CustomDatePicker
               label="BL Date (Bill of Lading Date)"
+              disabled={isViewMode}
               value={blDate}
               onChange={(val) => setBlDate(val)}
             />
@@ -721,6 +800,7 @@ export default function VendorUploadInvoicePage() {
             <CustomDatePicker
               label="Invoice Date"
               required
+              disabled={isViewMode}
               max={getLocalISODate()}
               value={invoiceDate}
               onChange={(val) => {
@@ -733,6 +813,7 @@ export default function VendorUploadInvoicePage() {
             <CustomSelect
               label="Currency"
               required
+              disabled={isViewMode}
               value={currency}
               onChange={(val) => setCurrency(val)}
               options={[
@@ -743,7 +824,7 @@ export default function VendorUploadInvoicePage() {
               placeholder="Select currency"
             />
 
-            {/* Net Days (Locked by Payment Terms) */}
+            {/* Net Days */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <label className="block text-xs font-semibold text-slate-700">
@@ -755,16 +836,20 @@ export default function VendorUploadInvoicePage() {
               </div>
               <div className="relative">
                 <input
-                  type="number"
-                  value={dueDays}
+                  type="text"
+                  value={dueDays !== '' && dueDays !== null && dueDays !== undefined ? dueDays : ''}
                   readOnly
                   aria-readonly="true"
-                  placeholder="30"
+                  placeholder="Select PO to display credit days"
                   className="w-full px-3.5 py-2.5 bg-slate-100/90 border border-slate-200 rounded-xl text-slate-800 text-xs font-bold font-mono cursor-not-allowed select-none"
                 />
               </div>
               <p className="text-[10px] text-slate-400 font-medium">
-                Auto-set to {dueDays} days based on Payment Terms ({selectedPOObj?.paymentTerms || vendorProfile?.paymentTerms || 'Standard Terms'}).
+                {poNumber && dueDays !== '' ? (
+                  `Auto-set to ${dueDays} days based on Payment Terms (${selectedPOObj?.paymentTerms || vendorProfile?.paymentTerms || `${dueDays} Days`}).`
+                ) : (
+                  'Select a Purchase Order to view Payment Credit Days.'
+                )}
               </p>
             </div>
 
@@ -780,7 +865,11 @@ export default function VendorUploadInvoicePage() {
                 className="w-full px-3.5 py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-slate-600 text-xs font-bold font-mono cursor-not-allowed"
               />
               <p className="text-[10px] text-[#0d7676] font-semibold">
-                Auto-computed: Invoice Date ({invoiceDate}) + {dueDays} days
+                {dueDays !== '' ? (
+                  `Auto-computed: Invoice Date (${invoiceDate || 'Selected'}) + ${dueDays} days`
+                ) : (
+                  'Select a Purchase Order to compute due date'
+                )}
               </p>
             </div>
 
@@ -793,78 +882,76 @@ export default function VendorUploadInvoicePage() {
                 type="number"
                 step="0.01"
                 min="0.01"
-                max={selectedPOObj?.remainingInvoiceAmount || undefined}
+                disabled={isViewMode}
+                readOnly={isViewMode}
                 value={invoiceAmount}
                 onChange={(e) => {
                   setInvoiceAmount(e.target.value);
                   setErrorMsg('');
                 }}
                 placeholder="0.00"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white font-mono font-bold"
+                className={`w-full px-3.5 py-2.5 border rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] ${
+                  isViewMode ? 'bg-slate-100 cursor-not-allowed text-slate-700 border-slate-200' : 'bg-slate-50 border-slate-200 focus:bg-white'
+                }`}
               />
-              {selectedPOObj && (
-                <p className="text-[10px] font-semibold text-slate-500">
-                  Remaining PO balance: {selectedPOObj.currency || currency} {Number(selectedPOObj.remainingInvoiceAmount || selectedPOObj.numericAmount || 0).toLocaleString('en-IN')}
-                </p>
-              )}
             </div>
 
-            {/* Invoice Quantity */}
+            {/* Delivered Quantity */}
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-slate-700">
-                Delivered Quantity {Number(selectedPOObj?.totalQuantity) > 0 && <span className="text-rose-500">*</span>}
+                Delivered Quantity
               </label>
               <input
                 type="number"
-                min="0.01"
-                step="0.01"
-                max={Number(selectedPOObj?.remainingQuantity) > 0 ? selectedPOObj.remainingQuantity : undefined}
+                disabled={isViewMode}
+                readOnly={isViewMode}
                 value={invoiceQuantity}
-                onChange={(e) => { setInvoiceQuantity(e.target.value); setErrorMsg(''); }}
+                onChange={(e) => setInvoiceQuantity(e.target.value)}
                 placeholder="Enter quantity delivered"
-                disabled={!selectedPOObj}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] disabled:opacity-60"
+                className={`w-full px-3.5 py-2.5 border rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] ${
+                  isViewMode ? 'bg-slate-100 cursor-not-allowed text-slate-700 border-slate-200' : 'bg-slate-50 border-slate-200 focus:bg-white'
+                }`}
               />
-              {Number(selectedPOObj?.totalQuantity) > 0 && (
-                <p className="text-[10px] font-semibold text-slate-500">Remaining PO quantity: {selectedPOObj.remainingQuantity} units</p>
-              )}
             </div>
 
             {/* Remarks */}
             <div className="space-y-1.5 md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700">Remarks & Item Descriptions</label>
+              <label className="block text-xs font-semibold text-slate-700">
+                Remarks & Item Descriptions
+              </label>
               <textarea
                 rows={2}
+                disabled={isViewMode}
+                readOnly={isViewMode}
                 value={remarks}
                 onChange={(e) => setRemarks(e.target.value)}
                 placeholder="Add special notes, delivery batch details, or payment terms notes..."
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white resize-none"
+                className={`w-full p-3 border rounded-xl text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] ${
+                  isViewMode ? 'bg-slate-100 cursor-not-allowed text-slate-700 border-slate-200' : 'bg-slate-50 border-slate-200 focus:bg-white'
+                }`}
               />
-              <p className="text-[10px] text-slate-400">Include any details explaining variations between PO and invoice amount.</p>
             </div>
           </div>
         </div>
 
-        {/* SECTION 3: GST, TDS & ADJUSTMENTS (CLEAN & INTUITIVE) */}
+        {/* SECTION 3: FINANCIAL & GST TAX DETAILS */}
         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-4">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
               <span className="w-6 h-6 rounded-full bg-[#0d7676] text-white font-extrabold text-xs flex items-center justify-center">3</span>
               <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                TAXES, TDS & ADVANCE ADJUSTMENT
+                TAX & FINANCIAL CALCULATIONS
               </h2>
             </div>
-
-            {/* Preset Rate Quick Buttons */}
-            {invoiceType === 'With GST' && (
+            {!isViewMode && (
               <div className="flex items-center gap-1.5">
-                <span className="text-[10px] font-bold text-slate-400 uppercase hidden sm:inline">Quick GST Rate:</span>
+                <span className="text-[10px] font-bold text-slate-400">Apply GST Rate:</span>
                 {[5, 12, 18, 28].map((rate) => (
                   <button
                     key={rate}
                     type="button"
                     onClick={() => applyGstPresetRate(rate)}
-                    className="px-2 py-0.5 rounded-md border border-teal-200 bg-teal-50 hover:bg-teal-100 text-[#0d7676] text-[10px] font-bold transition-colors cursor-pointer"
+                    className="px-2 py-0.5 bg-slate-50 border border-slate-200 hover:border-[#0d7676] hover:text-[#0d7676] rounded text-[10px] font-bold text-slate-700 transition-all cursor-pointer"
                   >
                     {rate}%
                   </button>
@@ -874,266 +961,217 @@ export default function VendorUploadInvoicePage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Invoice Tax Type */}
             <CustomSelect
-              label="Invoice Tax Category"
-              required
+              label="Invoice Type"
+              disabled={isViewMode}
               value={invoiceType}
-              onChange={(val) => {
-                setInvoiceType(val);
-                if (val !== 'With GST') {
-                  setCgstAmount('0');
-                  setSgstAmount('0');
-                  setIgstAmount('0');
-                }
-              }}
+              onChange={(val) => setInvoiceType(val)}
               options={[
-                { label: 'With GST (Taxable Purchase)', value: 'With GST' },
-                { label: 'Without GST (Exempt / Non-Taxable)', value: 'Without GST' },
-                { label: 'SEZ Export (Zero-Rated Tax)', value: 'SEZ Export' }
+                { label: 'With GST', value: 'With GST' },
+                { label: 'Without GST (Exempt/Export)', value: 'Without GST' }
               ]}
-              placeholder="Select invoice tax type"
             />
 
-            {/* GST Subtype Toggle (Intra vs Inter state) */}
-            {invoiceType === 'With GST' ? (
-              <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-slate-700">
-                  GST Supply Type <span className="text-rose-500">*</span>
-                </label>
-                <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => handleGstSubtypeChange('intra')}
-                    className={`flex-1 py-1.5 rounded-lg font-bold text-center transition-all ${
-                      gstSubtype === 'intra' ? 'bg-white text-[#0d7676] shadow-2xs' : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    Intra-State (CGST + SGST)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleGstSubtypeChange('inter')}
-                    className={`flex-1 py-1.5 rounded-lg font-bold text-center transition-all ${
-                      gstSubtype === 'inter' ? 'bg-white text-[#0d7676] shadow-2xs' : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    Inter-State (IGST)
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="md:col-span-2 p-3 bg-slate-50 border border-slate-200/80 rounded-xl text-slate-500 text-xs font-medium flex items-center gap-2">
-                <Info className="w-4 h-4 text-slate-400 shrink-0" />
-                <span>Exempt / Non-Taxable invoice selected. GST amount calculation is disabled.</span>
-              </div>
+            {invoiceType === 'With GST' && (
+              <CustomSelect
+                label="GST Subtype"
+                disabled={isViewMode}
+                value={gstSubtype}
+                onChange={(val) => setGstSubtype(val)}
+                options={[
+                  { label: 'Intra-state (CGST + SGST)', value: 'intra' },
+                  { label: 'Inter-state (IGST)', value: 'inter' }
+                ]}
+              />
             )}
 
-            {/* Intra State GST Amounts */}
-            {invoiceType === 'With GST' && gstSubtype === 'intra' && (
+            {invoiceType === 'With GST' && gstSubtype === 'intra' ? (
               <>
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-slate-700">CGST Amount</label>
+                  <label className="block text-xs font-semibold text-slate-700">CGST Amount ({currency})</label>
                   <input
                     type="number"
                     step="0.01"
+                    disabled={isViewMode}
+                    readOnly={isViewMode}
                     value={cgstAmount}
                     onChange={(e) => setCgstAmount(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
+                    className={`w-full px-3.5 py-2.5 border rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] ${
+                      isViewMode ? 'bg-slate-100 cursor-not-allowed text-slate-700 border-slate-200' : 'bg-slate-50 border-slate-200 focus:bg-white'
+                    }`}
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-semibold text-slate-700">SGST Amount</label>
+                  <label className="block text-xs font-semibold text-slate-700">SGST Amount ({currency})</label>
                   <input
                     type="number"
                     step="0.01"
+                    disabled={isViewMode}
+                    readOnly={isViewMode}
                     value={sgstAmount}
                     onChange={(e) => setSgstAmount(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
+                    className={`w-full px-3.5 py-2.5 border rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] ${
+                      isViewMode ? 'bg-slate-100 cursor-not-allowed text-slate-700 border-slate-200' : 'bg-slate-50 border-slate-200 focus:bg-white'
+                    }`}
                   />
                 </div>
               </>
-            )}
-
-            {/* Inter State IGST Amount */}
-            {invoiceType === 'With GST' && gstSubtype === 'inter' && (
+            ) : invoiceType === 'With GST' ? (
               <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-slate-700">IGST Amount</label>
+                <label className="block text-xs font-semibold text-slate-700">IGST Amount ({currency})</label>
                 <input
                   type="number"
                   step="0.01"
+                  disabled={isViewMode}
+                  readOnly={isViewMode}
                   value={igstAmount}
                   onChange={(e) => setIgstAmount(e.target.value)}
-                  placeholder="0.00"
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
+                  className={`w-full px-3.5 py-2.5 border rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] ${
+                    isViewMode ? 'bg-slate-100 cursor-not-allowed text-slate-700 border-slate-200' : 'bg-slate-50 border-slate-200 focus:bg-white'
+                  }`}
                 />
               </div>
-            )}
+            ) : null}
 
-            {/* TDS % */}
-            <CustomSelect
-              label="TDS % (Deduction Rate)"
-              value={tdsPercentage}
-              onChange={(val) => setTdsPercentage(val)}
-              options={[
-                { label: '0% — No TDS Deduction', value: '0%' },
-                { label: '1% — Section 194C (Individual / HUF)', value: '1%' },
-                { label: '2% — Section 194C (Company / Others)', value: '2%' },
-                { label: '10% — Section 194J (Professional Services)', value: '10%' }
-              ]}
-              placeholder="Select TDS percentage"
-            />
-
-            {/* Advance to Adjust */}
             <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-slate-700">
-                Advance Adjustment 
-              </label>
+              <label className="block text-xs font-semibold text-slate-700">Advance Adjustment ({currency})</label>
               <input
                 type="number"
                 step="0.01"
+                disabled={isViewMode}
+                readOnly={isViewMode}
                 value={advanceAdjust}
                 onChange={(e) => setAdvanceAdjust(e.target.value)}
-                min="0"
-                placeholder="0.00"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
+                className={`w-full px-3.5 py-2.5 border rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] ${
+                  isViewMode ? 'bg-slate-100 cursor-not-allowed text-slate-700 border-slate-200' : 'bg-slate-50 border-slate-200 focus:bg-white'
+                }`}
               />
+            </div>
+          </div>
+
+          {/* Financial Calculation Summary Card */}
+          <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <div>
+              <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block">Base Amount</span>
+              <span className="font-mono font-bold text-slate-900 text-sm">{formatCurrency(invoiceAmountNum, currency)}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block">+ Total GST Tax</span>
+              <span className="font-mono font-bold text-[#0d7676] text-sm">{formatCurrency(totalGst, currency)}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block">- Advance Adjustment</span>
+              <span className="font-mono font-bold text-rose-700 text-sm">{formatCurrency(advanceAdjNum, currency)}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-emerald-700 font-extrabold uppercase tracking-wider block">= Net Payable</span>
+              <span className="font-mono font-extrabold text-emerald-700 text-base">{formatCurrency(netPayable, currency)}</span>
             </div>
           </div>
         </div>
 
-        {/* SECTION 5: SUPPORTING DOCUMENT UPLOAD */}
+        {/* SECTION 4: SUPPORTING DOCUMENTS */}
         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs space-y-4">
           <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
             <span className="w-6 h-6 rounded-full bg-[#0d7676] text-white font-extrabold text-xs flex items-center justify-center">4</span>
             <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-              INVOICE SUPPORTING DOCUMENTS
+              ATTACH SUPPORTING DOCUMENTS
             </h2>
           </div>
 
-          <CustomFileUpload
-            label="Upload Invoice Copy & Supporting PDFs / Images"
-            required
-            accept=".pdf,.jpg,.jpeg,.png"
-            multiple
-            value={selectedFiles}
-            onChange={(files) => {
-              setSelectedFiles(files);
-              setErrorMsg('');
-            }}
-            onError={(message) => setErrorMsg(message)}
-            helperText="Upload up to 10 supporting documents (PDF, JPG, or PNG; maximum 25 MB each)."
-          />
+          {isViewMode ? (
+            <div className="space-y-2">
+              <span className="text-xs font-bold text-slate-700 block">Uploaded Supporting Files ({selectedFiles.length})</span>
+              {selectedFiles.length === 0 ? (
+                <p className="text-xs text-slate-400 italic">No files attached to this invoice.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2.5">
+                  {selectedFiles.map((doc, idx) => {
+                    const fileHref = resolveDocumentHref(doc);
+                    return (
+                      <a
+                        key={idx}
+                        href={fileHref}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl hover:bg-slate-100 text-xs font-bold text-[#0d7676] transition-colors"
+                      >
+                        <FileText className="w-4 h-4 text-[#0d7676]" />
+                        <span>{doc.name || doc.originalName || doc.fileName || `Document ${idx + 1}`}</span>
+                        <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+                      </a>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <CustomFileUpload
+              value={selectedFiles}
+              onChange={(files) => setSelectedFiles(files)}
+              multiple={true}
+              maxFiles={10}
+              accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx"
+            />
+          )}
         </div>
 
-        {/* BOTTOM ACTION BUTTONS */}
-        <div className="flex items-center gap-3 pt-2">
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="px-8 py-3.5 bg-[#0d7676] hover:bg-[#0f766e] text-white font-extrabold text-xs rounded-xl shadow-md hover:shadow-lg transition-all disabled:opacity-50 flex items-center gap-2 cursor-pointer uppercase tracking-wider"
-          >
-            {isSubmitting ? (
-              'SUBMITTING INVOICE...'
-            ) : (
-              <>
-                <Receipt className="w-4 h-4" />
-                <span>SUBMIT INVOICE ({currency} {netPayable.toLocaleString('en-IN', { minimumFractionDigits: 2 })})</span>
-              </>
-            )}
-          </button>
-
+        {/* Bottom Form Actions Bar */}
+        <div className="pt-2 flex items-center justify-between border-t border-slate-200">
           <button
             type="button"
             onClick={() => navigate('/vendor/invoices')}
-            className="px-6 py-3.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
+            className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
           >
-            Cancel
+            <ArrowLeft className="w-4 h-4 text-slate-400" />
+            <span>Back to Invoices</span>
           </button>
+
+          {!isViewMode && (
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="px-6 py-2.5 bg-[#0d7676] hover:bg-[#0f766e] text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+            >
+              {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              <span>{isSubmitting ? 'SAVING...' : isEditMode ? 'SAVE & UPDATE INVOICE' : 'SUBMIT INVOICE ENTRY'}</span>
+            </button>
+          )}
+
+          {isViewMode && ['pending', 'in progress', 'in_progress', 'draft'].includes(String(existingInvoiceObj?.status || '').toLowerCase()) && (
+            <button
+              type="button"
+              onClick={() => navigate(`/vendor/invoices/edit/${encodeURIComponent(id)}`)}
+              className="px-6 py-2.5 bg-[#0d7676] hover:bg-[#0f766e] text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+            >
+              <Pencil className="w-4 h-4" />
+              <span>Edit Invoice Details</span>
+            </button>
+          )}
         </div>
       </form>
 
-      {/* EXECUTIVE SUCCESS MODAL */}
+      {/* Success Submission Modal for New Invoices */}
       {showSuccessModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 text-center space-y-5 shadow-2xl animate-in zoom-in-95 border border-slate-100">
-            {/* Header Icon */}
-            <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto ring-8 ring-emerald-50/50">
-              <CheckCircle2 className="w-8 h-8" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in-50">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl text-center space-y-4 border border-slate-200">
+            <div className="w-12 h-12 rounded-full bg-teal-50 text-[#0d7676] flex items-center justify-center mx-auto border border-teal-200">
+              <CheckCircle2 className="w-7 h-7" />
             </div>
-
-            {/* Title & Description */}
             <div className="space-y-1">
-              <h3 className="text-lg font-bold text-slate-900 tracking-tight">Invoice Submitted Successfully</h3>
+              <h3 className="text-base font-bold text-slate-900">Invoice Submitted Successfully!</h3>
               <p className="text-xs text-slate-500 font-medium">
-                Your invoice has been submitted and queued for Purchase Manager review & 3-Way Match validation.
+                Invoice <span className="font-mono font-bold text-slate-800">{invoiceNumber}</span> against PO <span className="font-mono font-bold text-slate-800">{poNumber}</span> has been created.
               </p>
             </div>
-
-            {/* Invoice Breakdown Details Card */}
-            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 text-left text-xs space-y-2.5 font-sans">
-              <div className="flex items-center justify-between border-b border-slate-200/60 pb-2">
-                <span className="text-slate-500 font-semibold">Invoice Number</span>
-                <span className="font-mono font-bold text-slate-900">{invoiceNumber}</span>
-              </div>
-              {/* ASN Number highlight - Import vendors only */}
-              {isImportVendor && (
-                <div className="flex items-center justify-between border-b border-amber-200/60 pb-2 bg-amber-50/60 -mx-4 px-4 py-2">
-                  <span className="text-amber-700 font-extrabold flex items-center gap-1">📦 ASN Number</span>
-                  <span className="font-mono font-bold text-amber-800 text-sm">{asnNumber}</span>
-                </div>
-              )}
-              <div className="flex items-center justify-between border-b border-slate-200/60 pb-2">
-                <span className="text-slate-500 font-semibold">Purchase Order</span>
-                <span className="font-mono font-bold text-[#0d7676]">{poNumber}</span>
-              </div>
-              <div className="flex items-center justify-between border-b border-slate-200/60 pb-2">
-                <span className="text-slate-500 font-semibold">Estimated Net Payable</span>
-                <span className="font-mono font-bold text-slate-900">{currency} {netPayable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500 font-semibold">Approval Stage</span>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" /> Purchase Manager Review
-                </span>
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="space-y-2 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSuccessModal(false);
-                  navigate('/vendor/invoices');
-                }}
-                className="w-full py-3 bg-[#0d7676] hover:bg-[#0f766e] text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
-              >
-                View Invoices List →
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSuccessModal(false);
-                  setInvoiceNumber('');
-                  setAsnNumber((current) => {
-                    const year = new Date().getFullYear();
-                    const sequence = Number(String(current).split('-').pop()) || 0;
-                    return `ASN-${year}-${String(sequence + 1).padStart(3, '0')}`;
-                  });
-                  setInvoiceAmount('');
-                  setRemarks('');
-                  setSelectedFiles([]);
-                }}
-                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
-              >
-                Submit Another Invoice
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/vendor/invoices')}
+              className="w-full py-2.5 bg-[#0d7676] text-white font-bold text-xs rounded-xl shadow-xs hover:bg-[#0f766e] transition-all"
+            >
+              View Invoices List
+            </button>
           </div>
         </div>
       )}

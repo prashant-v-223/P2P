@@ -94,10 +94,13 @@ export default function VendorAdvancesPage() {
           </p>
         </div>
 
-        <div className="bg-teal-50 border border-teal-200 text-teal-800 px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-[#0d7676] shrink-0" />
-          <span>Advance payment requests are initiated & issued by the buyer procurement team.</span>
-        </div>
+        <button
+          onClick={() => setShowRequestModal(true)}
+          className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition uppercase tracking-wider self-start sm:self-auto cursor-pointer"
+        >
+          <Plus className="w-4 h-4" />
+          <span>Request Advance</span>
+        </button>
       </div>
 
       {/* 4 Stat Summary Cards */}

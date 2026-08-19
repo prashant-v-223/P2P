@@ -156,6 +156,8 @@ export const vendorLogin = async (req, res) => {
       email: vendor.email,
       phone: vendor.phone || '+91 9800000000',
       vendorType: vendor.vendorType || 'Domestic Vendor',
+      paymentTerms: vendor.paymentTerms || (vendor.creditDays ? `${vendor.creditDays} Days` : '30 Days'),
+      creditDays: vendor.creditDays || vendor.paymentTerms || '30 Days',
       category: vendor.category || '',
       status: vendor.status || 'Active',
       gstin: vendor.gstin || '-',
@@ -269,6 +271,8 @@ export const getVendorPortalData = async (req, res) => {
       const totalQuantity = (po.items || []).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
       return {
         ...po,
+        paymentTerms: po.paymentTerms || po.creditDays || vendorDoc?.paymentTerms || (vendorDoc?.creditDays ? `${vendorDoc.creditDays} Days` : ''),
+        creditDays: po.creditDays || po.paymentTerms || vendorDoc?.creditDays || vendorDoc?.paymentTerms || '',
         invoicedAmount,
         remainingInvoiceAmount: Math.max(0, Number(po.totalAmount) - invoicedAmount),
         advanceCommitted,

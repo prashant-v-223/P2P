@@ -277,10 +277,14 @@ export default function VendorDashboardPage() {
             ) : (
               <div className="space-y-2 mt-3">
                 {invoices.slice(0, 4).map((inv) => (
-                  <div key={inv.id} className="p-3 rounded-xl border border-slate-150 bg-slate-50/50 flex items-center justify-between">
+                  <Link
+                    key={inv.id}
+                    to={`/vendor/invoices/view/${encodeURIComponent(inv.id || inv.invoiceNumber)}`}
+                    className="p-3 rounded-xl border border-slate-150 hover:border-teal-300 bg-slate-50/50 hover:bg-teal-50/20 transition flex items-center justify-between group"
+                  >
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-slate-900">{inv.invoiceNumber}</span>
+                        <span className="text-xs font-bold text-slate-900 group-hover:text-[#0d7676]">{inv.invoiceNumber}</span>
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${inv.status === 'Approved' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' : 'bg-amber-100 text-amber-700 border border-amber-200'}`}>
                           {inv.status}
                         </span>
@@ -290,7 +294,7 @@ export default function VendorDashboardPage() {
                     <div className="text-right">
                       <span className="text-xs font-bold text-slate-900 whitespace-nowrap font-mono">{formatCurrency(inv.invoiceAmount, inv.currency)}</span>
                     </div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             )}

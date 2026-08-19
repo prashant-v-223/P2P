@@ -1,12 +1,14 @@
 import React, { useRef, useState } from 'react';
-import { UploadCloud, FileText, X, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { UploadCloud, FileText, X, CheckCircle2, AlertCircle, Loader2, ExternalLink } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 
 export function CustomFileUpload({
   value,
+  files,
   onChange,
   accept = '.pdf,.doc,.docx,.jpg,.jpeg,.png,.xlsx',
   multiple = false,
+  maxFiles = 10,
   label,
   required = false,
   error,
@@ -18,15 +20,19 @@ export function CustomFileUpload({
   const [uploading, setUploading] = useState(false);
   const [uploadCount, setUploadCount] = useState(0);
 
+  const actualValue = value !== undefined ? value : files;
+  const isMultiple = multiple || maxFiles > 1 || Array.isArray(actualValue);
+  const filesArray = isMultiple ? (Array.isArray(actualValue) ? actualValue : []) : (actualValue ? [actualValue] : []);
+
   const processUpload = async (rawFiles) => {
-    if (!multiple && rawFiles.length !== 1) {
+    if (!isMultiple && rawFiles.length !== 1) {
       onError?.('Please select exactly one file.');
       return;
     }
-    const fileList = multiple ? Array.from(rawFiles) : [rawFiles[0]];
-    const existingFiles = multiple && Array.isArray(value) ? value : [];
-    if (multiple && existingFiles.length + fileList.length > 10) {
-      onError?.('You can upload a maximum of 10 files.');
+    const fileList = isMultiple ? Array.from(rawFiles) : [rawFiles[0]];
+    const existingFiles = isMultiple && Array.isArray(actualValue) ? actualValue : [];
+    if (isMultiple && existingFiles.length + fileList.length > maxFiles) {
+      onError?.(`You can upload a maximum of ${maxFiles} files.`);
       return;
     }
     const acceptedExtensions = String(accept).split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
@@ -48,17 +54,17 @@ export function CustomFileUpload({
 
     try {
       const formData = new FormData();
-      fileList.forEach((file) => formData.append(multiple ? 'files' : 'file', file));
+      fileList.forEach((file) => formData.append(isMultiple ? 'files' : 'file', file));
       formData.append('folder', 'documents');
 
-      const res = await apiFetch(multiple ? '/api/p2p/upload-files' : '/api/p2p/upload-file', {
+      const res = await apiFetch(isMultiple ? '/api/p2p/upload-files' : '/api/p2p/upload-file', {
         method: 'POST',
         body: formData
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) throw new Error(data.error || 'File upload failed.');
 
-      const uploadedResults = multiple ? data.files : [data];
+      const uploadedResults = isMultiple ? data.files : [data];
       const processedFiles = fileList.map((file, index) => {
         const uploaded = uploadedResults[index];
         if (!uploaded?.fileUrl) return file;
@@ -68,12 +74,12 @@ export function CustomFileUpload({
         return file;
       });
 
-      const finalVal = multiple
-        ? [...existingFiles, ...processedFiles].filter((file, index, files) => (
-            files.findIndex((item) => item.name === file.name && item.size === file.size) === index
+      const finalVal = isMultiple
+        ? [...existingFiles, ...processedFiles].filter((file, index, filesArr) => (
+            filesArr.findIndex((item) => (item.name || item.fileName) === (file.name || file.fileName) && item.size === file.size) === index
           ))
         : processedFiles[0];
-      onChange(finalVal);
+      onChange?.(finalVal);
     } catch (err) {
       console.error('[FileUpload] Upload error:', err);
       onError?.(err.message || 'File upload failed. Please try again.');
@@ -99,15 +105,37 @@ export function CustomFileUpload({
 
   const removeFile = (indexToRemove) => {
     if (disabled || uploading) return;
-    if (multiple && Array.isArray(value)) {
-      onChange(value.filter((_, idx) => idx !== indexToRemove));
+    if (isMultiple && Array.isArray(actualValue)) {
+      onChange?.(actualValue.filter((_, idx) => idx !== indexToRemove));
     } else {
-      onChange(null);
+      onChange?.(null);
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const filesArray = multiple ? (Array.isArray(value) ? value : []) : (value ? [value] : []);
+  const formatSize = (bytesOrStr) => {
+    if (!bytesOrStr) return '';
+    if (typeof bytesOrStr === 'string') return bytesOrStr;
+    if (typeof bytesOrStr === 'number') {
+      if (bytesOrStr < 1024) return `${bytesOrStr} B`;
+      if (bytesOrStr < 1024 * 1024) return `${(bytesOrStr / 1024).toFixed(1)} KB`;
+      return `${(bytesOrStr / (1024 * 1024)).toFixed(2)} MB`;
+    }
+    return '';
+  };
+
+  const resolveHref = (file) => {
+    const url = file.fileUrl || file.url || file.s3Key || file.fileName;
+    if (!url) return null;
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('/uploads/')) return url;
+    const token = (typeof window !== 'undefined' && (
+      localStorage.getItem('rayzon_vendor_token') ||
+      localStorage.getItem('rayzon_access_token') ||
+      localStorage.getItem('rayzon_token')
+    )) || '';
+    const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+    return `/api/documents/resolve-url?fileUrl=${encodeURIComponent(url)}&redirect=true${tokenParam}`;
+  };
 
   return (
     <div className="space-y-1.5 font-sans">
@@ -121,7 +149,7 @@ export function CustomFileUpload({
         ref={fileInputRef}
         type="file"
         accept={accept}
-        multiple={multiple}
+        multiple={isMultiple}
         disabled={disabled || uploading}
         onChange={handleFileChange}
         className="hidden"
@@ -151,45 +179,65 @@ export function CustomFileUpload({
           )}
         </p>
         <p className="text-[10px] text-slate-400 font-medium mt-0.5">
-          Accepted: {accept} (Max 25 MB){multiple ? '' : ' · One file only'}
+          Accepted: {accept} (Max 25 MB){isMultiple ? '' : ' · One file only'}
         </p>
       </div>
 
       {/* Uploaded File Badges */}
       {filesArray.length > 0 && (
         <div className="space-y-2 pt-1">
-          {filesArray.map((file, idx) => (
-            <div
-              key={`${file.name}-${idx}`}
-              className="flex items-center justify-between p-2.5 rounded-xl border border-teal-200 bg-teal-50/60 text-xs font-bold text-slate-800 shadow-2xs"
-            >
-              <div className="flex items-center gap-2.5 truncate">
-                <FileText className="w-4 h-4 text-[#0d7676] shrink-0" />
-                <span className="truncate max-w-[240px] sm:max-w-[320px] font-mono text-slate-900">{file.name}</span>
-                {file.size && (
-                  <span className="text-[10px] text-slate-500 font-semibold shrink-0">
-                    ({(file.size / 1024 / 1024).toFixed(2)} MB)
-                  </span>
-                )}
-              </div>
+          {filesArray.map((file, idx) => {
+            const fileName = file.name || file.originalName || file.fileName || `Document ${idx + 1}`;
+            const fileHref = resolveHref(file);
+            const sizeFormatted = formatSize(file.size || file.fileSize);
+            return (
+              <div
+                key={`${fileName}-${idx}`}
+                className="flex items-center justify-between p-2.5 rounded-xl border border-teal-200 bg-teal-50/60 text-xs font-bold text-slate-800 shadow-2xs"
+              >
+                <div className="flex items-center gap-2.5 truncate">
+                  <FileText className="w-4 h-4 text-[#0d7676] shrink-0" />
+                  <span className="truncate max-w-[220px] sm:max-w-[320px] font-mono text-slate-900">{fileName}</span>
+                  {sizeFormatted && (
+                    <span className="text-[10px] text-slate-500 font-semibold shrink-0">
+                      ({sizeFormatted})
+                    </span>
+                  )}
+                </div>
 
-              <div className="flex items-center gap-2 shrink-0">
-                <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-600" /> {file.uploaded ? 'Uploaded to S3' : 'Ready'}
-                </span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeFile(idx);
-                  }}
-                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  {fileHref && (
+                    <a
+                      href={fileHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="p-1 text-[#0d7676] hover:bg-teal-100 rounded-lg transition"
+                      title="View / Download File"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                  <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600" /> {file.uploaded || file.fileUrl ? 'Attached' : 'Ready'}
+                  </span>
+                  {!disabled && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeFile(idx);
+                      }}
+                      className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                      title="Remove file"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
