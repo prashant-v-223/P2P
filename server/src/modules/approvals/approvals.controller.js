@@ -139,11 +139,12 @@ export function isApprovalForRole(approval, roleFilter, userId = null) {
     return isSuperUser;
   }
 
-  // Fallback: infer from approval.status string (e.g. "Pending Procurement Head Approval")
+  // Fallback: infer from approval.status string (e.g. "Pending Purchase Manager Approval")
   const statusLower = (approval.status || '').toLowerCase();
   for (const r of roles) {
     const u = normalizeRoleKey(r);
     if (isSuperUser) return true;
+    if (statusLower.includes('purchase manager') && (u.includes('purchase_manager') || u.includes('procurement_manager') || u === 'manager')) return true;
     if (statusLower.includes('procurement head') && (u.includes('procurement_head') || u.includes('procurement_lead'))) return true;
     if (statusLower.includes('procurement manager') && (u.includes('procurement_manager') || u === 'manager')) return true;
     if (statusLower.includes('finance') && (u.includes('finance') || u.includes('cfo'))) return true;
@@ -176,7 +177,8 @@ function getNextStepStatus(approval) {
   }
 
   const NEXT_STEP = {
-    'Pending Procurement Head Approval': 'Pending Finance Approval',
+    'Pending Purchase Manager Approval': 'Approved & Dispatched',  // New default single-step flow
+    'Pending Procurement Head Approval': 'Approved & Dispatched',  // Legacy fallback
     'Pending Finance Approval':          'Approved & Dispatched'
   };
   return NEXT_STEP[approval.status] || 'Approved & Dispatched';
@@ -201,9 +203,10 @@ function getCurrentStepRole(approval) {
   }
 
   // Fallback: infer from status string
+  if (statusLower.includes('purchase manager')) return 'purchase manager';
   if (statusLower.includes('procurement head')) return 'procurement head';
   if (statusLower.includes('procurement manager')) return 'procurement manager';
-  if (statusLower.includes('procurement')) return 'procurement head';
+  if (statusLower.includes('procurement')) return 'purchase manager';
   if (statusLower.includes('finance')) return 'finance';
   if (statusLower.includes('md') || statusLower.includes('director')) return 'md';
   if (statusLower.includes('exim')) return 'exim';
@@ -826,11 +829,10 @@ export const getApprovalById = async (req, res) => {
       const amountFormatted = amountVal ? `₹${Number(amountVal).toLocaleString('en-IN')}` : '₹0.00';
 
       const defaultSteps = [
-        { step: 1, title: 'Procurement Head Approval', roleKey: 'procurement_head', roleName: 'Procurement Head', statusKey: 'Pending Procurement Head Approval' },
-        { step: 2, title: 'Finance Approval', roleKey: 'finance_lead', roleName: 'Finance Lead', statusKey: 'Pending Finance Approval' }
+        { step: 1, title: 'Purchase Manager Approval', roleKey: 'purchase_manager', roleName: 'Purchase Manager', statusKey: 'Pending Purchase Manager Approval' }
       ];
 
-      const currentStatus = rawStatus === 'approved' || rawStatus === 'paid' ? 'Approved & Dispatched' : rawStatus === 'rejected' ? 'Rejected' : rawStatus === 'returned' ? 'Returned for changes' : 'Pending Procurement Head Approval';
+      const currentStatus = rawStatus === 'approved' || rawStatus === 'paid' ? 'Approved & Dispatched' : rawStatus === 'rejected' ? 'Rejected' : rawStatus === 'returned' ? 'Returned for changes' : 'Pending Purchase Manager Approval';
 
       approval = {
         id,

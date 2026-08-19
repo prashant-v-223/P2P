@@ -104,6 +104,7 @@ export default function VendorInvoicesListPage() {
                     <th className="p-4 whitespace-nowrap">Date</th>
                     <th className="p-4 whitespace-nowrap">Due Date</th>
                     <th className="p-4 whitespace-nowrap">Amount</th>
+                    <th className="p-4 whitespace-nowrap">Approval Stage</th>
                     <th className="p-4 whitespace-nowrap">Status</th>
                   </tr>
                 </thead>
@@ -116,6 +117,17 @@ export default function VendorInvoicesListPage() {
                       <td className="p-4 text-slate-500 whitespace-nowrap">{inv.paymentDueDate || '—'}</td>
                       <td className="p-4 font-bold text-slate-900 font-mono whitespace-nowrap">
                         {formatCurrency(inv.invoiceAmount, inv.currency)}
+                      </td>
+                      <td className="p-4 whitespace-nowrap">
+                        {inv.status === 'Pending' || inv.status === 'In Progress' ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">
+                            Purchase Manager
+                          </span>
+                        ) : inv.status === 'Approved' ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                            ✓ Approved
+                          </span>
+                        ) : '—'}
                       </td>
                       <td className="p-4">
                         <span

@@ -310,6 +310,8 @@ async function attachFallbackApprovers(steps) {
 
 /**
  * Resolve the approval chain based on workflow and amount
+ * New flow: purchase_manager → (finance if > 50L) → (MD if > 1Cr)
+ * No Procurement Head first step for standard Advance/Invoice payments
  */
 export async function resolveApprovalChain(moduleType, amount, requester) {
   // Get the user with hierarchy
@@ -324,15 +326,15 @@ export async function resolveApprovalChain(moduleType, amount, requester) {
   const needsFinancialReview = amount >= FINANCIAL_REVIEW_THRESHOLD;
   const needsStrategicReview = amount >= STRATEGIC_REVIEW_THRESHOLD;
 
-  // Build the approval chain
+  // Build the approval chain — starts directly with Purchase Manager (no Procurement Head)
   let chain = [];
 
-  // Step 1: Always start with Procurement Head (if not already)
+  // Step 1: Purchase Manager (direct, streamlined — no first approval gate)
   chain.push({
     step: 1,
-    title: 'Procurement Head Approval',
-    roleKey: 'procurement_head',
-    statusKey: 'Pending Procurement Head Approval',
+    title: 'Purchase Manager Approval',
+    roleKey: 'purchase_manager',
+    statusKey: 'Pending Purchase Manager Approval',
     required: true
   });
 
@@ -361,6 +363,62 @@ export async function resolveApprovalChain(moduleType, amount, requester) {
   // Attach approvers to the chain
   return await attachApprovers(chain, requesterUser);
 }
+
+/**
+ * Resolve the purchase manager linked to a specific vendor
+ * Flow: vendorId → Vendor.userId → User.managerId → Purchase Manager
+ * If no direct link found, returns null (caller will use pool approval)
+ */
+export async function resolveVendorPurchaseManager(vendorId) {
+  if (!vendorId) return null;
+  try {
+    const { Vendor } = await import('../models/Vendor.js');
+    // Find vendor by multiple identifiers
+    const vendor = await Vendor.findOne({
+      $or: [
+        { id: vendorId },
+        { sapVendorCode: vendorId },
+        { supplierId: vendorId },
+        { vendorId: vendorId }
+      ]
+    }).lean();
+    if (!vendor?.userId) return null;
+
+    // Get the linked user (vendor's portal login user)
+    const vendorUser = await User.findOne({
+      $or: [
+        { id: vendor.userId },
+        { email: vendor.userId }
+      ]
+    }).lean();
+    if (!vendorUser) return null;
+
+    // Walk up to find the purchase manager (direct manager)
+    if (vendorUser.managerId) {
+      const manager = await User.findOne({
+        $or: [
+          { id: vendorUser.managerId },
+          { userId: vendorUser.managerId }
+        ],
+        status: 'Active'
+      }).lean();
+      if (manager) {
+        return {
+          id: manager.id,
+          name: manager.name,
+          role: manager.role,
+          email: manager.email,
+          resolutionMethod: 'vendor_linked_manager'
+        };
+      }
+    }
+    return null;
+  } catch (err) {
+    console.warn('[resolveVendorPurchaseManager] Error:', err.message);
+    return null;
+  }
+}
+
 
 /**
  * Resolve delegation chain for a specific user

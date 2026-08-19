@@ -38,13 +38,10 @@ const JOURNEY_LABELS = {
     { title: 'Finance Lead Approval', role: 'Finance Lead' }
   ],
   'Advance Payment': [
-    { title: 'Purchase Manager Review', role: 'Purchase Manager' },
-    { title: 'Purchase Head Approval', role: 'Procurement_head' },
-    { title: 'CFO Approval', role: 'CFO' }
+    { title: 'Purchase Manager Approval', role: 'Purchase Manager' }
   ],
   'Invoice Payment': [
-    { title: 'Procurement Head Approval', role: 'Procurement_head' },
-    { title: 'Finance Approval', role: 'Finance' }
+    { title: 'Purchase Manager Approval', role: 'Purchase Manager' }
   ],
   'RFQ Vendor Award': [
     { title: 'Purchase Head Review', role: 'Procurement_head' },
@@ -539,8 +536,15 @@ export default function PendingApprovalsView() {
                       </div>
 
                       <div className="flex items-center gap-2 text-xs font-bold text-slate-600">
-                        <span>Step {activeStep + 1} of {steps.length}</span>
-                        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-slate-700">{steps[activeStep] || '—'}</span>
+                        <span className="text-slate-400">Step {activeStep + 1} of {steps.length}</span>
+                        <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider ${
+                          (approval.status || '').toLowerCase().includes('manager') ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                          (approval.status || '').toLowerCase().includes('finance') ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                          (approval.status || '').toLowerCase().includes('md') || (approval.status || '').toLowerCase().includes('director') ? 'bg-purple-50 text-purple-700 border-purple-200' :
+                          'bg-teal-50 text-teal-700 border-teal-200'
+                        }`}>
+                          {steps[activeStep] || approval.status || '—'}
+                        </span>
                       </div>
                     </div>
 
@@ -562,14 +566,26 @@ export default function PendingApprovalsView() {
                         <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Requester</span>
                         <span className="block truncate font-semibold text-slate-800">{approval.requestedBy || '—'}</span>
                       </div>
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Submitted</span>
-                          <span className="block font-medium text-slate-700">{formatSubmitted(approval.submittedAt)}</span>
+                      <div className="flex flex-col gap-1 justify-between">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Submitted</span>
+                            <span className="block font-medium text-slate-700">{formatSubmitted(approval.submittedAt)}</span>
+                          </div>
+                          {(approval.dueDate || approval.transactionSnapshot?.paymentDueDate) && (
+                            <div>
+                              <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">SLA Due</span>
+                              <span className={`block font-bold ${
+                                approval.dueDate && new Date(approval.dueDate) < new Date() ? 'text-rose-600' : 'text-slate-700'
+                              }`}>
+                                {formatSubmitted(approval.dueDate || approval.transactionSnapshot?.paymentDueDate)}
+                              </span>
+                            </div>
+                          )}
                         </div>
                         <Link
                           to={getApprovalDetailUrl(approval)}
-                          className="flex shrink-0 items-center gap-1 text-xs font-bold text-teal-700 hover:text-teal-800 hover:underline"
+                          className="flex shrink-0 items-center gap-1 text-xs font-bold text-teal-700 hover:text-teal-800 hover:underline self-end"
                         >
                           Details <ChevronRight className="h-3.5 w-3.5" />
                         </Link>

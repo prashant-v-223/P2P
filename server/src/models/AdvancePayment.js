@@ -42,7 +42,14 @@ const advancePaymentSchema = new mongoose.Schema({
   assignedApproverRole: { type: String, default: null },
   isDeleted: { type: Boolean, default: false, index: true },
   deletedAt: { type: Date },
-  deletedBy: { type: String }
+  deletedBy: { type: String },
+  // Audit trail: tracks every update with a required remark explaining the change
+  updateHistory: [{
+    updatedBy: { type: String },
+    updatedAt: { type: Date, default: Date.now },
+    updateRemark: { type: String },
+    changedFields: { type: String }
+  }]
 }, { timestamps: true });
 
 export const AdvancePayment = mongoose.models.AdvancePayment || mongoose.model('AdvancePayment', advancePaymentSchema);

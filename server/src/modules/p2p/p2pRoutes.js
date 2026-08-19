@@ -30,6 +30,7 @@ import { isApprovalForRole } from '../approvals/approvals.controller.js';
 import {
   attachApprovers,
   resolveApprovalChain,
+  resolveVendorPurchaseManager,
   FINANCIAL_REVIEW_THRESHOLD,
   STRATEGIC_REVIEW_THRESHOLD,
   detectApprovalConflict,
@@ -327,9 +328,10 @@ function getDefaultWorkflow(moduleType, amount) {
     ]);
   }
 
+  // Invoice Payment → direct to Purchase Manager (no Procurement Head gate)
   if (isInvoice) {
     return buildWorkflowResult({ id: 'WF-BOOTSTRAP-INVOICE', name: 'Invoice Payment Standard Approval', version: 1 }, [
-      { step: 1, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance_lead' }
+      { step: 1, title: 'Purchase Manager Approval', roleName: 'Purchase Manager', roleKey: 'purchase_manager' }
     ]);
   }
 
@@ -339,19 +341,21 @@ function getDefaultWorkflow(moduleType, amount) {
     ]);
   }
 
+  // Advance Payment above ₹1 Cr → purchase_manager → MD → Finance
   if (numAmount >= 10000000) {
     return buildWorkflowResult({ id: 'WF-DEFAULT-HIGH', name: 'Advance Payment (Above ₹1 Cr)' }, [
-      { step: 1, title: 'Procurement Head Approval', roleName: 'Procurement Head', roleKey: 'procurement_head' },
+      { step: 1, title: 'Purchase Manager Approval', roleName: 'Purchase Manager', roleKey: 'purchase_manager' },
       { step: 2, title: 'MD Approval', roleName: 'MD Approval', roleKey: 'md' },
       { step: 3, title: 'Finance Approval', roleName: 'Finance Approval', roleKey: 'finance_lead' }
     ]);
   }
 
-  return buildWorkflowResult({ id: 'WF-DEFAULT-STD', name: 'Advance Payment (Up to ₹1 Cr)' }, [
-    { step: 1, title: 'Procurement Head Approval', roleName: 'Procurement Head', roleKey: 'procurement_head' },
-    { step: 2, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance_lead' }
+  // Standard Advance Payment → direct to Purchase Manager (streamlined, no first approval)
+  return buildWorkflowResult({ id: 'WF-DEFAULT-STD', name: 'Advance Payment (Standard)' }, [
+    { step: 1, title: 'Purchase Manager Approval', roleName: 'Purchase Manager', roleKey: 'purchase_manager' }
   ]);
 }
+
 
 function buildWorkflowResult(wf, rawSteps) {
   const steps = rawSteps.map((s, idx) => {
@@ -405,6 +409,23 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
 
   const numAmount = Number(transactionSnapshot?.amount || 0) || Number(String(amountFormatted).replace(/[^0-9.-]+/g, '')) || 0;
 
+  // ── Vendor-specific manager routing ──────────────────────────────────────────
+  // If the request comes from a vendor, find their linked purchase manager
+  const isVendorRequest = transactionSnapshot?.createdByType === 'vendor' ||
+                          String(requester?.role || '').toLowerCase().includes('vendor');
+  let vendorLinkedManager = null;
+  if (isVendorRequest) {
+    const vendorId = transactionSnapshot?.vendorId || transactionSnapshot?.createdByVendorId;
+    if (vendorId) {
+      vendorLinkedManager = await resolveVendorPurchaseManager(vendorId);
+      if (vendorLinkedManager) {
+        console.log(`[Approval Routing] Vendor ${vendorId} linked to manager: ${vendorLinkedManager.name} (${vendorLinkedManager.role})`);
+      } else {
+        console.log(`[Approval Routing] No linked manager found for vendor ${vendorId} — using pool approval`);
+      }
+    }
+  }
+
   // Get workflow steps
   let rawSteps = (wf && Array.isArray(wf.steps) && wf.steps.length > 0) ? wf.steps : null;
   if (!rawSteps || rawSteps.length === 0) {
@@ -414,6 +435,22 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
 
   // Hydrate steps with approvers - use the improved attachApprovers
   const stepsForWorkflow = await attachApprovers(rawSteps, requester);
+
+  // Override first step assignedApprover if vendor has linked purchase manager
+  if (vendorLinkedManager && stepsForWorkflow.length > 0) {
+    const firstStepRole = String(stepsForWorkflow[0]?.roleKey || '').toLowerCase();
+    if (firstStepRole.includes('purchase_manager') || firstStepRole.includes('procurement_manager') || firstStepRole.includes('manager')) {
+      stepsForWorkflow[0] = {
+        ...stepsForWorkflow[0],
+        assignedApproverId: vendorLinkedManager.id,
+        assignedApproverName: vendorLinkedManager.name,
+        assignedApproverRole: vendorLinkedManager.role,
+        assignedApproverEmail: vendorLinkedManager.email,
+        isPoolApproval: false,
+        resolutionMethod: 'vendor_linked_manager'
+      };
+    }
+  }
 
   // Check for conflicts (requester is also approver)
   const hasConflict = stepsForWorkflow.some(step =>
@@ -1888,12 +1925,28 @@ const updateAdvanceHandler = async (req, res) => {
     if (!['draft', 'returned'].includes(adv.status)) return res.status(409).json({ success: false, error: 'Only a draft or returned advance can be edited.' });
     if (!(await canMutateOwnPayment(req, adv))) return res.status(403).json({ success: false, error: 'Only the requester can edit this advance.' });
 
-    const { amount, paymentMode, bankName, bankAccountNumber, remarks } = req.body;
-    if (amount !== undefined) adv.amount = Number(amount);
-    if (paymentMode !== undefined) adv.paymentMode = paymentMode;
-    if (bankName !== undefined) adv.bankName = bankName;
-    if (bankAccountNumber !== undefined) adv.bankAccountNumber = bankAccountNumber;
-    if (remarks !== undefined) adv.remarks = remarks;
+    const { amount, paymentMode, bankName, bankAccountNumber, remarks, updateRemark } = req.body;
+
+    // Require updateRemark so every change is traceable and transparent
+    if (!String(updateRemark || '').trim()) {
+      return res.status(400).json({ success: false, error: 'An update remark is required to explain what changed and why.' });
+    }
+
+    const changedFields = [];
+    if (amount !== undefined) { adv.amount = Number(amount); changedFields.push(`amount → ${amount}`); }
+    if (paymentMode !== undefined) { adv.paymentMode = paymentMode; changedFields.push(`paymentMode → ${paymentMode}`); }
+    if (bankName !== undefined) { adv.bankName = bankName; changedFields.push('bankName'); }
+    if (bankAccountNumber !== undefined) { adv.bankAccountNumber = bankAccountNumber; changedFields.push('bankAccountNumber'); }
+    if (remarks !== undefined) { adv.remarks = remarks; changedFields.push('remarks'); }
+
+    // Append update to audit history
+    if (!Array.isArray(adv.updateHistory)) adv.updateHistory = [];
+    adv.updateHistory.push({
+      updatedBy: req.user?.name || req.user?.email || 'User',
+      updatedAt: new Date(),
+      updateRemark: String(updateRemark).trim(),
+      changedFields: changedFields.join(', ') || 'no field changes'
+    });
 
     await adv.save();
 
@@ -1909,7 +1962,7 @@ const updateAdvanceHandler = async (req, res) => {
         actorId: req.user?.id || req.user?.email || 'system',
         actorName: req.user?.name || req.user?.email || 'User',
         actorRole: req.user?.role || 'User',
-        remarks: `Advance Payment request details updated (Amount: ${adv.amount}, Mode: ${adv.paymentMode}).`,
+        remarks: `Advance Payment updated. Reason: ${String(updateRemark).trim()}. Changed: ${changedFields.join(', ') || 'none'}.`,
         occurredAt: new Date()
       });
     } catch (_) { }
@@ -1919,6 +1972,7 @@ const updateAdvanceHandler = async (req, res) => {
     return res.status(500).json({ success: false, error: err.message });
   }
 };
+
 
 router.put('/advances/:id', authenticateToken, updateAdvanceHandler);
 router.put('/advance-payments/:id', authenticateToken, updateAdvanceHandler);

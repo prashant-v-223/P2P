@@ -21,8 +21,7 @@ function deriveSteps(approvalDoc) {
 
   if (!dbSteps || dbSteps.length === 0) {
     dbSteps = [
-      { step: 1, title: 'Procurement Manager Verification', roleName: 'Nikunj Bhagat (Finance Lead)', statusKey: 'Pending Procurement Head Approval' },
-      { step: 2, title: 'Finance Head Sign-off',            roleName: 'Prashant V (Finance Head)',    statusKey: 'Pending Finance Approval' }
+      { step: 1, title: 'Purchase Manager Approval', roleName: 'Purchase Manager', statusKey: 'Pending Purchase Manager Approval' }
     ];
   }
 

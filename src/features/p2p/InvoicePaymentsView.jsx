@@ -331,13 +331,16 @@ const getInitials = (name) => {
                 <th className="py-3.5 px-3.5 text-right">NET PAYABLE</th>
                 <th className="py-3.5 px-3.5 text-center">3-WAY MATCH</th>
                 <th className="py-3.5 px-3.5 text-center">STATUS</th>
+                <th className="py-3.5 px-3.5 whitespace-nowrap">SUBMITTED</th>
+                <th className="py-3.5 px-3.5 whitespace-nowrap">PMT DUE</th>
+                <th className="py-3.5 px-3.5 whitespace-nowrap">APPROVAL STAGE</th>
                 <th className="py-3.5 px-3.5 text-right">ACTIONS</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan="12" className="py-16 text-center text-slate-400 font-medium">
+                  <td colSpan="15" className="py-16 text-center text-slate-400 font-medium">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Loader2 className="w-6 h-6 text-[#0d7676] animate-spin" />
                       <p>Loading vendor invoices...</p>
@@ -346,7 +349,7 @@ const getInitials = (name) => {
                 </tr>
               ) : invoices.length === 0 ? (
                 <tr>
-                  <td colSpan="12" className="py-16 text-center text-slate-400 font-medium">
+                  <td colSpan="15" className="py-16 text-center text-slate-400 font-medium">
                     <div className="flex flex-col items-center justify-center gap-1.5">
                       <FileCheck2 className="w-8 h-8 text-slate-300" />
                       <p className="font-semibold text-slate-700">No invoice records found</p>
@@ -369,7 +372,7 @@ const getInitials = (name) => {
                   };
 
                   return (
-                    <tr key={inv.invoicePaymentId} className="hover:bg-slate-50/70 transition-colors text-xs">
+                    <tr key={inv.invoicePaymentId || inv._id || index} className="hover:bg-slate-50/70 transition-colors text-xs">
                       {/* # */}
                       <td className="py-3 px-2 text-center text-slate-400 font-semibold tabular-nums">
                         {(currentPage - 1) * pageSize + index + 1}
@@ -381,19 +384,13 @@ const getInitials = (name) => {
                           to={`/admin/invoice-payments/${inv.invoicePaymentId}`}
                           className="hover:text-teal-700 transition-colors"
                         >
-                          {inv.invoicePaymentId || `INV-${index + 1}`}
+                          {inv.invoicePaymentId}
                         </Link>
                       </td>
 
                       {/* ASN */}
-                      <td className="py-3 px-2.5 font-mono text-slate-400 whitespace-nowrap">
-                        {inv.asnNumber ? (
-                          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200 text-[10px] font-bold">
-                            {inv.asnNumber}
-                          </span>
-                        ) : (
-                          <span className="text-slate-300 text-center block">—</span>
-                        )}
+                      <td className="py-3 px-2.5 font-mono text-slate-500 whitespace-nowrap">
+                        {inv.asnNumber || '—'}
                       </td>
 
                       {/* PO NUMBER */}
@@ -450,6 +447,33 @@ const getInitials = (name) => {
                         <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${statusPills[inv.status] || statusPills.draft}`}>
                           {inv.status}
                         </span>
+                      </td>
+
+                      {/* SUBMITTED */}
+                      <td className="py-3 px-3.5 whitespace-nowrap text-slate-500">
+                        {inv.createdAt
+                          ? new Date(inv.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                          : '—'}
+                      </td>
+
+                      {/* PMT DUE */}
+                      <td className="py-3 px-3.5 whitespace-nowrap text-slate-500">
+                        {inv.paymentDueDate
+                          ? new Date(inv.paymentDueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                          : '—'}
+                      </td>
+
+                      {/* APPROVAL STAGE */}
+                      <td className="py-3 px-3.5 whitespace-nowrap">
+                        {inv.assignedApproverRole || inv.assignedApproverName ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">
+                            {inv.assignedApproverRole || 'Purchase Manager'}
+                          </span>
+                        ) : inv.status === 'pending' ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">
+                            Purchase Manager
+                          </span>
+                        ) : '—'}
                       </td>
 
                       {/* ACTIONS */}

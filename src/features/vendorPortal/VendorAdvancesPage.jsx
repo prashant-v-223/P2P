@@ -165,8 +165,10 @@ export default function VendorAdvancesPage() {
                   <tr>
                     <th className="p-4">Request ID</th>
                     <th className="p-4">PO Number</th>
-                    <th className="p-4">Requested Date</th>
+                    <th className="p-4">Submitted Date</th>
                     <th className="p-4">Amount</th>
+                    <th className="p-4">Due Date</th>
+                    <th className="p-4">Approval Stage</th>
                     <th className="p-4">Status</th>
                   </tr>
                 </thead>
@@ -175,12 +177,31 @@ export default function VendorAdvancesPage() {
                     <tr key={adv.id} className="hover:bg-slate-50/70">
                       <td className="p-4 font-bold text-slate-900">{adv.id}</td>
                       <td className="p-4 text-slate-800">{adv.poNumber}</td>
-                      <td className="p-4 text-slate-500">{adv.requestedDate}</td>
+                      <td className="p-4 text-slate-500">{adv.requestedDate || adv.createdAt || '—'}</td>
                       <td className="p-4 font-bold text-slate-900">
                         {formatCurrency(adv.amount, adv.currency)}
                       </td>
+                      <td className="p-4 text-slate-500">
+                        {adv.requestedDate ? (() => {
+                          try {
+                            const d = new Date(adv.requestedDate);
+                            if (isNaN(d.getTime())) return '—';
+                            d.setDate(d.getDate() + 2);
+                            return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+                          } catch { return '—'; }
+                        })() : '—'}
+                      </td>
                       <td className="p-4">
-                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800">
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                          {adv.status === 'In Progress' || adv.status === 'Pending' ? 'Purchase Manager' : adv.status === 'Approved' ? 'Approved' : '—'}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                          adv.status === 'Approved' ? 'bg-emerald-100 text-emerald-800' :
+                          adv.status === 'Paid' ? 'bg-blue-100 text-blue-800' :
+                          'bg-teal-100 text-teal-800'
+                        }`}>
                           {adv.status}
                         </span>
                       </td>

@@ -114,7 +114,12 @@ console.log("canMarkPaid",canMarkPaid);
             }[item.status?.toLowerCase()] || item.status || 'Draft',
             submittedDate: item.createdAt
               ? new Date(item.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-              : '—'
+              : '—',
+            dueDate: item.dueDate || item.approvalDueDate
+              ? new Date(item.dueDate || item.approvalDueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+              : '—',
+            approvalStage: item.assignedApproverRole || item.assignedApproverName ||
+              (item.status === 'pending' ? 'Purchase Manager' : '')
           }));
 
           setAdvances(mapped);
@@ -307,13 +312,15 @@ console.log("canMarkPaid",canMarkPaid);
                 <th className="py-3.5 px-4 text-center">MODE</th>
                 <th className="py-3.5 px-4 text-center">STATUS</th>
                 <th className="py-3.5 px-4 text-center">SUBMITTED</th>
+                <th className="py-3.5 px-4 text-center whitespace-nowrap">DUE DATE</th>
+                <th className="py-3.5 px-4 text-center whitespace-nowrap">APPROVAL STAGE</th>
                 <th className="py-3.5 px-4 text-right">ACTIONS</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan="12" className="py-16 text-center text-slate-400 font-medium">
+                  <td colSpan="14" className="py-16 text-center text-slate-400 font-medium">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Loader2 className="w-6 h-6 text-[#0d7676] animate-spin" />
                       <p>Loading advance payments...</p>
@@ -322,7 +329,7 @@ console.log("canMarkPaid",canMarkPaid);
                 </tr>
               ) : advances.length === 0 ? (
                 <tr>
-                  <td colSpan="12" className="py-16 text-center text-slate-400 font-medium">
+                  <td colSpan="14" className="py-16 text-center text-slate-400 font-medium">
                     <div className="flex flex-col items-center justify-center gap-1.5">
                       <Wallet className="w-8 h-8 text-slate-300" />
                       <p className="font-semibold text-slate-700">No advance payment records found</p>
@@ -400,6 +407,18 @@ console.log("canMarkPaid",canMarkPaid);
 
                       <td className="py-3.5 px-4 text-center text-slate-500 font-mono text-[11px]">
                         {adv.submittedDate}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-center text-slate-500 font-mono text-[11px]">
+                        {adv.dueDate}
+                      </td>
+
+                      <td className="py-3.5 px-4 text-center">
+                        {adv.approvalStage ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">
+                            {adv.approvalStage}
+                          </span>
+                        ) : '—'}
                       </td>
 
                       <td className="py-3.5 px-4 text-right">

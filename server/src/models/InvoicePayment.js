@@ -54,7 +54,14 @@ const invoicePaymentSchema = new mongoose.Schema({
   requestedByTeam:    { type: String, default: null, index: true },
   assignedApprover:   { type: String, default: null, index: true },
   assignedApproverName: { type: String, default: null },
-  assignedApproverRole: { type: String, default: null }
+  assignedApproverRole: { type: String, default: null },
+  // Audit trail: tracks every update with a required remark explaining the change
+  updateHistory: [{
+    updatedBy: { type: String },
+    updatedAt: { type: Date, default: Date.now },
+    updateRemark: { type: String },
+    changedFields: { type: String }
+  }]
 }, { timestamps: true });
 
 export const InvoicePayment = mongoose.models.InvoicePayment || mongoose.model('InvoicePayment', invoicePaymentSchema);
