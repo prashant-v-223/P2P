@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useSelector } from 'react-redux';
 import { Upload, X, FileText, Loader2, Download, Trash2 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../ui/toast';
@@ -12,12 +13,26 @@ export default function DocumentUploader({
   onUploadComplete,
   onDocumentsChange,
   multiple = false,
-  existingDocuments = []
+  existingDocuments = [],
+  readOnly = false
 }) {
   const { showToast } = useToast();
+  const { user } = useSelector((s) => s.auth || {});
   const [uploading, setUploading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [documents, setDocuments] = useState(existingDocuments);
+
+  const canDeleteDoc = (doc) => {
+    if (readOnly) return false;
+    if (!user) return true;
+    const isUploader = (
+      user.id === doc.uploadedBy ||
+      user.email === doc.uploadedBy ||
+      user.name === doc.uploadedBy
+    );
+    const isAdmin = ['Admin', 'Super Admin', 'admin'].includes(user?.role);
+    return isUploader || isAdmin;
+  };
 
   const handleFileSelect = (e) => {
     const files = Array.from(e.target.files || []);
@@ -129,6 +144,7 @@ export default function DocumentUploader({
   };
 
   const handleDelete = async (doc) => {
+    if (readOnly) return;
     if (!window.confirm(`Delete ${doc.fileName}?`)) return;
 
     try {
@@ -160,75 +176,77 @@ export default function DocumentUploader({
 
   return (
     <div className="space-y-4">
-      {/* Upload Section */}
-      <div className="rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 p-6">
-        <div className="flex flex-col items-center gap-4">
-          <Upload className="h-10 w-10 text-slate-400" />
-          
-          <div className="text-center">
-            <p className="text-sm font-bold text-slate-700">
-              {multiple ? 'Upload Multiple Documents' : 'Upload Document'}
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              PDF, DOC, DOCX, XLS, XLSX, JPG, PNG (Max 25 MB each)
-            </p>
-          </div>
-
-          <input
-            type="file"
-            id="file-upload"
-            multiple={multiple}
-            accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.csv,.zip"
-            onChange={handleFileSelect}
-            className="hidden"
-          />
-
-          <label
-            htmlFor="file-upload"
-            className="cursor-pointer rounded-lg border border-[#0d7676] bg-white px-4 py-2 text-xs font-bold text-[#0d7676] transition hover:bg-[#0d7676] hover:text-white"
-          >
-            Choose {multiple ? 'Files' : 'File'}
-          </label>
-
-          {selectedFiles.length > 0 && (
-            <div className="w-full space-y-2">
-              {selectedFiles.map((file, idx) => (
-                <div key={idx} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-slate-400" />
-                    <span className="text-xs font-medium text-slate-700">{file.name}</span>
-                    <span className="text-xs text-slate-400">({formatFileSize(file.size)})</span>
-                  </div>
-                  <button
-                    onClick={() => setSelectedFiles(files => files.filter((_, i) => i !== idx))}
-                    className="text-slate-400 hover:text-rose-600"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
-
-              <button
-                onClick={handleUpload}
-                disabled={uploading}
-                className="w-full rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#0f766e] disabled:opacity-50"
-              >
-                {uploading ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Uploading...
-                  </span>
-                ) : (
-                  `Upload ${selectedFiles.length} File${selectedFiles.length > 1 ? 's' : ''}`
-                )}
-              </button>
+      {/* Upload Section (Hidden in readOnly view mode) */}
+      {!readOnly && (
+        <div className="rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 p-6">
+          <div className="flex flex-col items-center gap-4">
+            <Upload className="h-10 w-10 text-slate-400" />
+            
+            <div className="text-center">
+              <p className="text-sm font-bold text-slate-700">
+                {multiple ? 'Upload Multiple Documents' : 'Upload Document'}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                PDF, DOC, DOCX, XLS, XLSX, JPG, PNG (Max 25 MB each)
+              </p>
             </div>
-          )}
+
+            <input
+              type="file"
+              id="file-upload"
+              multiple={multiple}
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.csv,.zip"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+
+            <label
+              htmlFor="file-upload"
+              className="cursor-pointer rounded-lg border border-[#0d7676] bg-white px-4 py-2 text-xs font-bold text-[#0d7676] transition hover:bg-[#0d7676] hover:text-white"
+            >
+              Choose {multiple ? 'Files' : 'File'}
+            </label>
+
+            {selectedFiles.length > 0 && (
+              <div className="w-full space-y-2">
+                {selectedFiles.map((file, idx) => (
+                  <div key={idx} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-slate-400" />
+                      <span className="text-xs font-medium text-slate-700">{file.name}</span>
+                      <span className="text-xs text-slate-400">({formatFileSize(file.size)})</span>
+                    </div>
+                    <button
+                      onClick={() => setSelectedFiles(files => files.filter((_, i) => i !== idx))}
+                      className="text-slate-400 hover:text-rose-600"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+
+                <button
+                  onClick={handleUpload}
+                  disabled={uploading}
+                  className="w-full rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#0f766e] disabled:opacity-50"
+                >
+                  {uploading ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Uploading...
+                    </span>
+                  ) : (
+                    `Upload ${selectedFiles.length} File${selectedFiles.length > 1 ? 's' : ''}`
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Documents List */}
-      {documents.length > 0 && (
+      {documents.length > 0 ? (
         <div className="space-y-2">
           <h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">Uploaded Documents</h4>
           <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
@@ -248,22 +266,27 @@ export default function DocumentUploader({
                   <button
                     onClick={() => handleDownload(doc)}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-[#0d7676] bg-white px-3 py-1.5 text-xs font-bold text-[#0d7676] transition hover:bg-[#0d7676] hover:text-white cursor-pointer"
-                    title="Download file from AWS S3"
+                    title="Download / View document"
                   >
                     <Download className="h-3.5 w-3.5" />
                     <span>Download</span>
                   </button>
-                  <button
-                    onClick={() => handleDelete(doc)}
-                    className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-bold text-rose-600 transition hover:bg-rose-50"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  {!readOnly && canDeleteDoc(doc) && (
+                    <button
+                      onClick={() => handleDelete(doc)}
+                      className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-bold text-rose-600 transition hover:bg-rose-50 cursor-pointer"
+                      title="Delete uploaded document"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
           </div>
         </div>
+      ) : readOnly && (
+        <p className="text-xs text-slate-400 font-medium italic">No supporting documents uploaded.</p>
       )}
     </div>
   );

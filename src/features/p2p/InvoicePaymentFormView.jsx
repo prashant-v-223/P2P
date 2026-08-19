@@ -13,11 +13,24 @@ import {
   ChevronDown,
   Building2,
   DollarSign,
-  Globe
+  Globe,
+  Lock
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import FileUploadZone from '../../components/shared/FileUploadZone';
+
+const parseDaysFromPaymentTerms = (termsStr, fallbackDays = 30) => {
+  if (!termsStr) return fallbackDays;
+  const str = String(termsStr).trim();
+  const match = str.match(/\d+/);
+  if (match) {
+    const parsed = parseInt(match[0], 10);
+    if (!isNaN(parsed) && parsed >= 0) return parsed;
+  }
+  if (str.toLowerCase().includes('immediate')) return 0;
+  return fallbackDays;
+};
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { CustomInput } from '../../components/ui/custom-input';
 
@@ -27,10 +40,16 @@ const generateUniqueInvoiceNumber = () => {
   return `INV-${year}-${rand}`;
 };
 
-const generateASNNumber = () => {
+const fetchNextASN = async (vendorId = '') => {
+  try {
+    const res = await apiFetch(`/api/p2p/invoices/next-asn${vendorId ? `?vendorId=${encodeURIComponent(vendorId)}` : ''}`);
+    const json = await res.json();
+    if (json.success && json.data?.asnNumber) {
+      return json.data.asnNumber;
+    }
+  } catch (_) {}
   const year = new Date().getFullYear();
-  const rand = Math.floor(10000 + Math.random() * 90000);
-  return `ASN-${year}-${rand}`;
+  return `ASN-${year}-001`;
 };
 
 export default function InvoicePaymentFormView() {
@@ -53,15 +72,46 @@ export default function InvoicePaymentFormView() {
   // Form Fields
   const [poNumber, setPoNumber] = useState('');
   const [selectedPoObj, setSelectedPoObj] = useState(null);
-  const [invoiceNumber, setInvoiceNumber] = useState(generateUniqueInvoiceNumber());
+  const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [duplicateError, setDuplicateError] = useState('');
+  const [checkingUnique, setCheckingUnique] = useState(false);
   const [asnNumber, setAsnNumber] = useState('');
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [blNumber, setBlNumber] = useState('');
+  const [blDate, setBlDate] = useState('');
+  const [invoiceDate, setInvoiceDate] = useState('');
   const [currency, setCurrency] = useState('INR');
   const [dueDays, setDueDays] = useState(30);
   const [invoiceAmount, setInvoiceAmount] = useState('');
   const [grnNo, setGrnNo] = useState('');
   const [remarks, setRemarks] = useState('');
   const [fxRates, setFxRates] = useState({ USD: 83.5, EUR: 90.0, GBP: 105.0, INR: 1 });
+
+  // Live Invoice Number Uniqueness Validation
+  useEffect(() => {
+    const invNo = invoiceNumber.trim();
+    if (!invNo || invNo.length < 3) {
+      setDuplicateError('');
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        setCheckingUnique(true);
+        const queryId = id ? `&currentId=${encodeURIComponent(id)}` : '';
+        const res = await apiFetch(`/api/p2p/invoices/check-unique?invoiceNumber=${encodeURIComponent(invNo)}${queryId}`);
+        const data = await res.json();
+        if (res.ok && !data.unique) {
+          setDuplicateError(data.error || `Invoice Number "${invNo}" already exists in the system.`);
+        } else {
+          setDuplicateError('');
+        }
+      } catch (err) {
+        setDuplicateError('');
+      } finally {
+        setCheckingUnique(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [invoiceNumber, id]);
 
   useEffect(() => {
     apiFetch('/api/exchange-rates')
@@ -80,18 +130,77 @@ export default function InvoicePaymentFormView() {
 
   // GST, TDS & Adjustments
   const [invoiceType, setInvoiceType] = useState('With GST');
+  const [gstSubtype, setGstSubtype] = useState('intra'); // 'intra' (CGST+SGST) | 'inter' (IGST)
   const [cgstAmount, setCgstAmount] = useState('0');
   const [sgstAmount, setSgstAmount] = useState('0');
   const [igstAmount, setIgstAmount] = useState('0');
   const [tdsPercentage, setTdsPercentage] = useState('0%');
   const [advanceAdjust, setAdvanceAdjust] = useState('');
+  const [invoiceQuantity, setInvoiceQuantity] = useState('');
+
+  // Financial Auto-Calculations
+  const invoiceAmountNum = Number(invoiceAmount) || 0;
+  const cgstNum = invoiceType === 'With GST' && gstSubtype === 'intra' ? (Number(cgstAmount) || 0) : 0;
+  const sgstNum = invoiceType === 'With GST' && gstSubtype === 'intra' ? (Number(sgstAmount) || 0) : 0;
+  const igstNum = invoiceType === 'With GST' && gstSubtype === 'inter' ? (Number(igstAmount) || 0) : 0;
+  const totalGst = cgstNum + sgstNum + igstNum;
+  const grossTotal = invoiceAmountNum + totalGst;
+  const tdsPctNum = parseFloat(tdsPercentage) || 0;
+  const tdsDeduction = (invoiceAmountNum * tdsPctNum) / 100;
+  const advanceAdjNum = Number(advanceAdjust) || 0;
+  const netPayable = Math.max(0, grossTotal - tdsDeduction - advanceAdjNum);
+
+  // Helper function to auto-compute GST based on standard percentage presets
+  const applyGstPresetRate = (ratePercent) => {
+    if (!invoiceAmountNum || invoiceAmountNum <= 0) {
+      showToast({ title: 'Enter Base Amount', description: 'Please enter invoice base amount first.', type: 'info' });
+      return;
+    }
+    const totalTax = (invoiceAmountNum * ratePercent) / 100;
+    if (gstSubtype === 'intra') {
+      const half = (totalTax / 2).toFixed(2);
+      setCgstAmount(half);
+      setSgstAmount(half);
+      setIgstAmount('0');
+    } else {
+      setIgstAmount(totalTax.toFixed(2));
+      setCgstAmount('0');
+      setSgstAmount('0');
+    }
+    showToast({
+      title: `${ratePercent}% GST Applied`,
+      description: `Calculated ${gstSubtype === 'intra' ? 'CGST & SGST' : 'IGST'} on ${currency} ${invoiceAmountNum.toLocaleString('en-IN')}`,
+      type: 'success'
+    });
+  };
+
+  const handleGstSubtypeChange = (targetSubtype) => {
+    if (targetSubtype === gstSubtype) return;
+
+    if (targetSubtype === 'inter') {
+      const intraTotal = (Number(cgstAmount) || 0) + (Number(sgstAmount) || 0);
+      if (intraTotal > 0) {
+        setIgstAmount(intraTotal.toFixed(2));
+      }
+      setGstSubtype('inter');
+    } else {
+      const currentIgst = Number(igstAmount) || 0;
+      if (currentIgst > 0) {
+        const half = (currentIgst / 2).toFixed(2);
+        setCgstAmount(half);
+        setSgstAmount(half);
+      }
+      setGstSubtype('intra');
+    }
+  };
 
   // Upload - Changed from single file to multiple documents
   const [sendApprovalTo, setSendApprovalTo] = useState('');
   const [documents, setDocuments] = useState([]);
 
   const calculateDueDate = () => {
-    const d = new Date(invoiceDate || Date.now());
+    if (!invoiceDate) return 'Select Supplier Invoice Date';
+    const d = new Date(`${invoiceDate}T00:00:00`);
     d.setDate(d.getDate() + Number(dueDays || 30));
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   };
@@ -132,13 +241,28 @@ export default function InvoicePaymentFormView() {
             const pId = inv.poId || inv.sapPoNumber || '';
             setPoNumber(pId);
             setInvoiceNumber(inv.invoiceNumber || '');
-            setAsnNumber(inv.asnNumber || generateASNNumber());
+            setAsnNumber(inv.asnNumber || '');
+            setBlNumber(inv.blNumber || '');
+            setBlDate(inv.blDate ? new Date(inv.blDate).toISOString().split('T')[0] : '');
             setInvoiceDate(inv.invoiceDate ? new Date(inv.invoiceDate).toISOString().split('T')[0] : '');
             setInvoiceAmount(inv.grossAmount || '');
             setGrnNo(inv.grnNumber || '');
-            setCgstAmount(inv.cgstAmount || '0');
-            setSgstAmount(inv.sgstAmount || '0');
-            setIgstAmount(inv.igstAmount || '0');
+            setCgstAmount(inv.cgstAmount != null ? String(inv.cgstAmount) : '0');
+            setSgstAmount(inv.sgstAmount != null ? String(inv.sgstAmount) : '0');
+            setIgstAmount(inv.igstAmount != null ? String(inv.igstAmount) : '0');
+            if (inv.invoiceType) {
+              setInvoiceType(inv.invoiceType);
+            } else if ((Number(inv.cgstAmount) || Number(inv.sgstAmount) || Number(inv.igstAmount) || Number(inv.gstAmount)) > 0) {
+              setInvoiceType('With GST');
+            }
+            if (inv.gstSubtype) {
+              setGstSubtype(inv.gstSubtype);
+            } else if (inv.igstAmount && Number(inv.igstAmount) > 0) {
+              setGstSubtype('inter');
+            } else {
+              setGstSubtype('intra');
+            }
+            if (inv.threeWayMatch?.invoiceQuantity) setInvoiceQuantity(String(inv.threeWayMatch.invoiceQuantity));
             setTdsPercentage(`${inv.tdsPercentage || 0}%`);
             setAdvanceAdjust(inv.advanceAdjusted || '0');
             setSendApprovalTo(inv.approvalTo || '');
@@ -154,8 +278,15 @@ export default function InvoicePaymentFormView() {
     if (!po) return;
     setSelectedPoObj(po);
     if (po.currency) setCurrency(po.currency);
-    if (String(po.vendorType || '').toLowerCase().includes('import') && !asnNumber) {
+    const terms = po.paymentTerms || po.creditDays;
+    if (terms) {
+      setDueDays(parseDaysFromPaymentTerms(terms, 30));
+    }
+    const isImport = String(po.vendorType || '').toLowerCase().includes('import');
+    if (isImport && !asnNumber) {
       setAsnNumber(generateASNNumber());
+    } else if (!isImport) {
+      setAsnNumber('');
     }
   }, [poNumber, purchaseOrders, selectedPoObj, asnNumber]);
 
@@ -186,11 +317,18 @@ export default function InvoicePaymentFormView() {
     setErrorMsg('');
 
     if (po.currency) setCurrency(po.currency);
-    if (!invoiceAmount) setInvoiceAmount(po.remainingInvoiceAmount ?? po.totalAmount ?? '');
-    if (po.paymentTerms) {
-      const match = String(po.paymentTerms).match(/\d+/);
-      if (match) setDueDays(Number(match[0]));
+    const terms = po.paymentTerms || po.creditDays;
+    if (terms) {
+      const parsedDays = parseDaysFromPaymentTerms(terms, 30);
+      setDueDays(parsedDays);
     }
+    const isImport = String(po.vendorType || '').toLowerCase().includes('import');
+    if (isImport && !asnNumber) {
+      fetchNextASN(po.supplierId || po.vendorId).then((nextAsn) => setAsnNumber(nextAsn));
+    } else if (!isImport) {
+      setAsnNumber('');
+    }
+    if (!invoiceAmount) setInvoiceAmount(po.remainingInvoiceAmount ?? po.totalAmount ?? '');
   };
 
   const handleFilesSelected = (newFiles) => {
@@ -212,9 +350,14 @@ export default function InvoicePaymentFormView() {
       return;
     }
     if (!invoiceNumber.trim()) {
-      const msg = 'Invoice Number is required.';
+      const msg = 'Invoice Number is required. Enter vendor invoice number to continue.';
       setErrorMsg(msg);
       showToast({ title: 'Invoice Number Required', description: msg, type: 'error' });
+      return;
+    }
+    if (duplicateError) {
+      setErrorMsg(duplicateError);
+      showToast({ title: 'Duplicate Invoice Number', description: duplicateError, type: 'error' });
       return;
     }
     if (!invoiceDate) {
@@ -282,12 +425,19 @@ export default function InvoicePaymentFormView() {
         grossAmount: Number(invoiceAmount) || 0,
         currency,
         fxRate: activeFxRate,
+        invoiceQuantity: Number(invoiceQuantity) || undefined,
         grnQuantity: 0,
-        gstAmount: (Number(cgstAmount) || 0) + (Number(sgstAmount) || 0) + (Number(igstAmount) || 0),
-        tdsAmount: ((Number(invoiceAmount) || 0) * numTdsPct) / 100,
-        tdsPercentage: numTdsPct,
-        advanceAdjusted: Number(advanceAdjust) || 0,
-        grnNumber: '',
+        invoiceType,
+        gstSubtype,
+        cgstAmount: cgstNum.toString(),
+        sgstAmount: sgstNum.toString(),
+        igstAmount: igstNum.toString(),
+        gstAmount: totalGst,
+        tdsAmount: tdsDeduction,
+        tdsPercentage: tdsPctNum,
+        advanceAdjusted: advanceAdjNum,
+        netPayable,
+        grnNumber: grnNo || '',
         remarks: remarks.trim(),
         approvalTo: sendApprovalTo,
         vendorType: selectedPoObj?.vendorType || ''
@@ -372,13 +522,13 @@ export default function InvoicePaymentFormView() {
 
   // Vendor type is resolved from the selected PO's supplier record.
   const isImportVendor = String(selectedPoObj?.vendorType || '').toLowerCase().includes('import');
-  const shouldShowAsn = isImportVendor || (isEditMode && Boolean(asnNumber));
+  const shouldShowAsn = isImportVendor;
 
   return (
     <div className="w-full space-y-3 font-sans pb-10 text-left">
       <form onSubmit={handleSubmit} noValidate className="space-y-3 w-full">
-        {/* ─── STICKY HEADER BAR ─── */}
-        <div className="bg-white px-4 py-3 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between flex-wrap gap-2 sticky top-0 z-20">
+        {/* ─── HEADER BAR ─── */}
+        <div className="bg-white px-4 py-3 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2.5">
             <Link to="/admin/invoice-payments" className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition-colors">
               <ChevronLeft className="w-4 h-4" />
@@ -589,25 +739,29 @@ export default function InvoicePaymentFormView() {
                 <label className="block text-xs font-semibold text-slate-700">
                   Invoice Number <span className="text-rose-500">*</span>
                 </label>
-                <button
-                  type="button"
-                  onClick={() => setInvoiceNumber(generateUniqueInvoiceNumber())}
-                  className="text-[10px] font-bold text-[#0d7676] hover:underline cursor-pointer"
-                >
-                  ⚡ Auto-Generate
-                </button>
               </div>
               <CustomInput
                 type="text"
                 value={invoiceNumber}
                 onChange={(e) => {
                   setInvoiceNumber(e.target.value);
+                  setDuplicateError('');
                   setErrorMsg('');
                 }}
-                placeholder="e.g. INV-2026-891204"
+                placeholder="Enter vendor invoice number (e.g. INV/2026/001)"
                 size="md"
-                inputClassName="font-mono font-bold"
+                inputClassName={`font-mono font-bold ${duplicateError ? 'border-rose-400 focus:ring-rose-500' : ''}`}
               />
+              {checkingUnique && (
+                <p className="text-[10px] text-teal-600 font-medium flex items-center gap-1 mt-0.5">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Checking invoice number uniqueness...
+                </p>
+              )}
+              {duplicateError && (
+                <p className="text-[11px] text-rose-600 font-bold mt-0.5">
+                  ❌ {duplicateError}
+                </p>
+              )}
             </div>
 
             {/* ASN Number - Import vendor POs only */}
@@ -620,7 +774,10 @@ export default function InvoicePaymentFormView() {
                   </label>
                   <button
                     type="button"
-                    onClick={() => setAsnNumber(generateASNNumber())}
+                    onClick={async () => {
+                      const nextAsn = await fetchNextASN(selectedPoObj?.supplierId || selectedPoObj?.vendorId);
+                      setAsnNumber(nextAsn);
+                    }}
                     className="text-[10px] font-bold text-[#0d7676] hover:underline cursor-pointer"
                   >
                     ⚡ Regenerate
@@ -630,12 +787,39 @@ export default function InvoicePaymentFormView() {
                   type="text"
                   value={asnNumber}
                   onChange={(e) => setAsnNumber(e.target.value)}
-                  placeholder="e.g. ASN-2026-48291"
+                  placeholder="e.g. ASN-2026-001"
                   className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
                 />
                 <p className="text-[10px] text-slate-500 font-medium">Advance Shipment Notice for this Import vendor PO</p>
               </div>
             )}
+
+            {/* BL Number & BL Date */}
+            {/* <div className="space-y-1">
+              <label className="block text-xs font-semibold text-slate-700">
+                BL Number (Bill of Lading Number)
+              </label>
+              <CustomInput
+                type="text"
+                value={blNumber}
+                onChange={(e) => setBlNumber(e.target.value)}
+                placeholder="e.g. BL-2026-9901"
+                size="md"
+                inputClassName="font-mono font-bold"
+              />
+            </div> */}
+
+            <div className="space-y-1">
+              <label className="block text-xs font-semibold text-slate-700">
+                BL Date (Bill of Lading Date)
+              </label>
+              <CustomInput
+                type="date"
+                value={blDate}
+                onChange={(e) => setBlDate(e.target.value)}
+                size="md"
+              />
+            </div>
 
             {/* Invoice Date */}
             <div className="space-y-1">
@@ -687,17 +871,26 @@ export default function InvoicePaymentFormView() {
               </p>
             </div>
 
-            {/* Net Days */}
+            {/* Net Days (Locked by Payment Terms) */}
             <div className="space-y-1">
-              <label className="block text-xs font-semibold text-slate-700">
-                Net Days <span className="text-rose-500">*</span>
-              </label>
-              <CustomInput
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Payment Credit Days (Net Days) <span className="text-rose-500">*</span>
+                </label>
+                <span className="text-[10px] text-slate-400 font-bold flex items-center gap-1">
+                  <Lock className="w-3 h-3 text-slate-400" /> Locked
+                </span>
+              </div>
+              <input
                 type="number"
                 value={dueDays}
-                onChange={(e) => setDueDays(e.target.value)}
-                size="md"
+                readOnly
+                aria-readonly="true"
+                className="w-full px-3 py-2 bg-slate-100/90 border border-slate-200 rounded-xl text-slate-700 text-xs font-bold font-mono cursor-not-allowed select-none"
               />
+              <p className="text-[10px] text-slate-400 font-medium">
+                Auto-set to {dueDays} days according to Payment Terms ({selectedPoObj?.paymentTerms || 'Standard Terms'}).
+              </p>
             </div>
 
             {/* Invoice Amount */}
@@ -730,6 +923,27 @@ export default function InvoicePaymentFormView() {
               )}
             </div>
 
+            {/* Delivered Quantity */}
+            <div className="space-y-1">
+              <label className="block text-xs font-semibold text-slate-700">
+                Delivered Quantity {Number(selectedPoObj?.totalQuantity) > 0 && <span className="text-rose-500">*</span>}
+              </label>
+              <CustomInput
+                type="number"
+                min="0.01"
+                step="0.01"
+                max={Number(selectedPoObj?.remainingQuantity) > 0 ? selectedPoObj.remainingQuantity : undefined}
+                value={invoiceQuantity}
+                onChange={(e) => { setInvoiceQuantity(e.target.value); setErrorMsg(''); }}
+                placeholder="Enter quantity delivered"
+                disabled={!selectedPoObj}
+                size="md"
+              />
+              {Number(selectedPoObj?.totalQuantity) > 0 && (
+                <p className="text-[10px] font-semibold text-slate-500">Remaining PO quantity: {selectedPoObj.remainingQuantity} units</p>
+              )}
+            </div>
+
             {/* Remarks */}
             <div className="space-y-1 md:col-span-2">
               <label className="block text-xs font-semibold text-slate-700">Remarks</label>
@@ -746,80 +960,143 @@ export default function InvoicePaymentFormView() {
 
         {/* Section 3: GST, TDS & ADJUSTMENTS */}
         <div className="bg-white rounded-xl p-3.5 border border-slate-200 shadow-2xs space-y-3 w-full">
-          <h2 className="text-[11px] font-bold text-slate-800 uppercase tracking-wider border-b border-slate-100 pb-1.5">
-            GST, TDS & ADJUSTMENTS
-          </h2>
+          <div className="flex items-center justify-between border-b border-slate-100 pb-1.5 flex-wrap gap-2">
+            <h2 className="text-[11px] font-bold text-slate-800 uppercase tracking-wider">
+              TAXES, TDS & ADVANCE ADJUSTMENT
+            </h2>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            {/* Quick GST Preset Buttons */}
+            {invoiceType === 'With GST' && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase hidden sm:inline">Quick GST Rate:</span>
+                {[5, 12, 18, 28].map((rate) => (
+                  <button
+                    key={rate}
+                    type="button"
+                    onClick={() => applyGstPresetRate(rate)}
+                    className="px-2 py-0.5 rounded-md border border-teal-200 bg-teal-50 hover:bg-teal-100 text-[#0d7676] text-[10px] font-bold transition-colors cursor-pointer"
+                  >
+                    {rate}%
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* Invoice Tax Category */}
             <div className="space-y-1">
               <label className="block text-xs font-semibold text-slate-700">
-                Invoice Type <span className="text-rose-500">*</span>
+                Invoice Tax Category <span className="text-rose-500">*</span>
               </label>
               <SearchableSelect
                 options={[
-                  { label: 'With GST', value: 'With GST' },
-                  { label: 'Without GST', value: 'Without GST' },
-                  { label: 'SEZ Export', value: 'SEZ Export' }
+                  { label: 'With GST (Taxable Purchase)', value: 'With GST' },
+                  { label: 'Without GST (Exempt / Non-Taxable)', value: 'Without GST' },
+                  { label: 'SEZ Export (Zero-Rated Tax)', value: 'SEZ Export' }
                 ]}
                 value={invoiceType}
-                onChange={(val) => setInvoiceType(val)}
+                onChange={(val) => {
+                  setInvoiceType(val);
+                  if (val !== 'With GST') {
+                    setCgstAmount('0');
+                    setSgstAmount('0');
+                    setIgstAmount('0');
+                  }
+                }}
                 size="md"
                 searchable={false}
               />
             </div>
 
-            <div className="space-y-1">
-              <label className="block text-xs font-semibold text-slate-700">
-                CGST Amount <span className="text-rose-500">*</span>
-              </label>
-              <CustomInput
-                type="number"
-                step="0.01"
-                value={cgstAmount}
-                onChange={(e) => setCgstAmount(e.target.value)}
-                size="md"
-                inputClassName="font-mono"
-              />
-            </div>
+            {/* GST Subtype Toggle (Intra vs Inter state) */}
+            {invoiceType === 'With GST' ? (
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-slate-700">
+                  GST Supply Type <span className="text-rose-500">*</span>
+                </label>
+                <div className="flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-200 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => handleGstSubtypeChange('intra')}
+                    className={`flex-1 py-1.5 rounded-md font-bold text-center transition-all ${
+                      gstSubtype === 'intra' ? 'bg-white text-[#0d7676] shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    Intra-State (CGST + SGST)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleGstSubtypeChange('inter')}
+                    className={`flex-1 py-1.5 rounded-md font-bold text-center transition-all ${
+                      gstSubtype === 'inter' ? 'bg-white text-[#0d7676] shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    Inter-State (IGST)
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="md:col-span-2 p-2 bg-slate-50 border border-slate-200/80 rounded-lg text-slate-500 text-xs font-medium flex items-center gap-2">
+                <span>Exempt / Non-Taxable invoice selected. GST calculation disabled.</span>
+              </div>
+            )}
 
-            <div className="space-y-1">
-              <label className="block text-xs font-semibold text-slate-700">
-                SGST Amount <span className="text-rose-500">*</span>
-              </label>
-              <CustomInput
-                type="number"
-                step="0.01"
-                value={sgstAmount}
-                onChange={(e) => setSgstAmount(e.target.value)}
-                size="md"
-                inputClassName="font-mono"
-              />
-            </div>
+            {/* Intra State GST Amounts */}
+            {invoiceType === 'With GST' && gstSubtype === 'intra' && (
+              <>
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700">CGST Amount</label>
+                  <CustomInput
+                    type="number"
+                    step="0.01"
+                    value={cgstAmount}
+                    onChange={(e) => setCgstAmount(e.target.value)}
+                    size="md"
+                    inputClassName="font-mono font-bold"
+                  />
+                </div>
 
-            <div className="space-y-1">
-              <label className="block text-xs font-semibold text-slate-700">
-                IGST Amount <span className="text-rose-500">*</span>
-              </label>
-              <CustomInput
-                type="number"
-                step="0.01"
-                value={igstAmount}
-                onChange={(e) => setIgstAmount(e.target.value)}
-                size="md"
-                inputClassName="font-mono"
-              />
-            </div>
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-700">SGST Amount</label>
+                  <CustomInput
+                    type="number"
+                    step="0.01"
+                    value={sgstAmount}
+                    onChange={(e) => setSgstAmount(e.target.value)}
+                    size="md"
+                    inputClassName="font-mono font-bold"
+                  />
+                </div>
+              </>
+            )}
 
+            {/* Inter State IGST Amount */}
+            {invoiceType === 'With GST' && gstSubtype === 'inter' && (
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-slate-700">IGST Amount</label>
+                <CustomInput
+                  type="number"
+                  step="0.01"
+                  value={igstAmount}
+                  onChange={(e) => setIgstAmount(e.target.value)}
+                  size="md"
+                  inputClassName="font-mono font-bold"
+                />
+              </div>
+            )}
+
+            {/* TDS % */}
             <div className="space-y-1">
               <label className="block text-xs font-semibold text-slate-700">
-                TDS % (base) <span className="text-rose-500">*</span>
+                TDS % (Deduction Rate)
               </label>
               <SearchableSelect
                 options={[
-                  { label: '0%', value: '0%' },
-                  { label: '1%', value: '1%' },
-                  { label: '2%', value: '2%' },
-                  { label: '10%', value: '10%' }
+                  { label: '0% — No TDS Deduction', value: '0%' },
+                  { label: '1% — Section 194C (Individual / HUF)', value: '1%' },
+                  { label: '2% — Section 194C (Company / Others)', value: '2%' },
+                  { label: '10% — Section 194J (Professional Services)', value: '10%' }
                 ]}
                 value={tdsPercentage}
                 onChange={(val) => setTdsPercentage(val)}
@@ -828,9 +1105,10 @@ export default function InvoicePaymentFormView() {
               />
             </div>
 
+            {/* Advance to Adjust */}
             <div className="space-y-1">
               <label className="block text-xs font-semibold text-slate-700">
-                Advance Adjust <span className="text-slate-400 font-normal">(Optional)</span>
+                Advance Adjustment
               </label>
               <input
                 type="number"
@@ -839,8 +1117,49 @@ export default function InvoicePaymentFormView() {
                 value={advanceAdjust}
                 onChange={(e) => setAdvanceAdjust(e.target.value)}
                 placeholder="0.00"
-                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white font-mono"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white font-mono font-bold"
               />
+            </div>
+          </div>
+
+          {/* Live Financial Calculation Breakdown Card */}
+          <div className="mt-3 bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 text-xs space-y-2 font-sans">
+            <div className="flex items-center justify-between text-slate-600 font-semibold border-b border-slate-200/60 pb-1.5">
+              <span>Base Invoice Amount:</span>
+              <span className="font-mono font-bold text-slate-900">{currency} {invoiceAmountNum.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+            </div>
+
+            {invoiceType === 'With GST' && (
+              <div className="flex items-center justify-between text-slate-600 font-semibold border-b border-slate-200/60 pb-1.5">
+                <span>Total GST Tax ({gstSubtype === 'intra' ? 'CGST + SGST' : 'IGST'}):</span>
+                <span className="font-mono font-bold text-emerald-700">+ {currency} {totalGst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between text-slate-700 font-bold border-b border-slate-200/60 pb-1.5">
+              <span>Gross Total Amount:</span>
+              <span className="font-mono font-extrabold text-slate-900">{currency} {grossTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+            </div>
+
+            {tdsDeduction > 0 && (
+              <div className="flex items-center justify-between text-slate-600 font-semibold border-b border-slate-200/60 pb-1.5">
+                <span>TDS Deduction ({tdsPercentage}):</span>
+                <span className="font-mono font-bold text-rose-600">- {currency} {tdsDeduction.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              </div>
+            )}
+
+            {advanceAdjNum > 0 && (
+              <div className="flex items-center justify-between text-slate-600 font-semibold border-b border-slate-200/60 pb-1.5">
+                <span>Advance Adjustment:</span>
+                <span className="font-mono font-bold text-amber-700">- {currency} {advanceAdjNum.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between pt-1 text-sm font-black">
+              <span className="text-[#0d7676]">Net Payable Amount:</span>
+              <span className="font-mono font-extrabold text-[#0d7676] bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200">
+                {currency} {netPayable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              </span>
             </div>
           </div>
         </div>

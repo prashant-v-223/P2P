@@ -247,7 +247,7 @@ export default function VendorProfilePage() {
           </div>
 
           <div>
-            <span className="text-slate-400 block mb-0.5">IFSC Code</span>
+            <span className="text-slate-400 block mb-0.5">IFSC / SWIFT code</span>
             <span className="text-slate-800 font-bold font-mono">{vendorProfile.ifscCode || 'HDFC0000101'}</span>
           </div>
         </div>

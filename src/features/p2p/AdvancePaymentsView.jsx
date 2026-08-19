@@ -22,6 +22,18 @@ import {
   Download
 } from 'lucide-react';
 
+const formatRoleName = (str) => {
+  if (!str || str === '—') return '—';
+  const val = String(str).trim();
+  if (val.toLowerCase() === 'cfo') return 'CFO';
+  if (val.toLowerCase() === 'md') return 'Managing Director (MD)';
+  if (val.toLowerCase() === 'procurement_head' || val.toLowerCase() === 'procurement head') return 'Procurement Head';
+  if (val.toLowerCase() === 'purchase_head' || val.toLowerCase() === 'purchase head') return 'Purchase Head';
+  if (val.toLowerCase() === 'purchase_manager' || val.toLowerCase() === 'purchase manager') return 'Purchase Manager';
+  if (val.toLowerCase() === 'finance_head' || val.toLowerCase() === 'finance head') return 'Finance Head';
+  return val.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+};
+
 const getInitials = (name) => {
   if (!name) return 'ADV';
   const parts = name.trim().split(' ').filter(Boolean);
@@ -413,10 +425,10 @@ console.log("canMarkPaid",canMarkPaid);
                         {adv.dueDate}
                       </td>
 
-                      <td className="py-3.5 px-4 text-center">
+                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
                         {adv.approvalStage ? (
                           <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">
-                            {adv.approvalStage}
+                            {formatRoleName(adv.approvalStage)}
                           </span>
                         ) : '—'}
                       </td>

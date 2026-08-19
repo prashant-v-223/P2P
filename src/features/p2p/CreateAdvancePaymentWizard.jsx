@@ -389,7 +389,7 @@ export default function CreateAdvancePaymentWizard() {
     }`;
 
   const Sidebar = () => (
-    <aside className="w-full lg:w-[380px] xl:w-[420px] shrink-0 flex flex-col gap-6 sticky top-6">
+    <aside className="w-full lg:w-[380px] xl:w-[420px] shrink-0 flex flex-col gap-5">
       {/* Payment Summary Card */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden transition-all">
         <div className="px-5 py-4 border-b border-slate-100 bg-gradient-to-r from-teal-50/60 to-white flex items-center justify-between">
@@ -407,46 +407,27 @@ export default function CreateAdvancePaymentWizard() {
         <div className="p-5 space-y-4">
           {selectedPo ? (
             <>
-              <div className="space-y-1.5 pb-3 border-b border-slate-100">
-                <p className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">Target PO & Vendor</p>
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="font-mono font-extrabold text-slate-900 text-base">{selectedPo.poNumber}</span>
-                  <span className="text-xs font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full uppercase">
+              <div className="space-y-1 pb-3 border-b border-slate-100">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono font-extrabold text-slate-900 text-sm">{selectedPo.poNumber}</span>
+                  <span className="text-[11px] font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md uppercase">
                     {selectedPo.status || 'Open'}
                   </span>
                 </div>
-                <p className="text-sm font-bold text-slate-800 break-words leading-relaxed mt-1">
+                <p className="text-xs font-semibold text-slate-600 truncate">
                   {selectedPo.supplierName}
                 </p>
-                {selectedPo.supplierId && (
-                  <p className="font-mono text-xs text-slate-500 font-semibold mt-0.5">Code: {selectedPo.supplierId}</p>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
-                  <p className="text-[11px] text-slate-500 font-extrabold uppercase tracking-wider">PO Total ({poCurrency})</p>
-                  <p className="font-mono font-extrabold text-slate-900 text-base mt-1 whitespace-nowrap">
-                    {currSymbol}{fmt(poValue)}
-                  </p>
-                </div>
-                <div className="bg-teal-50/80 rounded-xl p-3 border border-teal-200">
-                  <p className="text-[11px] text-[#0d7676] font-extrabold uppercase tracking-wider">Available ({poCurrency})</p>
-                  <p className="font-mono font-extrabold text-[#0d7676] text-base mt-1 whitespace-nowrap">
-                    {currSymbol}{fmt(availableBalance)}
-                  </p>
-                </div>
               </div>
 
               {poCurrency !== 'INR' && (
-                <div className="bg-gradient-to-r from-slate-50 to-teal-50/40 border border-slate-200 rounded-xl p-3.5 space-y-2 text-xs">
+                <div className="bg-gradient-to-r from-slate-50 to-teal-50/40 border border-slate-200 rounded-xl p-3 space-y-1.5 text-xs">
                   <div className="flex justify-between items-center font-semibold text-slate-600">
                     <span>FX Rate ({poCurrency} → INR):</span>
                     <span className="font-mono font-extrabold text-teal-700 whitespace-nowrap">₹{activeFxRate}</span>
                   </div>
                   <div className="flex justify-between items-center font-bold text-slate-900 pt-1 border-t border-slate-200/60">
                     <span>Available in INR:</span>
-                    <span className="font-mono font-extrabold text-teal-800 text-sm whitespace-nowrap">₹{fmt(availableBalance * activeFxRate)}</span>
+                    <span className="font-mono font-extrabold text-teal-800 text-xs whitespace-nowrap">₹{fmt(availableBalance * activeFxRate)}</span>
                   </div>
                 </div>
               )}
@@ -832,10 +813,6 @@ export default function CreateAdvancePaymentWizard() {
                             placeholder="e.g. Vendor requires 20% advance before shipment as per PO payment terms…"
                             className={inp(errors.reason) + ' resize-none py-2 text-xs'}
                           />
-                          <div className="mt-0.5 flex items-center justify-between gap-3">
-                            <span className="text-[10px] font-medium text-slate-400">Minimum 10 characters</span>
-                            <span className={`text-[10px] font-bold ${reason.trim().length >= 10 ? 'text-emerald-600' : 'text-slate-400'}`}>{reason.length}/500</span>
-                          </div>
                           {errors.reason && (
                             <p className="text-xs text-rose-600 font-semibold mt-0.5 flex items-center gap-1">
                               <AlertCircle className="w-3.5 h-3.5" /> {errors.reason}

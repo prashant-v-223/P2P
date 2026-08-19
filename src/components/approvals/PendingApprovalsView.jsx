@@ -85,23 +85,23 @@ function getStepFromStatus(type, status = '') {
 }
 
 const getApprovalDetailUrl = (approval) => {
-  if (!approval) return '/approvals';
+  if (!approval) return '/admin/pending-approvals';
   const type = String(approval.type || '').toLowerCase();
-  const refId = approval.referenceId || approval.transactionSnapshot?.rfqId || approval.id;
+  const refId = approval.referenceId || approval.id;
 
   if (type.includes('invoice')) {
-    return `/p2p/invoice-payments/${refId}`;
+    return `/admin/invoice-payments/${refId}`;
   }
   if (type.includes('rfq') || type.includes('freight')) {
     return `/admin/rfqs/${refId}`;
   }
   if (type.includes('custom') || type.includes('duty')) {
-    return `/p2p/custom-duty`;
+    return `/admin/custom-duty`;
   }
   if (type.includes('logistics')) {
-    return `/p2p/logistics-payments`;
+    return `/admin/logistics-payments`;
   }
-  return `/p2p/advance-payments/${refId}`;
+  return `/admin/advance-payments/${refId}`;
 };
 
 const formatSubmitted = (value) => {

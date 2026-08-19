@@ -7,14 +7,26 @@ import { apiFetch } from '../../services/api';
 import { isFinanceRole } from '../../lib/permissions';
 
 // Helper: Format role title for display
-function formatRoleTitle(roleKey = '') {
-  const r = String(roleKey).trim().toLowerCase();
-  if (r.includes('procurement')) return 'Procurement Head';
-  if (r.includes('finance head') || r.includes('finance lead') || r.includes('finance')) return 'Finance Lead';
-  if (r.includes('md') || r.includes('director')) return 'MD & Director';
-  if (r.includes('system admin') || r.includes('admin')) return 'System Admin';
-  return roleKey.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
+const formatRoleTitle = (str) => {
+  if (!str) return 'Approver';
+  if (str === 'cfo') return 'CFO';
+  if (str === 'md') return 'Managing Director (MD)';
+  if (str === 'procurement_head') return 'Procurement Head';
+  if (str === 'purchase_head') return 'Purchase Head';
+  if (str === 'purchase_manager') return 'Purchase Manager';
+  if (str === 'finance_head') return 'Finance Head';
+  return String(str)
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (l) => l.toUpperCase());
+};
+
+const formatAssignedApproverDisplay = (rawName, roleKey) => {
+  if (!rawName || rawName === '—') return formatRoleTitle(roleKey);
+  if (rawName.includes(',')) {
+    return formatRoleTitle(roleKey);
+  }
+  return rawName;
+};
 
 // Helper: Check if user's actual role matches step requirement
 function isExactRoleMatch(userRoleInput, stepRoleInput) {
@@ -161,19 +173,9 @@ export default function UniversalApprovalWorkflowCard({
 
     // Check if user is the requester
     const isRequester = 
-      Boolean(userId && approvalData.requestedById === userId) ||
+      Boolean(userId && (approvalData.requestedById === userId || approvalData.requestedById === currentUser.userId)) ||
       Boolean(userEmail && (approvalData.requestedById === userEmail || approvalData.requestedBy === userEmail)) ||
-      Boolean(currentUser.name && approvalData.requestedBy === currentUser.name);
-
-    // Check if user is explicitly assigned as approver
-    const isExplicitApprover = 
-      Boolean(userId && (approvalData.assignedApprover === userId || approvalData.assignedApproverId === userId)) ||
-      Boolean(userEmail && approvalData.assignedApproverEmail === userEmail) ||
-      Boolean(currentUser.name && approvalData.assignedApproverName === currentUser.name);
-
-    // Check if user is admin (can view and act on everything)
-    const isAdmin = ['admin', 'system_admin', 'systemadmin', 'super_admin', 'md']
-      .some(role => userRole?.toLowerCase().replace(/[\s_-]+/g, '_').includes(role));
+      Boolean(currentUser.name && String(approvalData.requestedBy).trim().toLowerCase() === String(currentUser.name).trim().toLowerCase());
 
     // Parse steps to check current active step role
     const currentStepNum = approvalData.currentStep || 1;
@@ -188,29 +190,51 @@ export default function UniversalApprovalWorkflowCard({
     
     const activeStepObj = steps.find(s => s.step === currentStepNum);
     const activeRoleKey = activeStepObj?.roleKey || activeStepObj?.roleName || '';
-    
+
+    const stepAssignedName = activeStepObj?.assignedApproverName || approvalData.assignedApproverName;
+    const stepAssignedId = activeStepObj?.assignedApproverId || approvalData.assignedApproverId || approvalData.assignedApprover;
+    const stepAssignedEmail = activeStepObj?.assignedApproverEmail || approvalData.assignedApproverEmail;
+    const isPoolStep = Boolean(activeStepObj?.isPoolApproval || (activeStepObj?.approverPool && activeStepObj.approverPool.length > 0));
+
+    const hasExplicitAssignee = Boolean((stepAssignedId || stepAssignedName || stepAssignedEmail) && !isPoolStep);
+
+    const isDirectExplicitUser = Boolean(
+      (userId && (stepAssignedId === userId || stepAssignedId === currentUser.userId)) ||
+      (userEmail && (stepAssignedEmail === userEmail || stepAssignedId === userEmail)) ||
+      (currentUser.name && stepAssignedName && String(stepAssignedName).trim().toLowerCase() === String(currentUser.name).trim().toLowerCase())
+    );
+
     const isRoleMatch = activeRoleKey ? canRoleActOnStep(userRole, activeRoleKey) : false;
 
-    // Any authenticated user who can access the record page can view the workflow timeline
-    const canView = true;
+    // Check if user is admin (can view and act on everything)
+    const isAdmin = ['admin', 'system_admin', 'systemadmin', 'super_admin', 'md']
+      .some(role => userRole?.toLowerCase().replace(/[\s_-]+/g, '_').includes(role));
 
+    const canView = true;
     const isTerminal = ['Approved & Dispatched', 'Rejected', 'Returned for changes'].includes(approvalData.status);
     
-    // Approvers can act on current step if step is active and role matches or is explicit approver
+    // Strict Action Permission:
+    // If explicit assignee exists (e.g. Yash Naik), ONLY that specific user or Admin can act.
     let canAct = false;
     if (!isTerminal) {
       if (isAdmin) {
         canAct = true;
       } else if (!isRequester) {
-        canAct = isExplicitApprover || isRoleMatch;
+        if (hasExplicitAssignee) {
+          canAct = isDirectExplicitUser;
+        } else {
+          canAct = isRoleMatch;
+        }
       }
     }
+
+    const isApprover = hasExplicitAssignee ? isDirectExplicitUser : isRoleMatch;
 
     setUserPermissions({
       canView,
       canAct,
       isRequester,
-      isApprover: isExplicitApprover || isRoleMatch
+      isApprover
     });
   };
 
@@ -220,11 +244,6 @@ export default function UniversalApprovalWorkflowCard({
     // Check permission again before action
     if (!userPermissions.canAct) {
       setErrorMsg('You do not have permission to perform this action.');
-      return;
-    }
-
-    if (userPermissions.isRequester && !currentUser?.role?.toLowerCase().includes('admin')) {
-      setErrorMsg('You cannot approve your own request.');
       return;
     }
 
@@ -353,12 +372,23 @@ export default function UniversalApprovalWorkflowCard({
           const isAdmin = ['admin', 'system_admin', 'systemadmin', 'super_admin', 'md']
             .some(role => currentUser?.role?.toLowerCase().replace(/[\s_-]+/g, '_').includes(role));
 
-          // Check if this step is assigned to the current user (exact role match or explicit assignee)
-          const isAssignedToMe = 
-            Boolean(currentUser?.id && (approval.assignedApprover === currentUser.id || approval.assignedApproverId === currentUser.id)) ||
-            Boolean(currentUser?.email && approval.assignedApproverEmail === currentUser.email) ||
-            Boolean(currentUser?.name && approval.assignedApproverName === currentUser.name) ||
-            (activeRoleKey ? isExactRoleMatch(currentUser?.role, activeRoleKey) : false);
+          // Check if this step is explicitly assigned to the current logged-in user
+          const stepAssignedName = st.assignedApproverName || (isActive ? approval.assignedApproverName : null);
+          const stepAssignedId = st.assignedApproverId || (isActive ? (approval.assignedApproverId || approval.assignedApprover) : null);
+          const stepAssignedEmail = st.assignedApproverEmail || (isActive ? approval.assignedApproverEmail : null);
+
+          const isPoolStep = Boolean(st.isPoolApproval || (st.approverPool && st.approverPool.length > 0));
+          const hasExplicitAssignee = Boolean((stepAssignedId || stepAssignedName || stepAssignedEmail) && !isPoolStep);
+
+          const isDirectUserMatch = Boolean(
+            (currentUser?.id && (stepAssignedId === currentUser.id || stepAssignedId === currentUser.userId)) ||
+            (currentUser?.email && (stepAssignedEmail === currentUser.email || stepAssignedId === currentUser.email)) ||
+            (currentUser?.name && stepAssignedName && String(stepAssignedName).trim().toLowerCase() === String(currentUser.name).trim().toLowerCase())
+          );
+
+          const isAssignedToMe = hasExplicitAssignee
+            ? isDirectUserMatch
+            : (activeRoleKey ? isExactRoleMatch(currentUser?.role, activeRoleKey) : false);
 
           return (
             <div key={idx} className="relative z-10 flex items-start gap-4 group">
@@ -448,7 +478,7 @@ export default function UniversalApprovalWorkflowCard({
                     <div className="flex items-center gap-2 text-xs text-slate-600">
                       <MessageSquare className="w-3.5 h-3.5 text-slate-400" />
                       <span>
-                        Assigned to: <strong>{approval.assignedApproverName || formatRoleTitle(activeRoleKey)}</strong>
+                        Assigned to: <strong>{formatAssignedApproverDisplay(approval.assignedApproverName, activeRoleKey)}</strong>
                         {isAssignedToMe ? (
                           <span className="ml-1 text-[#0d7676] font-bold">(You)</span>
                         ) : isAdmin ? (
@@ -513,11 +543,7 @@ export default function UniversalApprovalWorkflowCard({
                       <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
                         <Lock className="w-4 h-4 text-slate-400 shrink-0" />
                         <span>
-                          {userPermissions.isRequester ? (
-                            'You cannot approve your own request.'
-                          ) : (
-                            <>Step {currentStepNum} is pending approval by <strong>{formatRoleTitle(activeRoleKey)}</strong>.</>
-                          )}
+                          Step {currentStepNum} is pending approval by <strong>{formatRoleTitle(activeRoleKey)}</strong>.
                         </span>
                       </div>
                     )}

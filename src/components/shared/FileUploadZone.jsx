@@ -91,7 +91,7 @@ export default function FileUploadZone({
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`flex flex-col items-center justify-center gap-3 py-10 sm:py-14 px-6 rounded-2xl border-2 border-dashed cursor-pointer transition-all shadow-2xs
+        className={`flex flex-col items-center justify-center gap-3 py-10 sm:py-8 px-6 rounded-2xl border-2 border-dashed cursor-pointer transition-all shadow-2xs
           ${dragging 
             ? 'border-teal-500 bg-teal-50/80 scale-[1.01]' 
             : 'border-slate-200 bg-gradient-to-b from-slate-50/80 to-white hover:border-teal-400 hover:bg-teal-50/30'
@@ -117,14 +117,6 @@ export default function FileUploadZone({
           <p className="text-xs text-slate-400 font-medium max-w-md">
             Supports {getAcceptedTypesLabel()} up to {maxSize} MB per file
           </p>
-        </div>
-
-        <div className="flex flex-wrap justify-center gap-2 pt-1">
-          {['Invoice Copy', 'Vendor Quotation', 'PO Copy', 'Bank Receipt', 'Other Docs'].map((tag) => (
-            <span key={tag} className="text-[11px] font-bold text-slate-500 bg-slate-100/80 border border-slate-200/80 px-2.5 py-1 rounded-lg">
-              + {tag}
-            </span>
-          ))}
         </div>
       </label>
 

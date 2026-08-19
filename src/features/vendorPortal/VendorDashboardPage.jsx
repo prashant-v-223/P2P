@@ -180,7 +180,7 @@ export default function VendorDashboardPage() {
               <h4 className="text-xs font-bold text-slate-900 group-hover:text-[#0d7676] transition-colors">
                 Advance Payments
               </h4>
-              <p className="text-[11px] text-slate-400 font-medium">Request advance</p>
+              <p className="text-[11px] text-slate-400 font-medium">View issued advances</p>
             </div>
           </Link>
 

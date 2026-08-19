@@ -102,10 +102,29 @@ export function useRealtimeNotifications() {
         reconnectDelay.current = 1000;
       });
 
-      // Handle new request creation broadcast
+      // Handle new request creation broadcast (only notify affected assigned approvers or admins)
       es.addEventListener('APPROVAL_CREATED', (event) => {
         let data;
         try { data = JSON.parse(event.data); } catch { return; }
+
+        const currentUserId = user?.id || user?.userId;
+        const currentUserName = user?.name;
+        const currentUserEmail = user?.email;
+
+        const isExplicitApprover = Boolean(
+          (data.assignedApproverId && (data.assignedApproverId === currentUserId || data.assignedApproverId === currentUserEmail)) ||
+          (data.assignedApproverName && data.assignedApproverName === currentUserName) ||
+          (data.assignedApproverEmail && data.assignedApproverEmail === currentUserEmail) ||
+          (data.firstStepApprover && data.firstStepApprover === currentUserName)
+        );
+
+        const isRequester = data.requestedBy && (data.requestedBy === currentUserName || data.requestedBy === currentUserEmail);
+        const isAdmin = ['admin', 'super_admin', 'system_admin'].includes(String(user?.role || '').toLowerCase());
+
+        // Target filtering: Ignore notification if logged-in user is NOT affected
+        if (!isExplicitApprover && !isRequester && !isAdmin) {
+          return;
+        }
 
         dispatch(addNotification({
           actionType: 'created',
@@ -115,7 +134,7 @@ export function useRealtimeNotifications() {
           approvalType: data.approvalType
         }));
 
-        if (permission === 'granted') {
+        if (permission === 'granted' && isExplicitApprover) {
           showBrowserNotification(`Approval Needed: ${data.approvalId}`, {
             body: `${data.approvalType} submitted by ${data.requestedBy}. Awaiting ${data.firstStepTitle}.`,
             tag: `approval-created-${data.approvalId}`

@@ -26,6 +26,21 @@ import {
   Download
 } from 'lucide-react';
 
+const getFormattedDueDate = (inv) => {
+  if (!inv) return '—';
+  if (inv.paymentDueDate) {
+    const d = new Date(inv.paymentDueDate);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    }
+  }
+  const baseDateStr = inv.invoiceDate || inv.createdAt || inv.documentDate;
+  const baseDate = baseDateStr ? new Date(baseDateStr) : new Date();
+  const days = Number(inv.dueDays) || 30;
+  baseDate.setDate(baseDate.getDate() + days);
+  return baseDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
 export default function InvoicePaymentsView() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -226,6 +241,18 @@ export default function InvoicePaymentsView() {
 
   const netPayableCalc = Math.max(0, Number(formGross) + Number(formGst) - Number(formTds) - Number(formAdvAdj));
 
+const formatRoleName = (str) => {
+  if (!str || str === '—') return '—';
+  const val = String(str).trim();
+  if (val.toLowerCase() === 'cfo') return 'CFO';
+  if (val.toLowerCase() === 'md') return 'Managing Director (MD)';
+  if (val.toLowerCase() === 'procurement_head' || val.toLowerCase() === 'procurement head') return 'Procurement Head';
+  if (val.toLowerCase() === 'purchase_head' || val.toLowerCase() === 'purchase head') return 'Purchase Head';
+  if (val.toLowerCase() === 'purchase_manager' || val.toLowerCase() === 'purchase manager') return 'Purchase Manager';
+  if (val.toLowerCase() === 'finance_head' || val.toLowerCase() === 'finance head') return 'Finance Head';
+  return val.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+};
+
 const getInitials = (name) => {
   if (!name) return 'INV';
   const parts = name.trim().split(' ').filter(Boolean);
@@ -326,13 +353,14 @@ const getInitials = (name) => {
                 <th className="py-3.5 px-3.5">PO NUMBER</th>
                 <th className="py-3.5 px-3.5">INVOICE NO.</th>
                 <th className="py-3.5 px-3.5">VENDOR</th>
+                <th className="py-3.5 px-3.5 whitespace-nowrap">PURCHASE CONNECTION</th>
                 <th className="py-3.5 px-3.5 text-right">INVOICE AMT</th>
                 <th className="py-3.5 px-2.5 text-center whitespace-nowrap">TDS</th>
                 <th className="py-3.5 px-3.5 text-right">NET PAYABLE</th>
                 <th className="py-3.5 px-3.5 text-center">3-WAY MATCH</th>
                 <th className="py-3.5 px-3.5 text-center">STATUS</th>
                 <th className="py-3.5 px-3.5 whitespace-nowrap">SUBMITTED</th>
-                <th className="py-3.5 px-3.5 whitespace-nowrap">PMT DUE</th>
+                <th className="py-3.5 px-3.5 whitespace-nowrap">DUE DATE</th>
                 <th className="py-3.5 px-3.5 whitespace-nowrap">APPROVAL STAGE</th>
                 <th className="py-3.5 px-3.5 text-right">ACTIONS</th>
               </tr>
@@ -415,6 +443,16 @@ const getInitials = (name) => {
                         </div>
                       </td>
 
+                      {/* PURCHASE CONNECTION */}
+                      <td className="py-3 px-3.5 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-teal-500 shrink-0" />
+                          <span className="font-bold text-slate-800 text-xs">
+                            {inv.purchaseConnectionName || inv.buyerName || inv.requestedBy || inv.createdBy || 'Procurement Team'}
+                          </span>
+                        </div>
+                      </td>
+
                       {/* INVOICE AMT */}
                       <td className="py-3 px-3.5 text-right font-mono font-extrabold text-slate-900 whitespace-nowrap">
                         {(inv.grossAmount || 0).toLocaleString(inv.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })} {inv.currency || 'INR'}
@@ -456,18 +494,16 @@ const getInitials = (name) => {
                           : '—'}
                       </td>
 
-                      {/* PMT DUE */}
-                      <td className="py-3 px-3.5 whitespace-nowrap text-slate-500">
-                        {inv.paymentDueDate
-                          ? new Date(inv.paymentDueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-                          : '—'}
+                      {/* DUE DATE */}
+                      <td className="py-3 px-3.5 whitespace-nowrap font-semibold text-slate-800">
+                        {getFormattedDueDate(inv)}
                       </td>
 
                       {/* APPROVAL STAGE */}
                       <td className="py-3 px-3.5 whitespace-nowrap">
                         {inv.assignedApproverRole || inv.assignedApproverName ? (
                           <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">
-                            {inv.assignedApproverRole || 'Purchase Manager'}
+                            {formatRoleName(inv.assignedApproverRole || 'Purchase Manager')}
                           </span>
                         ) : inv.status === 'pending' ? (
                           <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">

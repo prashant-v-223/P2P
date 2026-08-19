@@ -35,7 +35,7 @@ export default function VendorLoginPage() {
       <div className="w-full max-w-[420px] space-y-6">
         {/* Top Brand Logo Header */}
         <div className="text-center space-y-3">
-          <img src="/logo.png" alt="logo" srcset="" width={150} height={25} className='mx-auto d-black' />
+          <img src="/logo.png" alt="logo" width={150} height={25} className='mx-auto d-black' />
 
           <div className="space-y-1">
             <p className="text-xs text-slate-500 font-medium">

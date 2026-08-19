@@ -9,7 +9,7 @@ import VendorNotificationPanel from './VendorNotificationPanel';
 export function RayzonLogo() {
   return (
     <div className="flex items-center  cursor-pointer select-none">
-      <img src="/logo.png" alt="logo" srcset="" width={130} height={20} className='my-2' />
+      <img src="/logo.png" alt="logo" width={130} height={20} className='my-2' />
     </div>
   );
 }

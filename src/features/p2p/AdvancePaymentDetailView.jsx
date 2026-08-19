@@ -399,6 +399,7 @@ export default function AdvancePaymentDetailView() {
               documentableId={id}
               documentType="advance_request"
               multiple={true}
+              readOnly={true}
             />
           </div>
         </div>

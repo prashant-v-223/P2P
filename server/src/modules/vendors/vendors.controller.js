@@ -102,7 +102,14 @@ export const vendorLogin = async (req, res) => {
 
 
     const rx = new RegExp(`^${escapeRegex(loginIdentifier)}$`, 'i');
-    let vendor = await Vendor.findOne({ email: rx }).sort({ updatedAt: -1 }).select('+passwordHash +legacyPasswordHash');
+    let vendor = await Vendor.findOne({
+      $or: [
+        { email: rx },
+        { sapVendorCode: loginIdentifier },
+        { supplierId: loginIdentifier },
+        { id: loginIdentifier }
+      ]
+    }).sort({ updatedAt: -1 }).select('+passwordHash +legacyPasswordHash');
 
     if (!vendor) {
       vendor = await Vendor.findOne({
@@ -284,7 +291,7 @@ export const getVendorPortalData = async (req, res) => {
 
 export const createVendor = async (req, res) => {
   try {
-    const { sapVendorCode, companyName, contactPerson, phone, email, password, vendorType, paymentTerms, gstin, pan, bankName, branch, accountNumber, ifscCode } = req.body;
+    const { sapVendorCode, companyName, contactPerson, phone, email, password, vendorType, paymentTerms, gstin, pan, bankName, branch, accountNumber, ifscCode, assignedPurchaseManager, assignedPurchaseManagerId, buyerName, buyerId } = req.body;
     if (!companyName || !email) {
       return res.status(400).json({ success: false, error: 'Company name and official email are required.' });
     }
@@ -310,6 +317,10 @@ export const createVendor = async (req, res) => {
       passwordHash,
       vendorType: vendorType || 'DOMESTIC',
       paymentTerms: paymentTerms || '30 Days',
+      assignedPurchaseManager: assignedPurchaseManager || buyerName || '',
+      assignedPurchaseManagerId: assignedPurchaseManagerId || buyerId || '',
+      buyerName: buyerName || assignedPurchaseManager || '',
+      buyerId: buyerId || assignedPurchaseManagerId || '',
       status: 'Active',
       category: 'Manufacturing',
       gstin: gstin || '29AAAAA0000A1Z1',
@@ -479,43 +490,84 @@ export const deleteVendor = async (req, res) => {
 export const generateVendorPassword = async (req, res) => {
   try {
     const { id } = req.params;
-    const filter = buildVendorFilter(id);
-    const tempPass = `RyznP2P@${Math.floor(1000 + Math.random() * 9000)}`;
+    const { customPassword, newPassword } = req.body || {};
+    const passInput = customPassword || newPassword;
 
-    // Hash the new temporary password
+    let passToSet = passInput ? String(passInput).trim() : '';
+    let isCustom = false;
+
+    if (passToSet) {
+      if (passToSet.length < 6) {
+        return res.status(400).json({ success: false, error: 'Custom password must be at least 6 characters long.' });
+      }
+      isCustom = true;
+    } else {
+      passToSet = `RyznP2P@${Math.floor(1000 + Math.random() * 9000)}`;
+    }
+
     const { User } = await import('../../models/User.js');
-    const passwordHash = await User.hashPassword(tempPass);
+    const passwordHash = await User.hashPassword(passToSet);
 
-    const updated = await Vendor.findOneAndUpdate(
-      filter,
-      { $set: { passwordHash, passwordResetRequired: true, portalAccessEnabled: true }, $unset: { legacyPasswordHash: 1 } },
-      { new: true }
-    ).select('+passwordHash');
+    const isObjId = /^[0-9a-fA-F]{24}$/.test(id);
+    const searchFilter = {
+      $or: [
+        { id },
+        { sapVendorCode: id },
+        { supplierId: id },
+        ...(isObjId ? [{ _id: id }] : [])
+      ]
+    };
+
+    let targetVendor = await Vendor.findOne(searchFilter).select('+passwordHash');
+    if (!targetVendor && id.includes('@')) {
+      targetVendor = await Vendor.findOne({ email: new RegExp(`^${escapeRegex(id)}$`, 'i') }).select('+passwordHash');
+    }
+
+    const updateFilter = targetVendor ? {
+      $or: [
+        { id: targetVendor.id },
+        { sapVendorCode: targetVendor.sapVendorCode },
+        { supplierId: targetVendor.supplierId },
+        { email: new RegExp(`^${escapeRegex(targetVendor.email)}$`, 'i') }
+      ].filter(cond => Object.values(cond)[0])
+    } : searchFilter;
+
+    // Update Vendor documents
+    await Vendor.updateMany(
+      updateFilter,
+      { $set: { passwordHash, passwordResetRequired: !isCustom, portalAccessEnabled: true }, $unset: { legacyPasswordHash: 1 } }
+    );
+
+    // Also update any matching User document if exists
+    if (targetVendor?.email) {
+      await User.updateMany(
+        { email: new RegExp(`^${escapeRegex(targetVendor.email)}$`, 'i') },
+        { $set: { passwordHash } }
+      ).catch(() => {});
+    }
+
+    const updated = await Vendor.findOne(updateFilter).select('+passwordHash');
 
     if (!updated) {
       return res.status(404).json({ success: false, error: 'Vendor account not found. Password was not changed.' });
     }
 
-    // Do not expose a password unless the stored hash verifies successfully.
-    const passwordWasSaved = await User.prototype.verifyPassword.call(
-      { passwordHash: updated.passwordHash },
-      tempPass
-    );
-    if (!passwordWasSaved) {
-      return res.status(500).json({ success: false, error: 'Password could not be saved. Please try again.' });
-    }
+    console.log(`[VENDOR PASSWORD RESET SUCCESS] Password updated for vendor "${updated.companyName}" (${updated.email} / ${updated.sapVendorCode})`);
 
     return res.json({
       success: true,
-      message: `Temporary password generated for vendor ${id}`,
-      temporaryPassword: tempPass, // Only show once for communication to vendor
+      message: isCustom ? `Custom password saved for vendor ${id}` : `Temporary password generated for vendor ${id}`,
+      temporaryPassword: passToSet,
+      isCustom,
       vendor: {
         id: updated.id,
         sapVendorCode: updated.sapVendorCode,
+        companyName: updated.companyName,
         email: updated.email
       }
     });
   } catch (err) {
+    console.error('Error setting vendor password:', err);
     return res.status(500).json({ success: false, error: err.message });
   }
 };

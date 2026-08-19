@@ -264,6 +264,26 @@ export const deleteDocument = async (req, res) => {
       });
     }
 
+    // Permission Guard: Only the original uploader or an Administrator can delete uploaded documents
+    const currentUser = req.user;
+    const isUploader = currentUser && (
+      currentUser.id === document.uploadedBy ||
+      currentUser.email === document.uploadedBy ||
+      currentUser.name === document.uploadedBy
+    );
+    const isAdmin = currentUser && (
+      currentUser.role === 'Admin' ||
+      currentUser.role === 'Super Admin' ||
+      currentUser.role === 'admin'
+    );
+
+    if (!isUploader && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: 'Permission Denied: You cannot delete this document. Only the original uploader or an administrator can delete uploaded files.'
+      });
+    }
+
     try {
       await deleteFromS3(document.fileUrl, document.storageType || document.metadata?.storageType || 's3');
     } catch (storageError) {

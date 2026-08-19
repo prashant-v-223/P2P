@@ -502,6 +502,8 @@ export default function VendorFormView() {
     companyName: '',
     vendorType: 'DOMESTIC',
     paymentTerms: '30 Days',
+    assignedPurchaseManager: '',
+    assignedPurchaseManagerId: '',
     contactPerson: '',
     phone: '',
     accountStatus: 'Active',
@@ -514,6 +516,19 @@ export default function VendorFormView() {
     accountNumber: '',
     ifscCode: ''
   });
+
+  // Fetch internal users for Linked Procurement Manager dropdown
+  const [internalUsers, setInternalUsers] = useState([]);
+  useEffect(() => {
+    apiFetch('/api/users?size=100')
+      .then(res => res.json())
+      .then(data => {
+        if (data.users || data.data) {
+          setInternalUsers(data.users || data.data);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // SAP search state
   const [sapSearch, setSapSearch] = useState('');
@@ -547,6 +562,8 @@ export default function VendorFormView() {
             companyName: v.companyName || '',
             vendorType: v.vendorType || 'DOMESTIC',
             paymentTerms: v.paymentTerms || '30 Days',
+            assignedPurchaseManager: v.assignedPurchaseManager || v.buyerName || '',
+            assignedPurchaseManagerId: v.assignedPurchaseManagerId || v.buyerId || '',
             contactPerson: v.contactPerson || '',
             phone: v.phone || '',
             accountStatus: v.status || 'Active',
@@ -695,6 +712,10 @@ export default function VendorFormView() {
       companyName: formData.companyName.trim(),
       vendorType: formData.vendorType || 'DOMESTIC',
       paymentTerms: formData.paymentTerms || '30 Days',
+      assignedPurchaseManager: formData.assignedPurchaseManager || '',
+      assignedPurchaseManagerId: formData.assignedPurchaseManagerId || '',
+      buyerName: formData.assignedPurchaseManager || '',
+      buyerId: formData.assignedPurchaseManagerId || '',
       contactPerson: formData.contactPerson.trim() || formData.companyName.trim(),
       phone: formData.phone.trim() || '+91 9800000000',
       status: formData.accountStatus || 'Active',
@@ -812,6 +833,34 @@ export default function VendorFormView() {
         />
       </FormField>
 
+      <FormField label="Linked User (Procurement Manager / Buyer)" wide>
+        <SearchableSelect
+          options={[
+            { label: 'Unassigned', value: '' },
+            ...internalUsers.map(u => ({
+              label: `${u.name} (${u.role || 'Procurement'}) — ID: ${u.id || u.userId || u._id}`,
+              value: u.id || u.userId || u._id
+            }))
+          ]}
+          value={formData.assignedPurchaseManagerId || ''}
+          onChange={(val) => {
+            const userObj = internalUsers.find(u => (u.id || u.userId || u._id) === val);
+            setFormData(prev => ({
+              ...prev,
+              assignedPurchaseManagerId: val || '',
+              assignedPurchaseManager: userObj?.name || ''
+            }));
+          }}
+          size="md"
+          placeholder="Select Linked Procurement Manager / User..."
+        />
+        {formData.assignedPurchaseManagerId && (
+          <p className="text-[10px] text-slate-500 mt-1 font-mono font-medium">
+            Saved User ID: <span className="font-bold text-[#0d7676]">{formData.assignedPurchaseManagerId}</span> ({formData.assignedPurchaseManager})
+          </p>
+        )}
+      </FormField>
+
       <FormField label="Account Status" wide>
         <SearchableSelect
           options={[
@@ -825,7 +874,7 @@ export default function VendorFormView() {
         />
       </FormField>
     </div>
-  ), [formData, handleFormChange]);
+  ), [formData, handleFormChange, internalUsers]);
 
   const renderLoginCredentials = useMemo(() => (
     <div className="space-y-4">
@@ -858,7 +907,7 @@ export default function VendorFormView() {
 
   const renderTaxInfo = useMemo(() => (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <FormField label="GSTIN / Tax Number">
+      <FormField label="GSTIN / Tin Number">
         <Input
           type="text"
           placeholder="24AAAAA0000A1Z5"
@@ -913,7 +962,7 @@ export default function VendorFormView() {
           />
         </FormField>
 
-        <FormField label="IFSC Code">
+        <FormField label="IFSC / SWIFT code">
           <Input
             type="text"
             placeholder="SBIN0000300"

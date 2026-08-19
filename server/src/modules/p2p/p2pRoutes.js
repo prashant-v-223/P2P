@@ -83,38 +83,96 @@ async function getPaymentVisibility(req) {
   }).lean();
   if (!loginUser) return null;
 
-  const users = await User.find({ status: 'Active' }, { id: 1, name: 1, managerId: 1 }).lean();
-  const visibleIds = new Set([loginUser.id]);
-  const userRole = String(loginUser.role || req.user?.role || '').toLowerCase().trim();
-  const isProcurementRole = userRole.includes('procurement') || userRole.includes('purchase') || userRole === 'inner_team';
-  const seesAll = loginUser.canSeeAllRequests || !isProcurementRole;
+  const users = await User.find({ status: 'Active' }, { id: 1, userId: 1, name: 1, email: 1, managerId: 1, managerName: 1, role: 1, canSeeAllRequests: 1 }).lean();
+  const visibleIds = new Set([loginUser.id, loginUser.userId, loginUser.email].filter(Boolean));
+  const visibleNames = new Set([loginUser.name].filter(Boolean));
 
-  if (seesAll) {
-    users.forEach((user) => visibleIds.add(user.id));
-  } else {
-    const children = new Map();
-    users.forEach((user) => {
-      if (!user.managerId) return;
-      if (!children.has(user.managerId)) children.set(user.managerId, []);
-      children.get(user.managerId).push(user.id);
+  const userRoleLower = String(loginUser.role || req.user?.role || '').toLowerCase().trim();
+  const isTopExecutive = loginUser.canSeeAllRequests ||
+    ['admin', 'super_admin', 'system_admin', 'cfo', 'md', 'procurement_head', 'purchase_head'].includes(userRoleLower) ||
+    userRoleLower === 'procurement head' || userRoleLower === 'purchase head';
+
+  if (isTopExecutive) {
+    return {
+      user: loginUser,
+      seesAll: true,
+      ids: [],
+      names: [],
+      poNumbers: [],
+      vendorRefs: []
+    };
+  }
+
+  // Build children map matching managerId OR managerName
+  const childrenMap = new Map();
+  users.forEach((user) => {
+    const mgrRefs = [user.managerId, user.managerName].filter(Boolean);
+    mgrRefs.forEach(ref => {
+      const key = String(ref).trim().toLowerCase();
+      if (!childrenMap.has(key)) childrenMap.set(key, []);
+      childrenMap.get(key).push(user);
     });
-    const queue = [loginUser.id];
-    while (queue.length) {
-      const managerId = queue.shift();
-      for (const childId of children.get(managerId) || []) {
-        if (visibleIds.has(childId)) continue;
-        visibleIds.add(childId);
-        queue.push(childId);
+  });
+
+  const queue = [
+    String(loginUser.id || '').toLowerCase(),
+    String(loginUser.userId || '').toLowerCase(),
+    String(loginUser.name || '').toLowerCase()
+  ].filter(Boolean);
+
+  const visitedKeys = new Set(queue);
+
+  while (queue.length) {
+    const key = queue.shift();
+    const subs = childrenMap.get(key) || [];
+    for (const sub of subs) {
+      const subIdKey = String(sub.id || '').toLowerCase();
+      if (!visitedKeys.has(subIdKey)) {
+        visitedKeys.add(subIdKey);
+        visibleIds.add(sub.id);
+        if (sub.userId) visibleIds.add(sub.userId);
+        if (sub.name) {
+          visibleNames.add(sub.name);
+          queue.push(String(sub.name).toLowerCase());
+        }
+        if (sub.id) queue.push(String(sub.id).toLowerCase());
       }
     }
   }
 
-  const visibleUsers = users.filter((user) => visibleIds.has(user.id));
+  const visibleIdList = Array.from(visibleIds);
+  const visibleNameList = Array.from(visibleNames);
+
+  // Collect POs connected to visible users/subordinates
+  const connectedPOs = await PurchaseOrder.find({
+    $or: [
+      { createdBy: { $in: visibleNameList } },
+      { createdById: { $in: visibleIdList } },
+      { purchaseManagerId: { $in: visibleIdList } },
+      { buyerName: { $in: visibleNameList } }
+    ]
+  }, { poNumber: 1, sapPoNumber: 1 }).lean().catch(() => []);
+
+  const poNumbers = connectedPOs.flatMap(p => [p.poNumber, p.sapPoNumber]).filter(Boolean);
+
+  // Collect Vendors connected to visible users/subordinates
+  const connectedVendors = await Vendor.find({
+    $or: [
+      { createdBy: { $in: visibleIdList } },
+      { assignedPurchaseManager: { $in: visibleNameList } },
+      { purchaseManagerId: { $in: visibleIdList } }
+    ]
+  }, { id: 1, sapVendorCode: 1, supplierId: 1, companyName: 1 }).lean().catch(() => []);
+
+  const vendorRefs = connectedVendors.flatMap(v => [v.id, v.sapVendorCode, v.supplierId, v.companyName]).filter(Boolean);
+
   return {
     user: loginUser,
-    seesAll,
-    ids: visibleUsers.map((user) => user.id),
-    names: visibleUsers.map((user) => user.name).filter(Boolean)
+    seesAll: false,
+    ids: visibleIdList,
+    names: visibleNameList,
+    poNumbers,
+    vendorRefs
   };
 }
 
@@ -220,21 +278,66 @@ async function canMutateOwnPayment(req, payment) {
 }
 
 async function canViewPayment(req, payment) {
+  if (!payment) return false;
+
   if (req.user?.role === 'Vendor') {
-    const vendorIds = [req.user?.id, req.user?.sapVendorCode].filter(Boolean).map((value) => String(value).toLowerCase());
-    return vendorIds.includes(String(payment.vendorId || '').toLowerCase());
+    const vendorIds = [req.user?.id, req.user?.sapVendorCode, req.user?.supplierId, req.user?.companyName]
+      .filter(Boolean)
+      .map((value) => String(value).toLowerCase());
+    return vendorIds.some(v => [
+      String(payment.vendorId || '').toLowerCase(),
+      String(payment.vendorName || '').toLowerCase(),
+      String(payment.sapVendorCode || '').toLowerCase()
+    ].includes(v));
   }
+
   const visibility = await getPaymentVisibility(req);
   if (!visibility) return false;
-  // Keep detail authorization consistent with list authorization. System
-  // administrators, MDs, and users explicitly granted organisation-wide
-  // visibility must be able to open every record returned by the list API,
-  // including legacy/vendor-created payments without an internal owner ID.
+
   if (visibility.seesAll) return true;
-  const visibleValues = new Set([...visibility.ids, ...visibility.names].filter(Boolean).map((value) => String(value).toLowerCase()));
-  return [payment.requestedById, payment.userId, payment.requestedBy, payment.createdBy]
+
+  const currentUserId = String(req.user?.id || req.user?.userId || '').toLowerCase();
+  const currentUserName = String(req.user?.name || '').toLowerCase();
+  const currentUserEmail = String(req.user?.email || '').toLowerCase();
+
+  const visibleIds = new Set((visibility.ids || []).map(v => String(v).toLowerCase()));
+  const visibleNames = new Set((visibility.names || []).map(v => String(v).toLowerCase()));
+  const visiblePoNumbers = new Set((visibility.poNumbers || []).map(v => String(v).toLowerCase()));
+  const visibleVendorRefs = new Set((visibility.vendorRefs || []).map(v => String(v).toLowerCase()));
+
+  const paymentOwners = [payment.requestedById, payment.userId, payment.requestedBy, payment.createdBy]
     .filter(Boolean)
-    .some((value) => visibleValues.has(String(value).toLowerCase()));
+    .map(v => String(v).toLowerCase());
+
+  if (paymentOwners.some(owner => visibleIds.has(owner) || visibleNames.has(owner) || owner === currentUserId || owner === currentUserName || owner === currentUserEmail)) {
+    return true;
+  }
+
+  const paymentApprovers = [payment.assignedApprover, payment.assignedApproverId, payment.assignedApproverName, payment.approvalTo]
+    .filter(Boolean)
+    .map(v => String(v).toLowerCase());
+
+  if (paymentApprovers.some(appr => visibleIds.has(appr) || visibleNames.has(appr) || appr === currentUserId || appr === currentUserName || appr === currentUserEmail)) {
+    return true;
+  }
+
+  const paymentPOs = [payment.poId, payment.sapPoNumber, payment.poNumber]
+    .filter(Boolean)
+    .map(v => String(v).toLowerCase());
+
+  if (paymentPOs.some(po => visiblePoNumbers.has(po))) {
+    return true;
+  }
+
+  const paymentVendors = [payment.vendorId, payment.vendorName, payment.sapVendorCode, payment.supplierId]
+    .filter(Boolean)
+    .map(v => String(v).toLowerCase());
+
+  if (paymentVendors.some(v => visibleVendorRefs.has(v))) {
+    return true;
+  }
+
+  return false;
 }
 
 // ─── WORKFLOW RESOLUTION ──────────────────────────────────────────────────────
@@ -416,13 +519,9 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
   let vendorLinkedManager = null;
   if (isVendorRequest) {
     const vendorId = transactionSnapshot?.vendorId || transactionSnapshot?.createdByVendorId;
-    if (vendorId) {
-      vendorLinkedManager = await resolveVendorPurchaseManager(vendorId);
-      if (vendorLinkedManager) {
-        console.log(`[Approval Routing] Vendor ${vendorId} linked to manager: ${vendorLinkedManager.name} (${vendorLinkedManager.role})`);
-      } else {
-        console.log(`[Approval Routing] No linked manager found for vendor ${vendorId} — using pool approval`);
-      }
+    vendorLinkedManager = await resolveVendorPurchaseManager(vendorId, poRef, transactionSnapshot);
+    if (vendorLinkedManager) {
+      console.log(`[Approval Routing] Vendor request linked to senior/manager: ${vendorLinkedManager.name} (${vendorLinkedManager.role})`);
     }
   }
 
@@ -607,9 +706,15 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
     firstStepRole: firstStep?.roleKey || firstStep?.roleName || '',
     firstStepTitle: firstStep?.title || firstStep?.roleName || 'Step 1',
     firstStepApprover: firstStep?.assignedApproverName || 'Unassigned',
+    assignedApproverId: firstStep?.assignedApproverId || null,
+    assignedApproverName: firstStep?.assignedApproverName || null,
+    assignedApproverEmail: firstStep?.assignedApproverEmail || null,
     totalSteps: safeWf.totalSteps || finalSteps.length,
     hasConflict: hasConflict,
     resolutionMethod: firstStep?.resolutionMethod || 'standard'
+  }, {
+    targetUserId: firstStep?.assignedApproverId || undefined,
+    targetRole: firstStep?.assignedApproverRole || firstStep?.roleKey || undefined
   });
 
   // Email notification
@@ -761,7 +866,7 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
           { supplierId: { $in: vendorKeys } },
           { companyName: { $in: vendorKeys } }
         ]
-      }).select('id sapVendorCode supplierId companyName vendorType gstin pan').lean() : []
+      }).select('id sapVendorCode supplierId companyName vendorType paymentTerms creditDays gstin pan').lean() : []
     ]);
 
     const enrichedPos = pos.map((po) => {
@@ -789,6 +894,8 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
       );
       return {
         ...po,
+        paymentTerms: po.paymentTerms || vendor?.paymentTerms || (vendor?.creditDays ? `${vendor.creditDays} Days` : 'Net 30'),
+        creditDays: po.creditDays || vendor?.creditDays,
         vendorType: vendor?.vendorType || '',
         vendorGstin: vendor?.gstin || '',
         vendorPan: vendor?.pan || '',
@@ -852,6 +959,8 @@ router.get('/purchase-orders/:id', authenticateToken, async (req, res) => {
     res.json({
       success: true, data: {
         ...po,
+        paymentTerms: po.paymentTerms || vendor?.paymentTerms || (vendor?.creditDays ? `${vendor.creditDays} Days` : 'Net 30'),
+        creditDays: po.creditDays || vendor?.creditDays,
         vendorGstin: vendor?.gstin || '',
         vendorPan: vendor?.pan || '',
         advances: enrichedAdvances,
@@ -1776,6 +1885,13 @@ router.get('/advance-payments/:id', authenticateToken, getSingleAdvanceHandler);
 
 const createAdvanceHandler = async (req, res) => {
   try {
+    if (req.user?.role === 'Vendor') {
+      return res.status(403).json({
+        success: false,
+        error: 'Vendors are not permitted to submit advance payment requests. Advance payments must be initiated by the buyer procurement team.'
+      });
+    }
+
     const {
       poNumber, vendorName, vendorCode, amount, percentageOfPo,
       cgst, sgst, igst, totalGst, grandTotal,
@@ -2118,48 +2234,62 @@ async function getPaymentOwnerFilter(req, visibility) {
   }
 
   const loggedInUserId = req.user?.id;
+  const loggedInUserName = req.user?.name || visibility.user?.name;
 
-  // Vendors created by the currently logged-in user
+  // Vendors created by or assigned to visible users/subordinates
   const createdVendors = await Vendor.find({
-    createdBy: loggedInUserId,
+    $or: [
+      { createdBy: { $in: [...visibility.ids, loggedInUserId].filter(Boolean) } },
+      { assignedPurchaseManager: { $in: [...visibility.names, loggedInUserName].filter(Boolean) } },
+      { purchaseManagerId: { $in: [...visibility.ids, loggedInUserId].filter(Boolean) } }
+    ],
     isDeleted: { $ne: true }
-  })
-    .select('id _id companyName')
-    .lean();
+  }).select('id supplierId sapVendorCode companyName').lean().catch(() => []);
 
-  const createdVendorIds = createdVendors
-    .map(v => v.id)
-    .filter(Boolean);
+  const createdVendorRefs = createdVendors.flatMap(v => [v.id, v.supplierId, v.sapVendorCode, v.companyName]).filter(Boolean);
+  const allVendorRefs = Array.from(new Set([...(visibility.vendorRefs || []), ...createdVendorRefs]));
+  const allPoNumbers = Array.from(new Set(visibility.poNumbers || []));
 
-  const createdVendorNames = createdVendors
-    .map(v => v.companyName)
-    .filter(Boolean);
-
-  const identities = [
+  const identities = Array.from(new Set([
     ...visibility.ids,
     ...visibility.names,
-    ...createdVendorIds
+    loggedInUserId,
+    loggedInUserName
+  ].filter(Boolean)));
+
+  const filterConditions = [
+    // 1. Normal employee/user ownership & created records in reporting subtree
+    { requestedById: { $in: visibility.ids } },
+    { userId: { $in: visibility.ids } },
+    { createdBy: { $in: identities } },
+    { requestedBy: { $in: identities } },
+
+    // 2. Assigned approver matching user or subtree subordinates
+    { assignedApprover: { $in: identities } },
+    { assignedApproverId: { $in: visibility.ids } },
+    { assignedApproverName: { $in: visibility.names } }
   ];
 
-  return {
-    $or: [
-      // Normal employee/user ownership
-      { requestedById: { $in: visibility.ids } },
-      { userId: { $in: visibility.ids } },
+  // 3. Connected Purchase Orders (POs created by user or subtree)
+  if (allPoNumbers.length > 0) {
+    filterConditions.push(
+      { poId: { $in: allPoNumbers } },
+      { sapPoNumber: { $in: allPoNumbers } },
+      { poNumber: { $in: allPoNumbers } }
+    );
+  }
 
-      // Records created/requested by visible users
-      { createdBy: { $in: identities } },
-      { requestedBy: { $in: identities } },
+  // 4. Connected Vendors (vendors managed/assigned to user or subtree)
+  if (allVendorRefs.length > 0) {
+    filterConditions.push(
+      { vendorId: { $in: allVendorRefs } },
+      { vendorName: { $in: allVendorRefs } },
+      { sapVendorCode: { $in: allVendorRefs } },
+      { supplierId: { $in: allVendorRefs } }
+    );
+  }
 
-      // Vendor created by this user
-      { requestedById: { $in: createdVendorIds } },
-      { userId: { $in: createdVendorIds } },
-
-      // Optional support for old records using vendor name
-      { createdBy: { $in: createdVendorNames } },
-      { requestedBy: { $in: createdVendorNames } }
-    ]
-  };
+  return { $or: filterConditions };
 }
 router.get('/invoices', authenticateToken, async (req, res) => {
   try {
@@ -2291,9 +2421,40 @@ router.get('/invoices', authenticateToken, async (req, res) => {
       .limit(size)
       .lean();
 
+    // Enrich invoices with Purchase Connection (Buyer / Manager Name)
+    const poIds = invoices.map(i => i.poId || i.sapPoNumber || i.poNumber).filter(Boolean);
+    const vendorIds = invoices.map(i => i.vendorId || i.sapVendorCode || i.supplierId).filter(Boolean);
+
+    const [pos, vendors] = await Promise.all([
+      PurchaseOrder.find({ $or: [{ poNumber: { $in: poIds } }, { sapPoNumber: { $in: poIds } }] }, { poNumber: 1, sapPoNumber: 1, createdBy: 1, buyerName: 1, purchaseManagerName: 1 }).lean().catch(() => []),
+      Vendor.find({ $or: [{ id: { $in: vendorIds } }, { sapVendorCode: { $in: vendorIds } }, { supplierId: { $in: vendorIds } }] }, { id: 1, sapVendorCode: 1, supplierId: 1, assignedPurchaseManager: 1, createdBy: 1 }).lean().catch(() => [])
+    ]);
+
+    const poMap = new Map();
+    pos.forEach(p => {
+      const name = p.buyerName || p.purchaseManagerName || p.createdBy;
+      if (p.poNumber) poMap.set(p.poNumber, name);
+      if (p.sapPoNumber) poMap.set(p.sapPoNumber, name);
+    });
+
+    const vendorMap = new Map();
+    vendors.forEach(v => {
+      const name = v.assignedPurchaseManager || v.createdBy;
+      if (v.id) vendorMap.set(v.id, name);
+      if (v.sapVendorCode) vendorMap.set(v.sapVendorCode, name);
+      if (v.supplierId) vendorMap.set(v.supplierId, name);
+    });
+
+    const enrichedInvoices = invoices.map(inv => {
+      const pKey = inv.poId || inv.sapPoNumber || inv.poNumber;
+      const vKey = inv.vendorId || inv.sapVendorCode || inv.supplierId;
+      const connectionName = inv.purchaseConnectionName || poMap.get(pKey) || vendorMap.get(vKey) || inv.requestedBy || inv.createdBy || 'Procurement Team';
+      return { ...inv, purchaseConnectionName: connectionName };
+    });
+
     return res.json({
       success: true,
-      data: invoices,
+      data: enrichedInvoices,
       total,
       page: safePage,
       pageSize: size,
@@ -2309,6 +2470,46 @@ router.get('/invoices', authenticateToken, async (req, res) => {
       success: false,
       error: err.message
     });
+  }
+});
+
+router.get('/invoices/check-unique', authenticateToken, async (req, res) => {
+  try {
+    const invNo = String(req.query.invoiceNumber || '').trim();
+    const currentId = String(req.query.currentId || '').trim();
+    if (!invNo || invNo.length < 3) return res.json({ success: true, unique: true });
+
+    const query = {
+      invoiceNumber: { $regex: `^${invNo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }
+    };
+
+    if (currentId) {
+      query._id = { $ne: currentId };
+      query.id = { $ne: currentId };
+      query.invoicePaymentId = { $ne: currentId };
+    }
+
+    const existing = await InvoicePayment.findOne(query).lean();
+    return res.json({
+      success: true,
+      unique: !existing,
+      error: existing ? `Invoice Number "${invNo}" already exists in the system.` : null
+    });
+  } catch (err) {
+    return res.json({ success: true, unique: true });
+  }
+});
+
+router.get('/invoices/next-asn', authenticateToken, async (req, res) => {
+  try {
+    const vendorId = req.user?.role === 'Vendor' ? (req.user.sapVendorCode || req.user.id) : String(req.query.vendorId || '');
+    const filter = vendorId ? { vendorId } : {};
+    const year = new Date().getFullYear();
+    const used = await InvoicePayment.find({ ...filter, $or: [{ asnNumber: /^\d+$/ }, { asnNumber: new RegExp(`^ASN-${year}-\\d+$`) }] }).select('asnNumber').lean();
+    const next = used.reduce((max, item) => Math.max(max, Number(String(item.asnNumber).split('-').pop()) || 0), 0) + 1;
+    return res.json({ success: true, data: { asnNumber: `ASN-${year}-${String(next).padStart(3, '0')}` } });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -2329,28 +2530,13 @@ router.get('/invoices/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// ─── POST Create Invoice Payment ─────────────────────────────────────────────
-
-router.get('/invoices/next-asn', authenticateToken, async (req, res) => {
-  try {
-    const vendorId = req.user?.role === 'Vendor' ? (req.user.sapVendorCode || req.user.id) : String(req.query.vendorId || '');
-    const filter = vendorId ? { vendorId } : {};
-    const year = new Date().getFullYear();
-    const used = await InvoicePayment.find({ ...filter, $or: [{ asnNumber: /^\d+$/ }, { asnNumber: new RegExp(`^ASN-${year}-\\d+$`) }] }).select('asnNumber').lean();
-    const next = used.reduce((max, item) => Math.max(max, Number(String(item.asnNumber).split('-').pop()) || 0), 0) + 1;
-    return res.json({ success: true, data: { asnNumber: `ASN-${year}-${String(next).padStart(3, '0')}` } });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 router.post('/invoices/create', authenticateToken, async (req, res) => {
   try {
     const {
       poNumber, invoiceNumber, grossAmount, gstAmount, tdsAmount, tdsPercentage,
       advanceAdjusted, advanceIdAdjusted, poQuantity, grnQuantity, invoiceQuantity,
       grnNumber, remarks, approvalTo, requestedBy, vendorId, vendorName, asnNumber: requestedAsnNumber,
-      invoiceDate, paymentDueDate, currency, supportingDocuments
+      invoiceDate, paymentDueDate, currency, supportingDocuments, blDate, blNumber
     } = req.body;
 
     if (!poNumber) return res.status(400).json({ success: false, error: 'Purchase Order is required.' });
@@ -2376,13 +2562,15 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
     const vendorIdFinal = req.user?.role === 'Vendor' ? (req.user.sapVendorCode || po.supplierId) : (vendorId || po.supplierId || 'VEND-00000');
     const poRef = po?.sapPoNumber || poNumber || '4300001510';
 
-    const numGross = Number(grossAmount) || 0;
-    const numGst = Number(gstAmount) || 0;
+    const numCgst = Number(req.body.cgstAmount) || 0;
+    const numSgst = Number(req.body.sgstAmount) || 0;
+    const numIgst = Number(req.body.igstAmount) || 0;
+    const numGst  = Number(gstAmount) || (numCgst + numSgst + numIgst) || 0;
     const tdsRate = Number.parseFloat(tdsPercentage) || 0;
     const numTds = tdsAmount == null ? (numGross * tdsRate / 100) : (Number(tdsAmount) || 0);
     const numAdv = Number(advanceAdjusted) || 0;
     if (numGross <= 0) return res.status(400).json({ success: false, error: 'Invoice amount must be greater than zero.' });
-    if ([numGst, numTds, numAdv].some((value) => value < 0) || tdsRate < 0 || tdsRate > 100) {
+    if ([numGst, numTds, numAdv, numCgst, numSgst, numIgst].some((value) => value < 0) || tdsRate < 0 || tdsRate > 100) {
       return res.status(400).json({ success: false, error: 'GST, TDS, and advance adjustment cannot be negative.' });
     }
 
@@ -2419,9 +2607,14 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         { $match: { $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }], status: { $in: ['approved', 'paid'] } } },
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]);
-      const availableToAdjust = Math.max(0, (Number(availableAdvances[0]?.total) || 0) - (Number(priorInvoices[0]?.advanceAdjusted) || 0));
-      if (numAdv > availableToAdjust || numAdv > numGross + numGst) {
-        return res.status(400).json({ success: false, error: `Advance adjustment exceeds the available amount (${poCurrency} ${availableToAdjust.toLocaleString('en-IN')}).` });
+      const totalAdvances = Number(availableAdvances[0]?.total) || 0;
+      const priorAdvanceAdjusted = Number(priorInvoices[0]?.advanceAdjusted) || 0;
+      const availableAdvanceAdjust = Math.max(0, totalAdvances - priorAdvanceAdjusted);
+      if (numAdv > availableAdvanceAdjust) {
+        return res.status(400).json({
+          success: false,
+          error: `Advance adjustment (${numAdv}) exceeds available approved advance balance (${availableAdvanceAdjust}).`
+        });
       }
     }
     const netPayable = Math.max(0, numGross + numGst - numTds - numAdv);
@@ -2486,6 +2679,8 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       vendorName: vendorNameFinal,
       invoiceNumber: finalInvoiceNumber,
       asnNumber: asnNumber,
+      blNumber: blNumber ? String(blNumber).trim() : '',
+      blDate: blDate && !Number.isNaN(Date.parse(blDate)) ? new Date(blDate) : undefined,
       supportingDocuments: normalizedSupportingDocuments.map((document) => ({
         fileName: String(document.fileName),
         originalName: String(document.originalName || document.fileName),
@@ -2497,6 +2692,11 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       paymentDueDate: paymentDueDate && !Number.isNaN(Date.parse(paymentDueDate)) ? new Date(paymentDueDate) : undefined,
       grossAmount: numGross,
       currency: poCurrency,
+      invoiceType: req.body.invoiceType || (numGst > 0 ? 'With GST' : 'Without GST'),
+      gstSubtype: req.body.gstSubtype || (numIgst > 0 ? 'inter' : 'intra'),
+      cgstAmount: numCgst,
+      sgstAmount: numSgst,
+      igstAmount: numIgst,
       gstAmount: numGst,
       tdsAmount: numTds,
       tdsPercentage: tdsRate,
@@ -2594,12 +2794,22 @@ router.put('/invoices/:id', authenticateToken, async (req, res) => {
     if (!invoice) return res.status(404).json({ success: false, error: 'Invoice payment not found' });
 
     const { poNumber, invoiceNumber, grossAmount, gstAmount, tdsAmount,
-      tdsPercentage, advanceAdjusted, grnNumber, remarks, approvalTo, asnNumber } = req.body;
+      tdsPercentage, advanceAdjusted, grnNumber, remarks, approvalTo, asnNumber,
+      invoiceType, gstSubtype, cgstAmount, sgstAmount, igstAmount } = req.body;
 
     if (invoiceNumber) invoice.invoiceNumber = invoiceNumber.trim();
     if (asnNumber !== undefined) invoice.asnNumber = asnNumber.trim();
     if (grossAmount !== undefined) invoice.grossAmount = Number(grossAmount);
+    if (invoiceType !== undefined) invoice.invoiceType = invoiceType;
+    if (gstSubtype !== undefined) invoice.gstSubtype = gstSubtype;
+    if (cgstAmount !== undefined) invoice.cgstAmount = Number(cgstAmount);
+    if (sgstAmount !== undefined) invoice.sgstAmount = Number(sgstAmount);
+    if (igstAmount !== undefined) invoice.igstAmount = Number(igstAmount);
+
+    const calcGst = (invoice.cgstAmount || 0) + (invoice.sgstAmount || 0) + (invoice.igstAmount || 0);
     if (gstAmount !== undefined) invoice.gstAmount = Number(gstAmount);
+    else if (calcGst > 0) invoice.gstAmount = calcGst;
+
     if (tdsAmount !== undefined) invoice.tdsAmount = Number(tdsAmount);
     if (tdsPercentage !== undefined) invoice.tdsPercentage = Number(tdsPercentage);
     if (advanceAdjusted !== undefined) invoice.advanceAdjusted = Number(advanceAdjusted);

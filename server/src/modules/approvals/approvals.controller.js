@@ -86,9 +86,15 @@ export function isApprovalForRole(approval, roleFilter, userId = null) {
     return ['admin', 'superadmin', 'system_admin', 'systemadmin'].includes(u);
   });
 
-  // Self-approval prevention: Requester cannot approve their own request (unless superadmin)
-  if (userId && (String(approval.requestedById) === String(userId) || String(approval.requestedBy) === String(userId)) && !isSuperUser) {
-    return false;
+  // Self-approval logic: If requester has a parent manager, parent manager must approve (block self-approval).
+  // If requester HAS NO parent manager, self-approval is ON / allowed!
+  const isOwnRequest = userId && (String(approval.requestedById) === String(userId) || String(approval.requestedBy) === String(userId));
+  if (isOwnRequest && !isSuperUser) {
+    if (approval.assignedApprover && String(approval.assignedApprover) === String(userId)) {
+      // Explicitly assigned to this user (e.g. self-approval when no parent manager)
+    } else {
+      return false;
+    }
   }
 
   // 2. Active Step check (from workflowSteps JSON)
@@ -107,13 +113,20 @@ export function isApprovalForRole(approval, roleFilter, userId = null) {
   }
 
   // 3. STRICT ASSIGNED APPROVER MATCHING:
-  // If the active step or approval record has an explicit assignedApproverId (and is NOT pool approval),
-  // ONLY that specific user ID (or superadmin) is authorized! Cross users are strictly blocked.
+  // If the active step or approval record has an explicit assigned approver (and is NOT pool approval),
+  // ONLY that specific user ID / Name / Email (or superadmin) is authorized! Cross users are strictly blocked.
   const assignedId = activeStepObj?.assignedApproverId || approval.assignedApprover;
+  const assignedName = activeStepObj?.assignedApproverName || approval.assignedApproverName;
+  const assignedEmail = activeStepObj?.assignedApproverEmail;
   const isPool = activeStepObj?.isPoolApproval;
 
-  if (assignedId && !isPool) {
-    if (userId && String(assignedId) === String(userId)) return true;
+  if ((assignedId || assignedName || assignedEmail) && !isPool) {
+    if (userId) {
+      const uStr = String(userId).toLowerCase();
+      if ([assignedId, assignedName, assignedEmail].filter(Boolean).some(val => String(val).toLowerCase() === uStr)) {
+        return true;
+      }
+    }
     return isSuperUser; // Strict isolation: cross-users with same role cannot act
   }
 

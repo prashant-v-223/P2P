@@ -6,12 +6,24 @@ import { apiFetch } from '../../services/api';
 import {
   CloudUpload, FileText, CheckCircle2, AlertCircle, X, Search, ChevronDown, Check,
   Calculator, Info, ArrowLeft, ShieldCheck, Banknote, Sparkles, Building2, Calendar,
-  Receipt, DollarSign, ChevronRight
+  Receipt, DollarSign, ChevronRight, Loader2, Lock
 } from 'lucide-react';
 import { CustomSelect } from '../../components/ui/custom-select';
 import { CustomDatePicker } from '../../components/ui/custom-date-picker';
 import { CustomFileUpload } from '../../components/ui/custom-file-upload';
 import { formatCurrency } from '../../utils/formatCurrency';
+
+const parseDaysFromPaymentTerms = (termsStr, fallbackDays = 30) => {
+  if (!termsStr) return fallbackDays;
+  const str = String(termsStr).trim();
+  const match = str.match(/\d+/);
+  if (match) {
+    const parsed = parseInt(match[0], 10);
+    if (!isNaN(parsed) && parsed >= 0) return parsed;
+  }
+  if (str.toLowerCase().includes('immediate')) return 0;
+  return fallbackDays;
+};
 
 const getLocalISODate = () => {
   const now = new Date();
@@ -34,14 +46,44 @@ export default function VendorUploadInvoicePage() {
   const [apiSearchResults, setApiSearchResults] = useState([]);
 
   const [invoiceNumber, setInvoiceNumber] = useState('');
-  const [asnNumber, setAsnNumber] = useState('');
+  const [duplicateError, setDuplicateError] = useState('');
+  const [checkingUnique, setCheckingUnique] = useState(false);
   const isImportVendor = String(vendorProfile?.vendorType || '').trim().toLowerCase().includes('import');
-  const [invoiceDate, setInvoiceDate] = useState(getLocalISODate());
+  const [asnNumber, setAsnNumber] = useState('');
+  const [blNumber, setBlNumber] = useState('');
+  const [blDate, setBlDate] = useState('');
+  const [invoiceDate, setInvoiceDate] = useState('');
   const [currency, setCurrency] = useState('INR');
   const [dueDays, setDueDays] = useState(30);
   const [invoiceAmount, setInvoiceAmount] = useState('');
   const [invoiceQuantity, setInvoiceQuantity] = useState('');
   const [remarks, setRemarks] = useState('');
+
+  // Live Invoice Number Uniqueness Validation
+  useEffect(() => {
+    const invNo = invoiceNumber.trim();
+    if (!invNo || invNo.length < 3) {
+      setDuplicateError('');
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        setCheckingUnique(true);
+        const res = await apiFetch(`/api/p2p/invoices/check-unique?invoiceNumber=${encodeURIComponent(invNo)}`);
+        const data = await res.json();
+        if (res.ok && !data.unique) {
+          setDuplicateError(data.error || `Invoice Number "${invNo}" already exists in the system.`);
+        } else {
+          setDuplicateError('');
+        }
+      } catch (err) {
+        setDuplicateError('');
+      } finally {
+        setCheckingUnique(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [invoiceNumber]);
 
   // GST & Tax State
   const [invoiceType, setInvoiceType] = useState('With GST');
@@ -142,15 +184,29 @@ export default function VendorUploadInvoicePage() {
     setAsnNumber(`ASN-${year}-${String(currentMax + 1).padStart(3, '0')}`);
   }, [isImportVendor, invoices]);
 
+  // Auto-set Payment Credit Days (Net Days) based on Vendor / PO Payment Terms
+  useEffect(() => {
+    const terms = selectedPOObj?.paymentTerms || selectedPOObj?.creditDays || vendorProfile?.paymentTerms || vendorProfile?.creditDays;
+    if (terms) {
+      const parsedDays = parseDaysFromPaymentTerms(terms, 30);
+      setDueDays(parsedDays);
+    }
+  }, [selectedPOObj, vendorProfile]);
+
   const calculateDueDateISO = () => {
-    const d = new Date(`${invoiceDate || getLocalISODate()}T00:00:00`);
+    if (!invoiceDate) return null;
+    const d = new Date(`${invoiceDate}T00:00:00`);
     d.setDate(d.getDate() + Number(dueDays || 30));
     return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
   };
 
-  const calculateDueDate = () => new Date(`${calculateDueDateISO()}T00:00:00`).toLocaleDateString('en-GB', {
-    day: '2-digit', month: 'short', year: 'numeric'
-  });
+  const calculateDueDate = () => {
+    const iso = calculateDueDateISO();
+    if (!iso) return 'Select Supplier Invoice Date';
+    return new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB', {
+      day: '2-digit', month: 'short', year: 'numeric'
+    });
+  };
 
   // Financial Auto-Calculations
   const invoiceAmountNum = Number(invoiceAmount) || 0;
@@ -188,6 +244,26 @@ export default function VendorUploadInvoicePage() {
     });
   };
 
+  const handleGstSubtypeChange = (targetSubtype) => {
+    if (targetSubtype === gstSubtype) return;
+
+    if (targetSubtype === 'inter') {
+      const intraTotal = (Number(cgstAmount) || 0) + (Number(sgstAmount) || 0);
+      if (intraTotal > 0) {
+        setIgstAmount(intraTotal.toFixed(2));
+      }
+      setGstSubtype('inter');
+    } else {
+      const currentIgst = Number(igstAmount) || 0;
+      if (currentIgst > 0) {
+        const half = (currentIgst / 2).toFixed(2);
+        setCgstAmount(half);
+        setSgstAmount(half);
+      }
+      setGstSubtype('intra');
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -211,9 +287,14 @@ export default function VendorUploadInvoicePage() {
       return;
     }
     if (!invoiceNumber.trim()) {
-      const msg = 'Invoice Number is required.';
+      const msg = 'Invoice Number is required. Please enter your vendor invoice number.';
       setErrorMsg(msg);
       showToast({ title: 'Invoice Number Required', description: msg, type: 'error' });
+      return;
+    }
+    if (duplicateError) {
+      setErrorMsg(duplicateError);
+      showToast({ title: 'Duplicate Invoice Number', description: duplicateError, type: 'error' });
       return;
     }
     if (!/^[A-Za-z0-9][A-Za-z0-9/_-]{2,49}$/.test(invoiceNumber.trim())) {
@@ -228,7 +309,7 @@ export default function VendorUploadInvoicePage() {
       showToast({ title: 'Invoice Date Required', description: msg, type: 'error' });
       return;
     }
-    if (new Date(`${invoiceDate}T23:59:59`).getTime() > Date.now()) {
+    if (invoiceDate > getLocalISODate()) {
       const msg = 'Invoice date cannot be in the future.';
       setErrorMsg(msg);
       showToast({ title: 'Invalid Invoice Date', description: msg, type: 'error' });
@@ -323,6 +404,8 @@ export default function VendorUploadInvoicePage() {
         poNumber,
         invoiceNumber: invoiceNumber.trim(),
         asnNumber: finalAsn,
+        blNumber: blNumber.trim(),
+        blDate: blDate || undefined,
         invoiceDate,
         currency,
         dueDays,
@@ -576,11 +659,24 @@ export default function VendorUploadInvoicePage() {
                 value={invoiceNumber}
                 onChange={(e) => {
                   setInvoiceNumber(e.target.value);
+                  setDuplicateError('');
                   setErrorMsg('');
                 }}
-                placeholder="e.g. INV-2026-0091"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
+                placeholder="Enter vendor invoice number (e.g. INV/2026/001)"
+                className={`w-full px-3.5 py-2.5 bg-slate-50 border rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white ${
+                  duplicateError ? 'border-rose-400 focus:ring-rose-500' : 'border-slate-200'
+                }`}
               />
+              {checkingUnique && (
+                <p className="text-[10px] text-teal-600 font-medium flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Checking invoice number uniqueness...
+                </p>
+              )}
+              {duplicateError && (
+                <p className="text-[11px] text-rose-600 font-bold mt-0.5">
+                  ❌ {duplicateError}
+                </p>
+              )}
             </div>
 
             {/* Sequential ASN Number - Import vendors only */}
@@ -600,6 +696,26 @@ export default function VendorUploadInvoicePage() {
                 <p className="text-[10px] text-amber-700 font-medium">Auto-generated import ASN tracking number</p>
               </div>
             )}
+
+            {/* BL Number & BL Date */}
+            {/* <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-slate-700">
+                BL Number (Bill of Lading Number)
+              </label>
+              <input
+                type="text"
+                value={blNumber}
+                onChange={(e) => setBlNumber(e.target.value)}
+                placeholder="e.g. BL-2026-9901"
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
+              />
+            </div> */}
+
+            <CustomDatePicker
+              label="BL Date (Bill of Lading Date)"
+              value={blDate}
+              onChange={(val) => setBlDate(val)}
+            />
 
             {/* Invoice Date */}
             <CustomDatePicker
@@ -627,20 +743,29 @@ export default function VendorUploadInvoicePage() {
               placeholder="Select currency"
             />
 
-            {/* Net Days */}
+            {/* Net Days (Locked by Payment Terms) */}
             <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-slate-700">
-                Payment Credit Days (Net Days) <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="number"
-                value={dueDays}
-                onChange={(e) => setDueDays(e.target.value)}
-                placeholder="30"
-                min="1"
-                max="365"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
-              />
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Payment Credit Days (Net Days) <span className="text-rose-500">*</span>
+                </label>
+                <span className="text-[10px] text-slate-400 font-bold flex items-center gap-1">
+                  <Lock className="w-3 h-3 text-slate-400" /> Locked
+                </span>
+              </div>
+              <div className="relative">
+                <input
+                  type="number"
+                  value={dueDays}
+                  readOnly
+                  aria-readonly="true"
+                  placeholder="30"
+                  className="w-full px-3.5 py-2.5 bg-slate-100/90 border border-slate-200 rounded-xl text-slate-800 text-xs font-bold font-mono cursor-not-allowed select-none"
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 font-medium">
+                Auto-set to {dueDays} days based on Payment Terms ({selectedPOObj?.paymentTerms || vendorProfile?.paymentTerms || 'Standard Terms'}).
+              </p>
             </div>
 
             {/* Calculated Payment Due Date */}
@@ -779,7 +904,7 @@ export default function VendorUploadInvoicePage() {
                 <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs">
                   <button
                     type="button"
-                    onClick={() => { setGstSubtype('intra'); setIgstAmount('0'); }}
+                    onClick={() => handleGstSubtypeChange('intra')}
                     className={`flex-1 py-1.5 rounded-lg font-bold text-center transition-all ${
                       gstSubtype === 'intra' ? 'bg-white text-[#0d7676] shadow-2xs' : 'text-slate-500 hover:text-slate-800'
                     }`}
@@ -788,7 +913,7 @@ export default function VendorUploadInvoicePage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setGstSubtype('inter'); setCgstAmount('0'); setSgstAmount('0'); }}
+                    onClick={() => handleGstSubtypeChange('inter')}
                     className={`flex-1 py-1.5 rounded-lg font-bold text-center transition-all ${
                       gstSubtype === 'inter' ? 'bg-white text-[#0d7676] shadow-2xs' : 'text-slate-500 hover:text-slate-800'
                     }`}
@@ -851,7 +976,6 @@ export default function VendorUploadInvoicePage() {
             {/* TDS % */}
             <CustomSelect
               label="TDS % (Deduction Rate)"
-              required
               value={tdsPercentage}
               onChange={(val) => setTdsPercentage(val)}
               options={[
@@ -866,7 +990,7 @@ export default function VendorUploadInvoicePage() {
             {/* Advance to Adjust */}
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-slate-700">
-                Advance Adjustment <span className="text-slate-400 font-normal">(Optional)</span>
+                Advance Adjustment 
               </label>
               <input
                 type="number"
@@ -877,61 +1001,6 @@ export default function VendorUploadInvoicePage() {
                 placeholder="0.00"
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white"
               />
-            </div>
-          </div>
-        </div>
-
-        {/* SECTION 4: REAL-TIME FINANCIAL SUMMARY BREAKDOWN CARD */}
-        <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-5 shadow-xl space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-700/80 pb-3">
-            <div className="flex items-center gap-2">
-              <Calculator className="w-5 h-5 text-teal-400" />
-              <h2 className="text-xs font-bold uppercase tracking-wider text-teal-300">
-                LIVE FINANCIAL SUMMARY BREAKDOWN
-              </h2>
-            </div>
-            <span className="text-[10px] font-mono font-extrabold bg-teal-500/20 text-teal-300 px-2.5 py-1 rounded-full border border-teal-400/30">
-              {currency} Breakdown
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-sans">
-            <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60">
-              <span className="text-[10px] text-slate-400 font-bold uppercase block">Base Amount</span>
-              <span className="font-mono font-bold text-sm text-white block mt-0.5">
-                {currency} {invoiceAmountNum.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-              </span>
-            </div>
-
-            <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60">
-              <span className="text-[10px] text-slate-400 font-bold uppercase block">+ Total GST Tax</span>
-              <span className="font-mono font-bold text-sm text-emerald-400 block mt-0.5">
-                + {currency} {totalGst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-              </span>
-            </div>
-
-            <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60">
-              <span className="text-[10px] text-slate-400 font-bold uppercase block">- TDS Deduction ({tdsPercentage})</span>
-              <span className="font-mono font-bold text-sm text-amber-400 block mt-0.5">
-                - {currency} {tdsDeduction.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-              </span>
-            </div>
-
-            <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60">
-              <span className="text-[10px] text-slate-400 font-bold uppercase block">- Advance Adjusted</span>
-              <span className="font-mono font-bold text-sm text-sky-400 block mt-0.5">
-                - {currency} {advanceAdjNum.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-              </span>
-            </div>
-          </div>
-
-          <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-slate-700/80">
-            <div>
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Estimated Net Payable</span>
-              <p className="text-[11px] text-slate-300">Final payout after tax addition and advance/TDS deductions.</p>
-            </div>
-            <div className="font-mono font-black text-2xl text-teal-300 tracking-tight">
-              {currency} {netPayable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </div>
           </div>
         </div>

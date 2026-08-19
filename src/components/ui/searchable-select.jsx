@@ -2,6 +2,21 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Search } from 'lucide-react';
 
+function formatLabel(str) {
+  if (!str || typeof str !== 'string') return String(str ?? '');
+  if (str.includes(' ') && !str.includes('_')) return str;
+  const knownCaps = { cfo: 'CFO', md: 'MD', rfq: 'RFQ', bl: 'BL', exim: 'EXIM', po: 'PO', inr: 'INR', sap: 'SAP' };
+  return str
+    .replace(/_/g, ' ')
+    .replace(/-/g, ' ')
+    .split(' ')
+    .map((word) => {
+      const lower = word.toLowerCase();
+      return knownCaps[lower] || (word.charAt(0).toUpperCase() + word.slice(1));
+    })
+    .join(' ');
+}
+
 export function SearchableSelect({
   options = [],
   value,
@@ -27,15 +42,32 @@ export function SearchableSelect({
     return (options || []).map((option) => {
       if (option === null || option === undefined) return { label: '', value: '' };
       if (typeof option === 'string' || typeof option === 'number' || typeof option === 'boolean') {
-        return { label: String(option), value: option };
+        return { label: formatLabel(String(option)), value: option };
       }
-      const val = option.value !== undefined ? option.value : (option.id !== undefined ? option.id : option.code);
-      const lbl = option.label !== undefined ? option.label : (option.name !== undefined ? option.name : option.title || String(val));
-      return { label: String(lbl), value: val };
+      const val = option.value !== undefined ? option.value : (option.roleName !== undefined ? option.roleName : (option.id !== undefined ? option.id : (option.code !== undefined ? option.code : option.key)));
+      const rawLbl = option.label !== undefined
+        ? option.label
+        : (option.name !== undefined
+        ? option.name
+        : (option.roleName !== undefined
+        ? option.roleName
+        : (option.title !== undefined
+        ? option.title
+        : (option.description && !String(option.description).startsWith('Imported legacy')
+        ? option.description
+        : String(val ?? '')))));
+      return { label: formatLabel(String(rawLbl)), value: val };
     });
   }, [options]);
 
-  const selected = normalized.find((option) => String(option.value) === String(value));
+  const selected = normalized.find((option) => {
+    if (value === undefined || value === null) return false;
+    return String(option.value) === String(value);
+  });
+
+  const displayLabel = selected
+    ? selected.label
+    : (value !== undefined && value !== null && value !== '' ? formatLabel(String(value)) : placeholder);
 
   const filtered = useMemo(() => {
     if (!searchable || !query.trim()) return normalized;
@@ -126,8 +158,8 @@ export function SearchableSelect({
             : 'border-slate-200 text-slate-800 hover:border-slate-300 focus:border-[#0d7676]'
         }`}
       >
-        <span className={`truncate ${selected ? 'font-semibold text-slate-800' : 'text-slate-400'}`}>
-          {selected ? selected.label : placeholder}
+        <span className={`truncate ${(selected || (value !== undefined && value !== null && value !== '')) ? 'font-semibold text-slate-800' : 'text-slate-400'}`}>
+          {displayLabel}
         </span>
         <ChevronDown className={`shrink-0 transition-transform ${isSmall ? 'h-3.5 w-3.5' : 'h-4 w-4'} text-slate-400 ${open ? 'rotate-180' : ''}`} />
       </button>

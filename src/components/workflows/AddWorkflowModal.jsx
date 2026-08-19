@@ -68,15 +68,22 @@ export default function AddWorkflowModal({ isOpen, onClose, editingSlab, onSucce
       setMinAmount(editingSlab.minAmount || 0);
       setMaxAmount(editingSlab.maxAmount !== null ? editingSlab.maxAmount : '');
       setDescription(editingSlab.description || '');
-      setSteps(editingSlab.steps || []);
+      setSteps(
+        (editingSlab.steps || []).map((s, i) => ({
+          id: s.id || `step-${i}-${Date.now()}`,
+          step: s.step || i + 1,
+          title: s.title || '',
+          roleKey: s.roleKey || ''
+        }))
+      );
     } else {
       setName('');
       setMinAmount(0);
       setMaxAmount('');
       setDescription('');
       setSteps([
-        { step: 1, title: 'Procurement Head Approval', roleKey: 'procurement_head' },
-        { step: 2, title: 'Finance Approval', roleKey: 'finance' }
+        { id: `step-1-${Date.now()}`, step: 1, title: 'Procurement Head Approval', roleKey: 'procurement_head' },
+        { id: `step-2-${Date.now()}`, step: 2, title: 'Finance Approval', roleKey: 'finance' }
       ]);
     }
   }, [editingSlab]);
@@ -104,7 +111,7 @@ export default function AddWorkflowModal({ isOpen, onClose, editingSlab, onSucce
   const handleAddStep = () => {
     setSteps([
       ...steps,
-      { step: steps.length + 1, title: 'MD Approval', roleKey: 'md' }
+      { id: `step-${Date.now()}-${steps.length}`, step: steps.length + 1, title: 'MD Approval', roleKey: 'md' }
     ]);
   };
 
@@ -297,7 +304,7 @@ export default function AddWorkflowModal({ isOpen, onClose, editingSlab, onSucce
             <div className="space-y-2">
               {steps.map((step, idx) => (
                 <div
-                  key={`${step.roleKey}-${idx}`}
+                  key={step.id || `step-row-${idx}`}
                   onDragEnter={() => setDragTarget(idx)}
                   onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }}
                   onDrop={(event) => { event.preventDefault(); dropStep(idx); }}
@@ -330,20 +337,20 @@ export default function AddWorkflowModal({ isOpen, onClose, editingSlab, onSucce
                     onChange={(e) => handleStepChange(idx, 'title', e.target.value)}
                     className="h-8 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2 text-xs focus:border-teal-500 focus:outline-none"
                   />
-                  <select
-                    required
-                    value={step.roleKey}
-                    onChange={(e) => handleStepChange(idx, 'roleKey', e.target.value)}
-                    disabled={loadingRoles}
-                    className="h-8 w-40 rounded-lg border border-slate-300 bg-white px-2 text-xs focus:border-teal-500 focus:outline-none disabled:opacity-50"
-                  >
-                    <option value="">{loadingRoles ? 'Loading roles...' : 'Select Role...'}</option>
-                    {availableRoles.map((role) => (
-                      <option key={role.roleName || role.id} value={role.roleName}>
-                        {role.roleName}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="w-48 shrink-0">
+                    <SearchableSelect
+                      value={step.roleKey}
+                      onChange={(value) => handleStepChange(idx, 'roleKey', value)}
+                      disabled={loadingRoles}
+                      size="sm"
+                      placeholder={loadingRoles ? 'Loading roles...' : 'Select Role...'}
+                      searchPlaceholder="Search role..."
+                      options={availableRoles.map((r) => ({
+                        value: r.roleName || r.id,
+                        label: r.roleName || r.name || r.id
+                      }))}
+                    />
+                  </div>
                   <div className="flex items-center">
                     <button type="button" disabled={idx === 0} onClick={() => reorderSteps(idx, idx - 1)} className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-teal-700 disabled:opacity-25" title="Move step up"><ArrowUp className="h-3.5 w-3.5" /></button>
                     <button type="button" disabled={idx === steps.length - 1} onClick={() => reorderSteps(idx, idx + 1)} className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-teal-700 disabled:opacity-25" title="Move step down"><ArrowDown className="h-3.5 w-3.5" /></button>

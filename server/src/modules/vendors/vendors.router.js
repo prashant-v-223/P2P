@@ -19,6 +19,7 @@ const router = Router();
 router.post('/login', vendorLogin);
 router.post('/change-password', vendorChangePassword);
 router.get('/portal-data', authenticateToken, getVendorPortalData);
+router.get('/my-invoices', authenticateToken, getVendorPortalData);
 
 // Vendor management endpoints
 router.get('/', authenticateToken, authorizePermission('vendors', 'view'), getVendors);

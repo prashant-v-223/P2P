@@ -87,25 +87,9 @@ export default function VendorDetailsView() {
     fetchVendorDetails();
   }, [id]);
 
-  const handleGeneratePassword = async () => {
-    try {
-      setActionLoading(true);
-      const res = await apiFetch(`/api/vendors/${vendor?.id || id}/generate-password`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) {
-        setModalPassword(data.temporaryPassword);
-        setPassModalOpen(true);
-      } else {
-        setToastMessage(data.error || 'Failed to generate password. Please try again.');
-        setTimeout(() => setToastMessage(''), 4000);
-      }
-    } catch (err) {
-      console.error('Error generating password:', err);
-      setToastMessage('Network error — could not generate password.');
-      setTimeout(() => setToastMessage(''), 4000);
-    } finally {
-      setActionLoading(false);
-    }
+  const handleOpenPasswordModal = () => {
+    setModalPassword('');
+    setPassModalOpen(true);
   };
 
   const handleDeleteVendor = async () => {
@@ -215,9 +199,9 @@ export default function VendorDetailsView() {
             <Pencil className="w-3.5 h-3.5 mr-1" />
             Edit Profile
           </Button>
-          <Button variant="outline" size="sm" onClick={handleGeneratePassword} loading={actionLoading} className="border-amber-300 text-amber-800 hover:bg-amber-50 text-xs font-bold">
+          <Button variant="outline" size="sm" onClick={handleOpenPasswordModal} className="border-amber-300 text-amber-800 hover:bg-amber-50 text-xs font-bold">
             <KeyRound className="w-3.5 h-3.5 text-amber-600 mr-1" />
-            Generate Password
+            Set / Reset Password
           </Button>
         </div>
       </div>
@@ -329,7 +313,7 @@ export default function VendorDetailsView() {
                 <span className="font-mono font-bold text-slate-900">{vendor.accountNumber || '—'}</span>
               </div>
               <div>
-                <span className="text-slate-400 font-bold uppercase text-[10px] block mb-1">IFSC Code</span>
+                <span className="text-slate-400 font-bold uppercase text-[10px] block mb-1">IFSC / SWIFT code</span>
                 <span className="font-mono font-bold text-slate-900">{vendor.ifscCode || '—'}</span>
               </div>
             </CardContent>
@@ -500,13 +484,12 @@ export default function VendorDetailsView() {
                   </Button>
 
                   <Button 
-                    onClick={handleGeneratePassword} 
-                    loading={actionLoading}
+                    onClick={handleOpenPasswordModal} 
                     variant="outline" 
                     className="w-full text-xs font-bold border-amber-300 text-amber-800 hover:bg-amber-50"
                   >
                     <Lock className="w-3.5 h-3.5 text-amber-600 mr-1" />
-                    Generate New Password
+                    Set / Reset Supplier Password
                   </Button>
                 </div>
 
@@ -568,8 +551,10 @@ export default function VendorDetailsView() {
       <GeneratePasswordModal
         isOpen={passModalOpen}
         onClose={() => setPassModalOpen(false)}
+        vendorId={vendor?.id || id}
+        sapVendorCode={vendor?.sapVendorCode || vendor?.supplierId}
         vendorName={vendor?.companyName}
-        password={modalPassword}
+        initialPassword={modalPassword}
       />
 
     </div>

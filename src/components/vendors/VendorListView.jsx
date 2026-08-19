@@ -37,6 +37,7 @@ export default function VendorListView() {
   const [passModalOpen, setPassModalOpen] = useState(false);
   const [modalVendorName, setModalVendorName] = useState('');
   const [modalPassword, setModalPassword] = useState('');
+  const [selectedVendorForPass, setSelectedVendorForPass] = useState(null);
   const [genPwdLoading, setGenPwdLoading] = useState(false);
 
   // Toast Notification State
@@ -66,24 +67,11 @@ export default function VendorListView() {
     fetchVendors();
   }, []);
 
-  const handleGeneratePassword = async (vendorId, companyName) => {
-    try {
-      setGenPwdLoading(vendorId);
-      const res = await apiFetch(`/api/vendors/${vendorId}/generate-password`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) {
-        setModalVendorName(companyName);
-        setModalPassword(data.temporaryPassword);
-        setPassModalOpen(true);
-      } else {
-        showToast(data.error || 'Failed to generate password. Please try again.');
-      }
-    } catch (err) {
-      console.error('Error generating password:', err);
-      showToast('Network error — could not generate password.');
-    } finally {
-      setGenPwdLoading(false);
-    }
+  const handleOpenPasswordModal = (vendor) => {
+    setSelectedVendorForPass(vendor);
+    setModalVendorName(vendor.companyName);
+    setModalPassword('');
+    setPassModalOpen(true);
   };
 
   const handleDeleteVendor = async (vendorId, companyName) => {
@@ -129,7 +117,10 @@ export default function VendorListView() {
         !search ||
         (v.companyName || '').toLowerCase().includes(query) ||
         (v.email || '').toLowerCase().includes(query) ||
-        (v.sapVendorCode || '').toLowerCase().includes(query);
+        (v.sapVendorCode || '').toLowerCase().includes(query) ||
+        (v.assignedPurchaseManager || '').toLowerCase().includes(query) ||
+        (v.buyerName || '').toLowerCase().includes(query) ||
+        (v.createdBy || '').toLowerCase().includes(query);
 
       const matchesType = 
         typeFilter === 'All' || 
@@ -251,6 +242,7 @@ export default function VendorListView() {
                 <tr>
                   <th className="py-3.5 px-4">#</th>
                   <th className="py-3.5 px-4">VENDOR</th>
+                  {/* <th className="py-3.5 px-4 whitespace-nowrap">LINKED USER</th> */}
                   <th className="py-3.5 px-4">SAP CODE</th>
                   <th className="py-3.5 px-4">CONTACT EMAIL</th>
                   <th className="py-3.5 px-4">TYPE</th>
@@ -275,6 +267,21 @@ export default function VendorListView() {
                         </div>
                       </div>
                     </td>
+                    {/* <td className="px-4 py-3 whitespace-nowrap">
+                      <div className="flex items-center gap-1.5" title={v.assignedPurchaseManagerId || v.buyerId ? `User ID: ${v.assignedPurchaseManagerId || v.buyerId}` : 'No User ID assigned'}>
+                        <span className="w-1.5 h-1.5 rounded-full bg-teal-500 shrink-0" />
+                        <div>
+                          <span className="font-bold text-slate-800 text-xs block leading-tight">
+                            {v.assignedPurchaseManager || v.buyerName || v.createdBy || 'Unassigned'}
+                          </span>
+                          {(v.assignedPurchaseManagerId || v.buyerId) && (
+                            <span className="text-[10px] font-mono text-slate-400 font-bold block">
+                              ID: {v.assignedPurchaseManagerId || v.buyerId}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </td> */}
                     <td className="px-4 py-3 font-mono font-bold text-[#0d7676]">
                       <span className="bg-teal-50 text-[#0d7676] px-2 py-0.5 rounded-md border border-teal-200 font-mono text-xs">
                         {v.sapVendorCode || 'N/A'}
@@ -319,15 +326,11 @@ export default function VendorListView() {
                         <Button 
                           variant="ghost" 
                           size="icon" 
-                          disabled={genPwdLoading === (v.id || v._id)}
-                          onClick={() => handleGeneratePassword(v.id || v._id, v.companyName || 'Vendor')} 
-                          title="Generate Temporary Password"
-                          className="hover:bg-amber-50 hover:text-amber-700 disabled:opacity-50"
+                          onClick={() => handleOpenPasswordModal(v)} 
+                          title="Manage Supplier Password (Custom / Auto)"
+                          className="hover:bg-amber-50 hover:text-amber-700 cursor-pointer"
                         >
-                          {genPwdLoading === (v.id || v._id)
-                            ? <Loader2 className="w-4 h-4 text-amber-500 animate-spin" />
-                            : <KeyRound className="w-4 h-4 text-amber-600" />
-                          }
+                          <KeyRound className="w-4 h-4 text-amber-600" />
                         </Button>
                         <Button 
                           variant="ghost" 
@@ -362,8 +365,10 @@ export default function VendorListView() {
       <GeneratePasswordModal
         isOpen={passModalOpen}
         onClose={() => setPassModalOpen(false)}
-        vendorName={modalVendorName}
-        password={modalPassword}
+        vendorId={selectedVendorForPass?.id || selectedVendorForPass?._id}
+        sapVendorCode={selectedVendorForPass?.sapVendorCode}
+        vendorName={selectedVendorForPass?.companyName || modalVendorName}
+        initialPassword={modalPassword}
       />
 
     </div>
