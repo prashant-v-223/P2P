@@ -30,6 +30,31 @@ const getLocalISODate = () => {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().split('T')[0];
 };
 
+const toISODateString = (val) => {
+  if (!val) return '';
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return '';
+    return new Date(val.getTime() - val.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+  }
+  const str = String(val).trim();
+  if (!str) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    return str.slice(0, 10);
+  }
+  const ddmmyyyyMatch = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+  if (ddmmyyyyMatch) {
+    const day = ddmmyyyyMatch[1].padStart(2, '0');
+    const month = ddmmyyyyMatch[2].padStart(2, '0');
+    const year = ddmmyyyyMatch[3];
+    return `${year}-${month}-${day}`;
+  }
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    return new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+  }
+  return '';
+};
+
 const resolveDocumentHref = (doc) => {
   const url = doc?.fileUrl || doc?.url || doc?.fileName || '';
   if (!url) return '#';
@@ -76,6 +101,8 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
   const [asnNumber, setAsnNumber] = useState('');
   const [blNumber, setBlNumber] = useState('');
   const [blDate, setBlDate] = useState('');
+  const [boeNumber, setBoeNumber] = useState('');
+  const [boeDate, setBoeDate] = useState('');
   const [invoiceDate, setInvoiceDate] = useState('');
   const [currency, setCurrency] = useState('INR');
   const [dueDays, setDueDays] = useState(initialPO ? 30 : '');
@@ -126,18 +153,11 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
           setInvoiceNumber(fetchedData.invoiceNumber || '');
           setAsnNumber(fetchedData.asnNumber || '');
           setBlNumber(fetchedData.blNumber || '');
+          setBoeNumber(fetchedData.boeNumber || '');
 
-          let bDate = '';
-          if (fetchedData.blDate) {
-            try { bDate = new Date(fetchedData.blDate).toISOString().split('T')[0]; } catch (_) {}
-          }
-          setBlDate(bDate);
-
-          let iDate = '';
-          if (fetchedData.invoiceDate) {
-            try { iDate = new Date(fetchedData.invoiceDate).toISOString().split('T')[0]; } catch (_) {}
-          }
-          setInvoiceDate(iDate);
+          setBlDate(toISODateString(fetchedData.blDate || fetchedData.rawBlDate));
+          setBoeDate(toISODateString(fetchedData.boeDate || fetchedData.rawBoeDate));
+          setInvoiceDate(toISODateString(fetchedData.invoiceDate || fetchedData.rawInvoiceDate));
 
           setCurrency(fetchedData.currency || 'INR');
           setDueDays(fetchedData.dueDays || parseDaysFromPaymentTerms(vendorProfile?.paymentTerms, 30));
@@ -318,7 +338,7 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
   }, [poNumber, selectedPOObj, vendorProfile, isViewMode, id, initialPO]);
 
   const calculateDueDateISO = () => {
-    const baseDate = (isImportVendor && blDate) ? blDate : invoiceDate;
+    const baseDate = (isImportVendor && (boeDate || blDate)) ? (boeDate || blDate) : invoiceDate;
     if (!baseDate || dueDays === '' || dueDays === null || dueDays === undefined) return null;
     const d = new Date(`${baseDate}T00:00:00`);
     d.setDate(d.getDate() + Number(dueDays || 0));
@@ -327,10 +347,10 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
 
   const calculateDueDate = () => {
     if (!poNumber) return 'Select Purchase Order';
-    if (isImportVendor && !blDate) return 'Enter BL Date to calculate due date';
+    if (isImportVendor && !boeDate && !blDate) return 'Enter BOE Date or BL Date to calculate due date';
     if (!invoiceDate && !isImportVendor) return 'Select Supplier Invoice Date';
     const iso = calculateDueDateISO();
-    if (!iso) return isImportVendor ? 'Enter BL Date' : 'Select Supplier Invoice Date';
+    if (!iso) return isImportVendor ? 'Enter BOE Date or BL Date' : 'Select Supplier Invoice Date';
     return new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB', {
       day: '2-digit', month: 'short', year: 'numeric'
     });
@@ -422,6 +442,8 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
           asnNumber: asnNumber.trim(),
           blNumber: blNumber.trim(),
           blDate: blDate || undefined,
+          boeNumber: boeNumber.trim(),
+          boeDate: boeDate || undefined,
           invoiceDate,
           currency,
           dueDays,
@@ -454,6 +476,8 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
           asnNumber: asnNumber.trim(),
           blNumber: blNumber.trim(),
           blDate: blDate || undefined,
+          boeNumber: boeNumber.trim(),
+          boeDate: boeDate || undefined,
           invoiceDate,
           currency,
           dueDays,
@@ -795,7 +819,10 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
               label="BL Date (Bill of Lading Date)"
               disabled={isViewMode}
               value={blDate}
-              onChange={(val) => setBlDate(val)}
+              onChange={(val) => {
+                setBlDate(val);
+                setBoeDate(val);
+              }}
             />
 
             {/* Invoice Date */}

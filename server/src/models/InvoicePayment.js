@@ -10,6 +10,8 @@ const invoicePaymentSchema = new mongoose.Schema({
   asnNumber:        { type: String, default: '' },
   blNumber:         { type: String, default: '' },
   blDate:           { type: Date },
+  boeNumber:        { type: String, default: '' },
+  boeDate:          { type: Date },
   supportingDocuments: [{
     fileName: String,
     originalName: String,

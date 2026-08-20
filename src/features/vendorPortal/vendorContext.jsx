@@ -142,6 +142,9 @@ export const VendorProvider = ({ children }) => {
             blNumber: i.blNumber || '',
             blDate: i.blDate ? new Date(i.blDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '',
             rawBlDate: i.blDate,
+            boeNumber: i.boeNumber || '',
+            boeDate: i.boeDate ? new Date(i.boeDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '',
+            rawBoeDate: i.boeDate,
             invoiceType: i.invoiceType || 'With GST',
             gstSubtype: i.gstSubtype || (i.igstAmount > 0 ? 'inter' : 'intra'),
             cgstAmount: Number(i.cgstAmount) || 0,
@@ -241,6 +244,10 @@ export const VendorProvider = ({ children }) => {
       poNumber: newInvoice.poNumber,
       invoiceNumber: newInvoice.invoiceNumber,
       asnNumber: newInvoice.asnNumber || '',
+      blNumber: newInvoice.blNumber || '',
+      blDate: newInvoice.blDate || undefined,
+      boeNumber: newInvoice.boeNumber || '',
+      boeDate: newInvoice.boeDate || undefined,
       invoiceDate: newInvoice.invoiceDate,
       paymentDueDate: newInvoice.paymentDueDate,
       supportingDocuments: newInvoice.supportingDocuments,
@@ -272,7 +279,11 @@ export const VendorProvider = ({ children }) => {
       createdAt: new Date().toISOString(),
       status: 'Pending',
       ...newInvoice,
-      asnNumber: json.data?.asnNumber || newInvoice.asnNumber
+      asnNumber: json.data?.asnNumber || newInvoice.asnNumber,
+      blDate: json.data?.blDate || newInvoice.blDate,
+      boeDate: json.data?.boeDate || newInvoice.boeDate,
+      rawBlDate: json.data?.blDate || newInvoice.blDate,
+      rawBoeDate: json.data?.boeDate || newInvoice.boeDate
     };
 
     setInvoices((prev) => {
@@ -379,6 +390,10 @@ export const VendorProvider = ({ children }) => {
       poNumber: updatedInvoice.poNumber,
       invoiceNumber: updatedInvoice.invoiceNumber,
       asnNumber: updatedInvoice.asnNumber || '',
+      blNumber: updatedInvoice.blNumber || '',
+      blDate: updatedInvoice.blDate || undefined,
+      boeNumber: updatedInvoice.boeNumber || '',
+      boeDate: updatedInvoice.boeDate || undefined,
       invoiceDate: updatedInvoice.invoiceDate,
       paymentDueDate: updatedInvoice.paymentDueDate,
       grossAmount: Number(updatedInvoice.invoiceAmount) || Number(updatedInvoice.grossAmount) || 0,

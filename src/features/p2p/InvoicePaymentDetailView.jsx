@@ -322,6 +322,16 @@ export default function InvoicePaymentDetailView() {
               </div>
 
               <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-1.5">BOE Number</span>
+                <span className="font-mono font-bold text-slate-900 block">{invoice.boeNumber || '—'}</span>
+              </div>
+
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-1.5">BOE Date</span>
+                <span className="font-semibold text-slate-700 block">{invoice.boeDate ? formatDate(invoice.boeDate) : '—'}</span>
+              </div>
+
+              <div>
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-1.5">Invoice Number</span>
                 <span className="font-mono font-bold text-slate-900 block text-base">{invoice.invoiceNumber || '9000024000'}</span>
               </div>

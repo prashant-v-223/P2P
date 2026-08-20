@@ -40,6 +40,31 @@ const generateUniqueInvoiceNumber = () => {
   return `INV-${year}-${rand}`;
 };
 
+const toISODateString = (val) => {
+  if (!val) return '';
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return '';
+    return new Date(val.getTime() - val.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+  }
+  const str = String(val).trim();
+  if (!str) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    return str.slice(0, 10);
+  }
+  const ddmmyyyyMatch = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+  if (ddmmyyyyMatch) {
+    const day = ddmmyyyyMatch[1].padStart(2, '0');
+    const month = ddmmyyyyMatch[2].padStart(2, '0');
+    const year = ddmmyyyyMatch[3];
+    return `${year}-${month}-${day}`;
+  }
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    return new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+  }
+  return '';
+};
+
 const fetchNextASN = async (vendorId = '') => {
   try {
     const res = await apiFetch(`/api/p2p/invoices/next-asn${vendorId ? `?vendorId=${encodeURIComponent(vendorId)}` : ''}`);
@@ -78,6 +103,8 @@ export default function InvoicePaymentFormView() {
   const [asnNumber, setAsnNumber] = useState('');
   const [blNumber, setBlNumber] = useState('');
   const [blDate, setBlDate] = useState('');
+  const [boeNumber, setBoeNumber] = useState('');
+  const [boeDate, setBoeDate] = useState('');
   const [invoiceDate, setInvoiceDate] = useState('');
   const [currency, setCurrency] = useState('INR');
   const [dueDays, setDueDays] = useState('');
@@ -246,8 +273,10 @@ export default function InvoicePaymentFormView() {
             setInvoiceNumber(inv.invoiceNumber || '');
             setAsnNumber(inv.asnNumber || '');
             setBlNumber(inv.blNumber || '');
-            setBlDate(inv.blDate ? new Date(inv.blDate).toISOString().split('T')[0] : '');
-            setInvoiceDate(inv.invoiceDate ? new Date(inv.invoiceDate).toISOString().split('T')[0] : '');
+            setBlDate(toISODateString(inv.blDate));
+            setBoeNumber(inv.boeNumber || '');
+            setBoeDate(toISODateString(inv.boeDate));
+            setInvoiceDate(toISODateString(inv.invoiceDate));
             setInvoiceAmount(inv.grossAmount || '');
             setGrnNo(inv.grnNumber || '');
             setCgstAmount(inv.cgstAmount != null ? String(inv.cgstAmount) : '0');
@@ -465,6 +494,10 @@ export default function InvoicePaymentFormView() {
         poNumber,
         invoiceNumber: invoiceNumber.trim(),
         asnNumber: cleanAsn,
+        blNumber: blNumber.trim(),
+        blDate: blDate || undefined,
+        boeNumber: boeNumber.trim(),
+        boeDate: boeDate || undefined,
         invoiceDate,
         dueDays: Number(dueDays),
         dueDate: calculateDueDate(),
