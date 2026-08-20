@@ -262,9 +262,10 @@ export default function PendingApprovalsView() {
 
       const aCount = rawApprovals.filter((approval) => approval.isUserTurnToApprove).length;
       setActionableCount(aCount);
-      setAllCount(data.total || data.count || rawApprovals.length);
+      const totalPending = data.total ?? data.count ?? rawApprovals.length;
+      setAllCount(totalPending);
 
-      dispatch(setPendingCount(aCount));
+      dispatch(setPendingCount(totalPending));
 
       setPagination({
         total: data.total || rawApprovals.length,

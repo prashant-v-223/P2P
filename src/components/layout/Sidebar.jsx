@@ -109,7 +109,7 @@ const NavItem = React.memo(({ item, collapsed, onNavigate, badgeValue }) => {
     >
       {({ isActive }) => (
         <>
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-3 min-w-0 flex-1 mr-2">
             <Icon className={cn(
               "flex-shrink-0 transition-colors",
               collapsed ? "w-5 h-5" : "w-[18px] h-[18px]",
@@ -120,10 +120,10 @@ const NavItem = React.memo(({ item, collapsed, onNavigate, badgeValue }) => {
 
           {displayBadge !== null && !collapsed && (
             <span className={cn(
-              "flex-shrink-0 font-bold text-[11px] rounded-full flex items-center justify-center transition-all min-w-[24px] h-[20px] px-2",
+              "flex-shrink-0 font-bold text-[11px] rounded-full flex items-center justify-center transition-all min-w-[24px] h-[20px] px-2 ml-auto",
               isActive
-                ? "bg-white/25 text-white"
-                : "bg-slate-100 text-slate-600"
+                ? "bg-white/25 text-white font-extrabold"
+                : "bg-slate-100 text-slate-600 group-hover:bg-slate-200"
             )}>
               {displayBadge}
             </span>

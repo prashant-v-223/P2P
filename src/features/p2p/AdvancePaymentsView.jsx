@@ -314,8 +314,8 @@ console.log("canMarkPaid",canMarkPaid);
             <thead className="bg-slate-50/90 sticky top-0 z-10 text-slate-400 font-extrabold uppercase tracking-wider text-[10px] border-b border-slate-200 backdrop-blur-xs">
               <tr>
                 <th className="py-3.5 px-4 text-center">#</th>
-                <th className="py-3.5 px-4">REFERENCE</th>
-                <th className="py-3.5 px-4">PO NUMBER</th>
+                <th className="py-3.5 px-4 whitespace-nowrap">REFERENCE</th>
+                <th className="py-3.5 px-4 whitespace-nowrap">PO NUMBER</th>
                 <th className="py-3.5 px-4">VENDOR</th>
                 <th className="py-3.5 px-4">REQUESTED BY</th>
                 <th className="py-3.5 px-4 text-right">AMOUNT</th>
@@ -323,7 +323,7 @@ console.log("canMarkPaid",canMarkPaid);
                 <th className="py-3.5 px-4 text-center">% OF PO</th>
                 <th className="py-3.5 px-4 text-center">MODE</th>
                 <th className="py-3.5 px-4 text-center">STATUS</th>
-                <th className="py-3.5 px-4 text-center">SUBMITTED</th>
+                <th className="py-3.5 px-4 text-center whitespace-nowrap">SUBMITTED</th>
                 <th className="py-3.5 px-4 text-center whitespace-nowrap">DUE DATE</th>
                 <th className="py-3.5 px-4 text-center whitespace-nowrap">APPROVAL STAGE</th>
                 <th className="py-3.5 px-4 text-right">ACTIONS</th>
@@ -368,7 +368,7 @@ console.log("canMarkPaid",canMarkPaid);
                         {(currentPage - 1) * pageSize + index + 1}
                       </td>
 
-                      <td className="py-3.5 px-4 font-mono font-extrabold text-slate-900">
+                      <td className="py-3.5 px-4 font-mono font-extrabold text-slate-900 whitespace-nowrap">
                         <Link
                           to={`/p2p/advance-payments/${adv.reference}`}
                           className="hover:text-teal-700 transition-colors"
@@ -377,7 +377,7 @@ console.log("canMarkPaid",canMarkPaid);
                         </Link>
                       </td>
 
-                      <td className="py-3.5 px-4 font-mono font-bold text-[#0284c7]">
+                      <td className="py-3.5 px-4 font-mono font-bold text-[#0284c7] whitespace-nowrap">
                         {adv.poNumber}
                       </td>
 
