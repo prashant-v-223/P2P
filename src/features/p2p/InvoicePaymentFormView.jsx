@@ -20,15 +20,19 @@ import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import FileUploadZone from '../../components/shared/FileUploadZone';
 
-const parseDaysFromPaymentTerms = (termsStr, fallbackDays = 30) => {
-  if (!termsStr) return fallbackDays;
+const parseDaysFromPaymentTerms = (termsStr, fallbackDays = '') => {
+  if (termsStr === null || termsStr === undefined || termsStr === '') return fallbackDays;
+  if (typeof termsStr === 'number' && !isNaN(termsStr)) return termsStr;
   const str = String(termsStr).trim();
-  const match = str.match(/\d+/);
-  if (match) {
-    const parsed = parseInt(match[0], 10);
-    if (!isNaN(parsed) && parsed >= 0) return parsed;
+  if (str.toLowerCase().includes('immediate') || str.toLowerCase().includes('advance') || str.toLowerCase().includes('cod')) return 0;
+  
+  const matches = str.match(/\d+/g);
+  if (matches && matches.length > 0) {
+    for (const numStr of matches) {
+      const parsed = parseInt(numStr, 10);
+      if (!isNaN(parsed) && parsed >= 0) return parsed;
+    }
   }
-  if (str.toLowerCase().includes('immediate')) return 0;
   return fallbackDays;
 };
 import { SearchableSelect } from '../../components/ui/searchable-select';

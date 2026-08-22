@@ -13,15 +13,19 @@ import { CustomDatePicker } from '../../components/ui/custom-date-picker';
 import { CustomFileUpload } from '../../components/ui/custom-file-upload';
 import { formatCurrency } from '../../utils/formatCurrency';
 
-const parseDaysFromPaymentTerms = (termsStr, fallbackDays = 30) => {
-  if (!termsStr && termsStr !== 0) return fallbackDays;
+const parseDaysFromPaymentTerms = (termsStr, fallbackDays = '') => {
+  if (termsStr === null || termsStr === undefined || termsStr === '') return fallbackDays;
+  if (typeof termsStr === 'number' && !isNaN(termsStr)) return termsStr;
   const str = String(termsStr).trim();
-  const match = str.match(/\d+/);
-  if (match) {
-    const parsed = parseInt(match[0], 10);
-    if (!isNaN(parsed) && parsed >= 0) return parsed;
+  if (str.toLowerCase().includes('immediate') || str.toLowerCase().includes('advance') || str.toLowerCase().includes('cod')) return 0;
+  
+  const matches = str.match(/\d+/g);
+  if (matches && matches.length > 0) {
+    for (const numStr of matches) {
+      const parsed = parseInt(numStr, 10);
+      if (!isNaN(parsed) && parsed >= 0) return parsed;
+    }
   }
-  if (str.toLowerCase().includes('immediate')) return 0;
   return fallbackDays;
 };
 
@@ -105,7 +109,7 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
   const [boeDate, setBoeDate] = useState('');
   const [invoiceDate, setInvoiceDate] = useState('');
   const [currency, setCurrency] = useState('INR');
-  const [dueDays, setDueDays] = useState(initialPO ? 30 : '');
+  const [dueDays, setDueDays] = useState('');
   const [invoiceAmount, setInvoiceAmount] = useState('');
   const [invoiceQuantity, setInvoiceQuantity] = useState('');
   const [remarks, setRemarks] = useState('');
@@ -329,9 +333,23 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
   useEffect(() => {
     if (isViewMode) return;
     if (poNumber) {
-      const terms = selectedPOObj?.paymentTerms || selectedPOObj?.creditDays || vendorProfile?.paymentTerms || vendorProfile?.creditDays;
-      const parsedDays = parseDaysFromPaymentTerms(terms, 30);
-      setDueDays(parsedDays);
+      const terms = selectedPOObj?.paymentTerms ?? selectedPOObj?.creditDays ?? vendorProfile?.paymentTerms ?? vendorProfile?.creditDays;
+      if (terms !== undefined && terms !== null && terms !== '') {
+        const parsedDays = parseDaysFromPaymentTerms(terms, 30);
+        setDueDays(parsedDays);
+      } else {
+        apiFetch(`/api/p2p/purchase-orders?q=${encodeURIComponent(poNumber)}&size=1`)
+          .then((r) => r.json())
+          .then((json) => {
+            if (json.data && json.data.length > 0) {
+              const poData = json.data[0];
+              const poTerms = poData.paymentTerms || poData.creditDays || vendorProfile?.paymentTerms || vendorProfile?.creditDays;
+              const parsed = parseDaysFromPaymentTerms(poTerms, 30);
+              setDueDays(parsed);
+            }
+          })
+          .catch(() => {});
+      }
     } else if (!id && !initialPO) {
       setDueDays('');
     }
