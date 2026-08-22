@@ -2511,18 +2511,51 @@ router.get('/invoices/check-unique', authenticateToken, async (req, res) => {
   }
 });
 
-router.get('/invoices/next-asn', authenticateToken, async (req, res) => {
-  try {
-    const vendorId = req.user?.role === 'Vendor' ? (req.user.sapVendorCode || req.user.id) : String(req.query.vendorId || '');
-    const filter = vendorId ? { vendorId } : {};
+  async function getNextGlobalAsnNumber() {
     const year = new Date().getFullYear();
-    const used = await InvoicePayment.find({ ...filter, $or: [{ asnNumber: /^\d+$/ }, { asnNumber: new RegExp(`^ASN-${year}-\\d+$`) }] }).select('asnNumber').lean();
-    const next = used.reduce((max, item) => Math.max(max, Number(String(item.asnNumber).split('-').pop()) || 0), 0) + 1;
-    return res.json({ success: true, data: { asnNumber: `ASN-${year}-${String(next).padStart(3, '0')}` } });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    const regex = new RegExp(`^ASN-${year}-(\\d+)$`, 'i');
+
+    const [invoices, blEntries] = await Promise.all([
+      InvoicePayment.find({ asnNumber: regex }).select('asnNumber').lean().catch(() => []),
+      RfqBlEntry.find({ $or: [{ asnNumber: regex }, { autoAsnNumber: regex }] }).select('asnNumber autoAsnNumber').lean().catch(() => [])
+    ]);
+
+    let maxNum = 0;
+    for (const inv of invoices) {
+      if (inv.asnNumber) {
+        const match = String(inv.asnNumber).match(regex);
+        if (match) {
+          const val = parseInt(match[1], 10);
+          if (!isNaN(val) && val < 10000 && val > maxNum) maxNum = val;
+        }
+      }
+    }
+
+    for (const bl of blEntries) {
+      const num1 = bl.asnNumber ? String(bl.asnNumber).match(regex) : null;
+      if (num1) {
+        const val = parseInt(num1[1], 10);
+        if (!isNaN(val) && val < 10000 && val > maxNum) maxNum = val;
+      }
+      const num2 = bl.autoAsnNumber ? String(bl.autoAsnNumber).match(regex) : null;
+      if (num2) {
+        const val = parseInt(num2[1], 10);
+        if (!isNaN(val) && val < 10000 && val > maxNum) maxNum = val;
+      }
+    }
+
+    const next = maxNum + 1;
+    return `ASN-${year}-${String(next).padStart(4, '0')}`;
   }
-});
+
+  router.get('/invoices/next-asn', authenticateToken, async (req, res) => {
+    try {
+      const asnNumber = await getNextGlobalAsnNumber();
+      return res.json({ success: true, data: { asnNumber } });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
 
 const parseFlexibleDate = (val) => {
   if (!val) return undefined;
@@ -2675,10 +2708,11 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       const isImportVendor = String(vendor?.vendorType || '').toLowerCase().includes('import');
       let asnNumber = '';
       if (isImportVendor) {
-        const year = new Date().getFullYear();
-        const used = await InvoicePayment.find({ vendorId: vendorIdFinal, $or: [{ asnNumber: /^\d+$/ }, { asnNumber: new RegExp(`^ASN-${year}-\\d+$`) }] }).select('asnNumber').lean();
-        const next = used.reduce((max, item) => Math.max(max, Number(String(item.asnNumber).split('-').pop()) || 0), 0) + 1;
-        asnNumber = `ASN-${year}-${String(next).padStart(3, '0')}`;
+        if (requestedAsnNumber && String(requestedAsnNumber).trim()) {
+          asnNumber = String(requestedAsnNumber).trim();
+        } else {
+          asnNumber = await getNextGlobalAsnNumber();
+        }
       }
 
       const normalizedSupportingDocuments = Array.isArray(supportingDocuments) ? supportingDocuments : [];

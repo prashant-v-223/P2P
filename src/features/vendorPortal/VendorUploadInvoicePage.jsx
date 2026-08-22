@@ -321,13 +321,17 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
 
   useEffect(() => {
     if (!isImportVendor || isViewMode || isEditMode) return;
-    const year = new Date().getFullYear();
-    const currentMax = (invoices || []).reduce((max, invoice) => {
-      const match = String(invoice.asnNumber || '').match(new RegExp(`^ASN-${year}-(\\d+)$`));
-      return Math.max(max, match ? Number(match[1]) : 0);
-    }, 0);
-    setAsnNumber(`ASN-${year}-${String(currentMax + 1).padStart(3, '0')}`);
-  }, [isImportVendor, invoices, isViewMode, isEditMode]);
+    let active = true;
+    apiFetch('/api/p2p/invoices/next-asn')
+      .then((r) => r.json())
+      .then((j) => {
+        if (active && j.success && j.data?.asnNumber) {
+          setAsnNumber(j.data.asnNumber);
+        }
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [isImportVendor, isViewMode, isEditMode]);
 
   // Auto-set Payment Credit Days based on Vendor / PO Payment Terms
   useEffect(() => {
@@ -877,25 +881,22 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
                 <label className="block text-xs font-semibold text-slate-700">
                   Payment Credit Days (Net Days) <span className="text-rose-500">*</span>
                 </label>
-                <span className="text-[10px] text-slate-400 font-bold flex items-center gap-1">
-                  <Lock className="w-3 h-3 text-slate-400" /> Locked
-                </span>
               </div>
               <div className="relative">
                 <input
-                  type="text"
+                  type="number"
+                  disabled={isViewMode}
                   value={dueDays !== '' && dueDays !== null && dueDays !== undefined ? dueDays : ''}
-                  readOnly
-                  aria-readonly="true"
-                  placeholder="Select PO to display credit days"
-                  className="w-full px-3.5 py-2.5 bg-slate-100/90 border border-slate-200 rounded-xl text-slate-800 text-xs font-bold font-mono cursor-not-allowed select-none"
+                  onChange={(e) => setDueDays(e.target.value)}
+                  placeholder="Enter credit days (e.g. 30, 60, 90)"
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-slate-800 text-xs font-bold font-mono outline-none focus:border-[#0d7676] focus:ring-2 focus:ring-teal-100 transition disabled:bg-slate-100 disabled:cursor-not-allowed"
                 />
               </div>
               <p className="text-[10px] text-slate-400 font-medium">
                 {poNumber && dueDays !== '' ? (
-                  `Auto-set to ${dueDays} days based on Payment Terms (${selectedPOObj?.paymentTerms || vendorProfile?.paymentTerms || `${dueDays} Days`}).`
+                  `Auto-populated: ${dueDays} days based on Payment Terms (${selectedPOObj?.paymentTerms || vendorProfile?.paymentTerms || `${dueDays} Days`}). You can adjust credit days manually.`
                 ) : (
-                  'Select a Purchase Order to view Payment Credit Days.'
+                  'Select a Purchase Order or enter Payment Credit Days.'
                 )}
               </p>
             </div>

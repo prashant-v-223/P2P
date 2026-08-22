@@ -78,7 +78,7 @@ const fetchNextASN = async (vendorId = '') => {
     }
   } catch (_) {}
   const year = new Date().getFullYear();
-  return `ASN-${year}-001`;
+  return `ASN-${year}-0001`;
 };
 
 export default function InvoicePaymentFormView() {
@@ -959,7 +959,7 @@ export default function InvoicePaymentFormView() {
               </p>
             </div>
 
-            {/* Net Days (Locked by Payment Terms) */}
+            {/* Net Days */}
             <div className="space-y-1">
               <div className="flex items-center justify-between">
                 <label className="block text-xs font-semibold text-slate-700">
@@ -967,15 +967,18 @@ export default function InvoicePaymentFormView() {
                 </label>
               </div>
               <input
-                type="text"
+                type="number"
                 value={dueDays !== '' && dueDays !== null && dueDays !== undefined ? dueDays : ''}
-                readOnly
-                aria-readonly="true"
-                placeholder="Select PO to display credit days"
-                className="w-full px-3 py-2 bg-slate-100/90 border border-slate-200 rounded-xl text-slate-700 text-xs font-bold font-mono cursor-not-allowed select-none"
+                onChange={(e) => setDueDays(e.target.value)}
+                placeholder="Enter credit days (e.g. 30, 60)"
+                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-slate-700 text-xs font-bold font-mono outline-none focus:border-[#0d7676] focus:ring-2 focus:ring-teal-100 transition"
               />
               <p className="text-[10px] text-slate-400 font-medium">
-               
+                {poNumber && dueDays !== '' ? (
+                  `Auto-populated from Payment Terms. You can adjust credit days manually.`
+                ) : (
+                  'Select a Purchase Order or enter Payment Credit Days.'
+                )}
               </p>
             </div>
 
