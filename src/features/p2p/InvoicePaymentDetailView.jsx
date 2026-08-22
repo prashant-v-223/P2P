@@ -206,12 +206,12 @@ export default function InvoicePaymentDetailView() {
         {/* Top Right Action Buttons */}
         <div className="flex items-center gap-2.5">
           <RecordDbInfoDrawer entityId={invoice?.invoicePaymentId || id} entityType="InvoicePayment" recordData={invoice || approval} />
-          {isDraft && (
+          {!['approved', 'paid', 'completed'].includes(String(invoice.status || '').toLowerCase()) && (
             <button
               onClick={() => navigate(`/admin/invoice-payments/${invoice.invoicePaymentId}/edit`)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-sm shadow-sm transition-all hover:shadow"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-sm shadow-sm transition-all hover:shadow cursor-pointer"
             >
-              <Edit3 className="w-4 h-4" /> Edit
+              <Edit3 className="w-4 h-4" /> Edit Request
             </button>
           )}
 

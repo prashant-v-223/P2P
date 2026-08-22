@@ -2049,52 +2049,98 @@ const updateAdvanceHandler = async (req, res) => {
   try {
     const adv = await AdvancePayment.findOne(buildAdvanceFilter(req.params.id));
     if (!adv) return res.status(404).json({ success: false, error: 'Advance payment not found' });
-    if (!['draft', 'returned'].includes(adv.status)) return res.status(409).json({ success: false, error: 'Only a draft or returned advance can be edited.' });
-    if (!(await canMutateOwnPayment(req, adv))) return res.status(403).json({ success: false, error: 'Only the requester can edit this advance.' });
-
-    const { amount, paymentMode, bankName, bankAccountNumber, remarks, updateRemark } = req.body;
-
-    // Require updateRemark so every change is traceable and transparent
-    if (!String(updateRemark || '').trim()) {
-      return res.status(400).json({ success: false, error: 'An update remark is required to explain what changed and why.' });
+    
+    const statusLower = String(adv.status || '').toLowerCase();
+    if (!['draft', 'returned', 'rejected'].includes(statusLower)) {
+      return res.status(409).json({ success: false, error: 'Only draft, returned, or rejected advance payments can be edited.' });
+    }
+    if (!(await canMutateOwnPayment(req, adv))) {
+      return res.status(403).json({ success: false, error: 'Only the requester can edit this advance.' });
     }
 
+    const { amount, currency, paymentMode, bankName, bankAccountNumber, remarks, updateRemark, resubmit, gstBreakup, supportingDocuments } = req.body;
+
     const changedFields = [];
-    if (amount !== undefined) { adv.amount = Number(amount); changedFields.push(`amount → ${amount}`); }
+    if (amount !== undefined && Number(amount) !== adv.amount) {
+      adv.amount = Number(amount);
+      changedFields.push(`amount → ${amount}`);
+    }
+    if (currency !== undefined && currency !== adv.currency) {
+      adv.currency = currency;
+      changedFields.push(`currency → ${currency}`);
+    }
     if (paymentMode !== undefined) { adv.paymentMode = paymentMode; changedFields.push(`paymentMode → ${paymentMode}`); }
     if (bankName !== undefined) { adv.bankName = bankName; changedFields.push('bankName'); }
     if (bankAccountNumber !== undefined) { adv.bankAccountNumber = bankAccountNumber; changedFields.push('bankAccountNumber'); }
     if (remarks !== undefined) { adv.remarks = remarks; changedFields.push('remarks'); }
+    if (gstBreakup !== undefined) { adv.gstBreakup = gstBreakup; }
+    if (supportingDocuments !== undefined) { adv.supportingDocuments = supportingDocuments; }
+
+    const effectiveRemark = String(updateRemark || remarks || 'Advance payment updated and resubmitted for approval.').trim();
 
     // Append update to audit history
     if (!Array.isArray(adv.updateHistory)) adv.updateHistory = [];
     adv.updateHistory.push({
       updatedBy: req.user?.name || req.user?.email || 'User',
       updatedAt: new Date(),
-      updateRemark: String(updateRemark).trim(),
+      updateRemark: effectiveRemark,
       changedFields: changedFields.join(', ') || 'no field changes'
     });
+
+    // Reset status to 'pending' and re-trigger approval workflow
+    adv.status = 'pending';
+
+    const numAmount = Number(adv.amount) || 0;
+    const poCurrency = adv.currency || 'INR';
+    const poRef = adv.sapPoNumber || adv.poId || '';
+    const vendorNameFinal = adv.vendorName || '';
+
+    const { amountINR, fxRate, amountFormatted } = await getFxConversion(numAmount, poCurrency, adv.fxRate || 1);
+
+    const wf = await resolveWorkflowFromDB('Advance Payment', amountINR, { currency: poCurrency, vendorType: req.user?.vendorType, poType: '' });
+
+    // Delete existing approval record for this advance if present before creating new one
+    await Approval.deleteOne({ id: adv.advanceId }).catch(() => {});
+
+    const approval = await createApprovalRecord({
+      referenceId: adv.advanceId,
+      type: 'Advance Payment',
+      vendorName: vendorNameFinal,
+      amountFormatted,
+      poRef,
+      requestedBy: req.user?.name || adv.requestedBy || 'Finance Team',
+      requestedById: req.user?.id || req.user?.email || adv.requestedById,
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: { amount: numAmount, amountINR, currency: poCurrency, fxRate, poId: poRef, vendorId: adv.vendorId },
+      wf
+    });
+
+    adv.approvalInstanceId = approval._id.toString();
+    adv.requestedByTeam = approval.requestedByTeam || null;
+    adv.assignedApprover = approval.assignedApprover || null;
+    adv.assignedApproverName = approval.assignedApproverName || null;
+    adv.assignedApproverRole = approval.assignedApproverRole || null;
 
     await adv.save();
 
     try {
       await WorkflowAudit.create({
         eventId: `wa-${crypto.randomUUID()}`,
-        eventType: 'ADVANCE_UPDATED',
+        eventType: 'ADVANCE_RESUBMITTED',
         entityType: 'AdvancePayment',
         entityId: adv.advanceId,
         referenceNumber: adv.advanceId,
-        poReference: adv.sapPoNumber || adv.poId,
-        action: 'update',
+        poReference: poRef,
+        action: 'resubmit',
         actorId: req.user?.id || req.user?.email || 'system',
         actorName: req.user?.name || req.user?.email || 'User',
         actorRole: req.user?.role || 'User',
-        remarks: `Advance Payment updated. Reason: ${String(updateRemark).trim()}. Changed: ${changedFields.join(', ') || 'none'}.`,
+        remarks: `Advance Payment updated and resent for approval. Reason: ${effectiveRemark}. Changed: ${changedFields.join(', ') || 'none'}.`,
         occurredAt: new Date()
       });
     } catch (_) { }
 
-    return res.json({ success: true, data: adv });
+    return res.json({ success: true, message: 'Advance payment updated and resent for approval.', data: adv });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -2920,26 +2966,59 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         - (invoice.tdsAmount || 0) - (invoice.advanceAdjusted || 0)
       );
 
+      // Resubmit for approval on edit
+      invoice.status = 'pending';
+
+      const numGross = Number(invoice.grossAmount) || 0;
+      const invCurrency = invoice.currency || 'INR';
+      const poRef = invoice.sapPoNumber || invoice.poId || '';
+      const vendorNameFinal = invoice.vendorName || '';
+
+      const { amountINR, fxRate, amountFormatted } = await getFxConversion(numGross, invCurrency, invoice.fxRate || 1);
+
+      const wf = await resolveWorkflowFromDB('Invoice Payment', amountINR, { currency: invCurrency, vendorType: req.user?.vendorType, poType: '' });
+
+      await Approval.deleteOne({ id: invoice.invoicePaymentId }).catch(() => {});
+
+      const approval = await createApprovalRecord({
+        referenceId: invoice.invoicePaymentId,
+        type: 'Invoice Payment',
+        vendorName: vendorNameFinal,
+        amountFormatted,
+        poRef,
+        requestedBy: req.user?.name || invoice.requestedBy || 'Finance Team',
+        requestedById: req.user?.id || req.user?.email || invoice.requestedById,
+        requestId: req.headers['x-request-id'],
+        transactionSnapshot: { amount: numGross, amountINR, currency: invCurrency, fxRate, poId: poRef, vendorId: invoice.vendorId },
+        wf
+      });
+
+      invoice.approvalInstanceId = approval._id.toString();
+      invoice.requestedByTeam = approval.requestedByTeam || null;
+      invoice.assignedApprover = approval.assignedApprover || null;
+      invoice.assignedApproverName = approval.assignedApproverName || null;
+      invoice.assignedApproverRole = approval.assignedApproverRole || null;
+
       await invoice.save();
 
       try {
         await WorkflowAudit.create({
           eventId: `wa-${crypto.randomUUID()}`,
-          eventType: 'INVOICE_UPDATED',
+          eventType: 'INVOICE_RESUBMITTED',
           entityType: 'InvoicePayment',
           entityId: invoice.invoicePaymentId,
           referenceNumber: invoice.invoiceNumber,
           poReference: invoice.sapPoNumber || invoice.poId,
-          action: 'update',
+          action: 'resubmit',
           actorId: req.user?.id || req.user?.email || 'admin@rayzon.one',
           actorName: req.user?.name || req.user?.companyName || req.user?.email || 'System Admin',
           actorRole: req.user?.role || 'System Admin',
-          remarks: `Invoice Payment "${invoice.invoicePaymentId}" details updated (Gross Amount: ${invoice.grossAmount}, GRN: ${invoice.grnNumber || 'N/A'}).`,
+          remarks: `Invoice Payment "${invoice.invoicePaymentId}" details updated and resent for approval (Gross Amount: ${invoice.grossAmount}, GRN: ${invoice.grnNumber || 'N/A'}).`,
           occurredAt: new Date()
         });
       } catch (_) { }
 
-      return res.json({ success: true, data: invoice });
+      return res.json({ success: true, message: 'Invoice payment updated and resent for approval.', data: invoice });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
     }

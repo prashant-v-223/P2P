@@ -21,14 +21,16 @@ export default function EditAdvancePaymentView() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const [poNumber, setPoNumber] = useState('4100005459');
-  const [vendorCode, setVendorCode] = useState('10000955');
-  const [poValue, setPoValue] = useState(43164.40);
+  const [poNumber, setPoNumber] = useState('');
+  const [vendorCode, setVendorCode] = useState('');
+  const [poValue, setPoValue] = useState(0);
 
   const [amount, setAmount] = useState('');
-  const [currency, setCurrency] = useState('INR — Indian Rupee');
+  const [currency, setCurrency] = useState('INR');
   const [reason, setReason] = useState('');
+  const [updateRemark, setUpdateRemark] = useState('');
   const [withGst, setWithGst] = useState(false);
+  const [advanceStatus, setAdvanceStatus] = useState('');
   const [documents, setDocuments] = useState([]);
 
   useEffect(() => {
@@ -38,23 +40,26 @@ export default function EditAdvancePaymentView() {
   const fetchAdvanceForEdit = async () => {
     try {
       setLoading(true);
-      const res = await apiFetch('/api/p2p/advances');
+      const res = await apiFetch(`/api/p2p/advances/${id}`);
       if (res.ok) {
         const json = await res.json();
-        if (json.data) {
-          const found = json.data.find(a => a.advanceId === id || a.reference === id);
-          if (found) {
-            setPoNumber(found.sapPoNumber || found.poId || '');
-            setVendorCode(found.vendorId || '');
-            setAmount(found.amount?.toString() || '');
-            setReason(found.remarks || '');
-            setWithGst(found.gstBreakup?.totalGst > 0);
-            if (Array.isArray(found.documents)) setDocuments(found.documents);
-          }
+        const found = json.data;
+        if (found) {
+          setPoNumber(found.sapPoNumber || found.poId || '');
+          setVendorCode(found.vendorId || found.vendorName || '');
+          setPoValue(Number(found.poValue || found.totalPoAmount || 0));
+          setAmount(found.amount?.toString() || '');
+          setCurrency(found.currency || 'INR');
+          setReason(found.remarks || '');
+          setWithGst(found.gstBreakup?.totalGst > 0);
+          setAdvanceStatus(found.status || '');
+          const docs = found.supportingDocuments || found.documents || [];
+          if (Array.isArray(docs)) setDocuments(docs);
         }
       }
     } catch (e) {
       console.error('Error fetching advance for edit:', e);
+      showToast({ title: 'Error', description: 'Failed to load advance payment details.', type: 'error' });
     } finally {
       setLoading(false);
     }
@@ -62,20 +67,50 @@ export default function EditAdvancePaymentView() {
 
   const handleSave = async (e) => {
     e.preventDefault();
+    if (!amount || Number(amount) <= 0) {
+      return showToast({ title: 'Validation Error', description: 'Enter a valid requested amount.', type: 'error' });
+    }
     setSaving(true);
     try {
+      const res = await apiFetch(`/api/p2p/advances/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          amount: Number(amount),
+          currency,
+          remarks: reason,
+          updateRemark: updateRemark.trim() || 'Advance payment details updated and resubmitted for approval.',
+          resubmit: true
+        })
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Failed to update advance payment.');
+      }
       showToast({
-        title: 'Advance Payment Updated',
-        description: `Changes saved for advance ${id || 'ADV-20260717-0002'}.`,
+        title: 'Resent for Approval',
+        description: `Changes saved for advance ${id}. Request has been resubmitted for approval.`,
         type: 'success'
       });
-      navigate(`/p2p/advance-payments/${id || 'ADV-20260717-0002'}`);
+      navigate(`/admin/advance-payments/${id}`);
     } catch (e) {
-      console.error('Error updating advance:', e);
+      showToast({
+        title: 'Update Failed',
+        description: e.message,
+        type: 'error'
+      });
     } finally {
       setSaving(false);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="py-20 flex flex-col items-center justify-center space-y-2">
+        <Loader2 className="w-8 h-8 animate-spin text-[#0d7676]" />
+        <p className="text-xs font-semibold text-slate-600">Loading advance payment details...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full space-y-4 font-sans text-slate-800 pb-10 text-left">
@@ -83,21 +118,21 @@ export default function EditAdvancePaymentView() {
       {/* 1. Breadcrumbs & Title Toolbar */}
       <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs">
         <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium mb-1">
-          <Link to="/p2p/advances" className="hover:text-slate-900 transition-colors">
+          <Link to="/admin/advance-payments" className="hover:text-slate-900 transition-colors">
             Advance Payments
           </Link>
           <span>/</span>
-          <Link to={`/p2p/advance-payments/${id || 'ADV-20260717-0002'}`} className="hover:text-slate-900 transition-colors font-mono">
-            {id || 'ADV-20260717-0002'}
+          <Link to={`/admin/advance-payments/${id}`} className="hover:text-slate-900 transition-colors font-mono">
+            {id}
           </Link>
           <span>/</span>
           <span className="font-bold text-slate-800">Edit</span>
         </div>
         <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">Edit Advance Payment</h1>
-        <p className="text-xs text-slate-400 font-mono mt-0.5">{id || 'ADV-20260717-0002'}</p>
+        <p className="text-xs text-slate-400 font-mono mt-0.5">{id}</p>
       </div>
 
-      {/* 2. Main Two-Column Layout (Matching Screenshot 2 1:1) */}
+      {/* 2. Main Two-Column Layout */}
       <form onSubmit={handleSave} className="grid grid-cols-1 lg:grid-cols-12 gap-5 w-full items-start">
         
         {/* LEFT COLUMN (8 Cols / ~65% width) */}
@@ -109,15 +144,15 @@ export default function EditAdvancePaymentView() {
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/80 grid grid-cols-3 gap-4 text-xs">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">PO NUMBER</p>
-                <p className="font-mono font-bold text-slate-900 mt-0.5">{poNumber}</p>
+                <p className="font-mono font-bold text-slate-900 mt-0.5">{poNumber || '—'}</p>
               </div>
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">VENDOR CODE</p>
-                <p className="font-mono font-bold text-slate-900 mt-0.5">{vendorCode}</p>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">VENDOR CODE / NAME</p>
+                <p className="font-mono font-bold text-slate-900 mt-0.5">{vendorCode || '—'}</p>
               </div>
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">PO VALUE</p>
-                <p className="font-mono font-bold text-slate-900 mt-0.5">INR {poValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                <p className="font-mono font-bold text-slate-900 mt-0.5">{currency} {poValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
               </div>
             </div>
           </div>
@@ -145,9 +180,9 @@ export default function EditAdvancePaymentView() {
                 <label className="block text-xs font-bold text-slate-700 mb-1">Currency <span className="text-rose-500">*</span></label>
                 <SearchableSelect
                   options={[
-                    { label: 'INR — Indian Rupee', value: 'INR — Indian Rupee' },
-                    { label: 'USD — US Dollar', value: 'USD — US Dollar' },
-                    { label: 'EUR — Euro', value: 'EUR — Euro' }
+                    { label: 'INR — Indian Rupee', value: 'INR' },
+                    { label: 'USD — US Dollar', value: 'USD' },
+                    { label: 'EUR — Euro', value: 'EUR' }
                   ]}
                   value={currency}
                   onChange={(val) => setCurrency(val)}
@@ -158,7 +193,7 @@ export default function EditAdvancePaymentView() {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Reason <span className="text-rose-500">*</span></label>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Reason / Remarks <span className="text-rose-500">*</span></label>
               <textarea
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
@@ -166,6 +201,17 @@ export default function EditAdvancePaymentView() {
                 className="w-full px-3.5 py-2.5 text-xs border border-slate-300 rounded-xl outline-none font-medium bg-white focus:ring-2 focus:ring-teal-500/20"
                 required
               ></textarea>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Update Remark (Reason for editing)</label>
+              <input
+                type="text"
+                value={updateRemark}
+                onChange={(e) => setUpdateRemark(e.target.value)}
+                placeholder="Explain what was changed before resubmitting for approval..."
+                className="w-full px-3.5 py-2 text-xs border border-slate-300 rounded-xl outline-none font-medium bg-white focus:ring-2 focus:ring-teal-500/20"
+              />
             </div>
           </div>
 
@@ -183,34 +229,31 @@ export default function EditAdvancePaymentView() {
             </label>
           </div>
 
-          {/* Card 4: Add Documents */}
+          {/* Card 4: Documents */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-2xs space-y-3">
-            <h3 className="font-bold text-slate-900 text-sm">Add Documents</h3>
-            <p className="text-xs text-slate-400">Upload additional supporting documents (existing documents are preserved).</p>
+            <h3 className="font-bold text-slate-900 text-sm">Supporting Documents</h3>
             
-            <div className="space-y-2">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">EXISTING DOCUMENTS</p>
-              {documents.map((doc, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
-                  <div className="flex items-center gap-2.5">
-                    <FileText className="w-4 h-4 text-slate-500" />
-                    <span className="font-bold text-slate-800">{doc.name}</span>
+            {documents.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">EXISTING DOCUMENTS</p>
+                {documents.map((doc, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                    <div className="flex items-center gap-2.5">
+                      <FileText className="w-4 h-4 text-slate-500" />
+                      <span className="font-bold text-slate-800">{doc.name || doc.fileName || doc.title || `Document ${idx + 1}`}</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400 font-mono">advance_request</span>
                   </div>
-                  <span className="text-[11px] text-slate-400 font-mono">advance_request</span>
-                </div>
-              ))}
-            </div>
-
-            <label className="border-2 border-dashed border-slate-200 rounded-xl p-5 text-center hover:border-teal-400 transition-colors cursor-pointer bg-slate-50/40 block">
-              <input type="file" multiple className="hidden" />
-              <Upload className="w-5 h-5 text-slate-400 mx-auto mb-1" />
-              <span className="font-bold text-slate-700 text-xs">Choose Files</span>
-            </label>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400 italic">No supporting documents attached.</p>
+            )}
           </div>
 
         </div>
 
-        {/* RIGHT COLUMN (4 Cols / ~35% width) matching Screenshot 2 1:1 */}
+        {/* RIGHT COLUMN (4 Cols / ~35% width) */}
         <div className="lg:col-span-4 space-y-4 w-full">
           <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-2xs space-y-4">
             <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">SUMMARY</p>
@@ -218,36 +261,36 @@ export default function EditAdvancePaymentView() {
             <div className="space-y-2.5 text-xs">
               <div className="flex justify-between">
                 <span className="text-slate-500 font-medium">Reference</span>
-                <span className="font-mono font-bold text-slate-900">{id || 'ADV-20260717-0002'}</span>
+                <span className="font-mono font-bold text-slate-900">{id}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500 font-medium">Current Status</span>
-                <span className="font-bold text-slate-700 capitalize">Draft</span>
+                <span className="font-bold text-amber-700 capitalize">{advanceStatus || 'Draft'}</span>
               </div>
               <div className="flex justify-between border-t border-slate-100 pt-2">
                 <span className="text-slate-500 font-medium">Amount</span>
-                <span className="font-mono font-extrabold text-slate-900">INR {Number(amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                <span className="font-mono font-extrabold text-slate-900">{currency} {Number(amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
               </div>
             </div>
 
             <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-800 font-medium">
-              After saving, you'll need to re-submit for approval.
+              ⚡ Saving changes will automatically reset status to Pending and resubmit this advance payment request for approval.
             </div>
 
             <div className="space-y-2 pt-1">
               <button
                 type="submit"
                 disabled={saving}
-                className="w-full py-2.5 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                className="w-full py-2.5 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
               >
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                {saving ? 'Saving...' : 'Save Changes'}
+                {saving ? 'Resubmitting...' : 'Save & Resubmit for Approval'}
               </button>
 
               <button
                 type="button"
-                onClick={() => navigate(`/p2p/advance-payments/${id || 'ADV-20260717-0002'}`)}
-                className="w-full py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors"
+                onClick={() => navigate(`/admin/advance-payments/${id}`)}
+                className="w-full py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors cursor-pointer"
               >
                 Cancel
               </button>

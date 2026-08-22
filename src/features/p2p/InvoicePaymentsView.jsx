@@ -533,11 +533,11 @@ const getInitials = (name) => {
                             </button>
                           )}
 
-                          {canEdit && ['draft', 'returned'].includes(String(inv.status || '').toLowerCase()) && (
+                          {canEdit && !['approved', 'paid', 'completed'].includes(String(inv.status || '').toLowerCase()) && (
                             <button
                               onClick={() => navigate(`/admin/invoice-payments/${inv.invoicePaymentId}/edit`)}
-                              title="Edit Invoice"
-                              className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-slate-900 transition-colors"
+                              title="Edit Invoice & Resubmit for Approval"
+                              className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-slate-900 transition-colors cursor-pointer"
                             >
                               <Edit3 className="w-3.5 h-3.5" />
                             </button>

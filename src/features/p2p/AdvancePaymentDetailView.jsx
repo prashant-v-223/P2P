@@ -271,11 +271,21 @@ export default function AdvancePaymentDetailView() {
         <div className="flex items-center gap-2">
           <RecordDbInfoDrawer entityId={id} entityType="AdvancePayment" recordData={advance || approval} />
 
+          {/* Edit Request — shown for draft, returned, or rejected */}
+          {['draft', 'returned', 'rejected'].includes(String(st || '').toLowerCase()) && (
+            <button
+              onClick={() => navigate(`/admin/advance-payments/${id}/edit`)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs transition-colors shadow-2xs cursor-pointer"
+            >
+              <Edit3 className="w-3.5 h-3.5" /> Edit Request
+            </button>
+          )}
+
           {/* Delete — only shown for draft */}
           {isDraft && (
             <button
               onClick={handleDelete}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-xs transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-xs transition-colors cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5" /> Delete
             </button>
