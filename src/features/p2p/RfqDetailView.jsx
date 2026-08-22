@@ -393,6 +393,7 @@ export default function RfqDetailView() {
 
   const cycleHistory = rfq.reassignmentHistory || [];
   const currentCycleNumber = cycleHistory.length + 1;
+  const isRfqEditable = !['pending_approval', 'awarded', 'closed', 'cancelled'].includes(String(rfq.status || '').toLowerCase());
 
   // Workflow pipeline stages from rfq.workflow
   const wf = rfq.workflow || {};
@@ -1066,6 +1067,7 @@ export default function RfqDetailView() {
         documentableId={rfq.rfqId}
         documentType="rfq_document"
         multiple={true}
+        readOnly={!canEdit || !isRfqEditable}
         onDocumentsChange={(docs) => setDocumentCount(docs.length)}
       />
     </div>

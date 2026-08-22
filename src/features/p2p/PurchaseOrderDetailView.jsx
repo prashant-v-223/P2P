@@ -558,6 +558,7 @@ export default function PurchaseOrderDetailView() {
                 documentableId={po.poNumber}
                 documentType="po_copy"
                 multiple={true}
+                readOnly={['closed', 'cancelled', 'completed'].includes(String(po.status || '').toLowerCase())}
               />
             </div>
           )}
