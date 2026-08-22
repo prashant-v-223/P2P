@@ -961,9 +961,6 @@ export default function InvoicePaymentFormView() {
                 <label className="block text-xs font-semibold text-slate-700">
                   Payment Credit Days (Net Days) <span className="text-rose-500">*</span>
                 </label>
-                <span className="text-[10px] text-slate-400 font-bold flex items-center gap-1">
-                  <Lock className="w-3 h-3 text-slate-400" /> Locked
-                </span>
               </div>
               <input
                 type="text"
@@ -974,11 +971,7 @@ export default function InvoicePaymentFormView() {
                 className="w-full px-3 py-2 bg-slate-100/90 border border-slate-200 rounded-xl text-slate-700 text-xs font-bold font-mono cursor-not-allowed select-none"
               />
               <p className="text-[10px] text-slate-400 font-medium">
-                {poNumber && dueDays !== '' ? (
-                  `Auto-set to ${dueDays} days according to Payment Terms (${selectedPoObj?.paymentTerms || selectedPoObj?.creditDays || `${dueDays} Days`}).`
-                ) : (
-                  'Select a Purchase Order to view Payment Credit Days.'
-                )}
+               
               </p>
             </div>
 

@@ -166,6 +166,8 @@ export default function RfqFormView() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  const [rfqStatus, setRfqStatus] = useState('');
+
   // Form State
   const [title, setTitle] = useState(copyFrom?.title || '');
   const [linkedPoId, setLinkedPoId] = useState(copyFrom?.poId || '');
@@ -206,6 +208,7 @@ export default function RfqFormView() {
           const jsonR = await resR.json();
           if (resR.ok && jsonR.data) {
             const data = jsonR.data;
+            setRfqStatus(data.status || '');
             setTitle(data.title || '');
             setLinkedPoId(data.poId || data.sapPoNumber || '');
             setDescription(data.description || '');
@@ -404,8 +407,31 @@ export default function RfqFormView() {
     setDocuments(docs => docs.filter((_, i) => i !== index));
   };
 
+  const isNonEditableStatus = isEdit && ['pending_approval', 'awarded', 'closed', 'cancelled'].includes(String(rfqStatus || '').toLowerCase());
+
   return (
     <div className="w-full space-y-6 font-sans pb-24 antialiased text-left">
+      {isNonEditableStatus && (
+        <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+            <div>
+              <p className="font-extrabold text-xs text-amber-900">RFQ Cannot Be Edited</p>
+              <p className="text-xs font-semibold text-amber-700 mt-0.5">
+                This RFQ is currently in <span className="font-black uppercase">{rfqStatus?.replace('_', ' ')}</span> status and its specifications cannot be modified.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate(`/admin/rfqs/${id}`)}
+            className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition shrink-0 cursor-pointer"
+          >
+            View RFQ Details
+          </button>
+        </div>
+      )}
+
       {/* Header Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-4">
         <div>
@@ -436,8 +462,8 @@ export default function RfqFormView() {
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={saving}
-            className="px-5 py-2 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] text-white font-black text-xs shadow-2xs transition cursor-pointer flex items-center gap-2 disabled:opacity-50"
+            disabled={saving || isNonEditableStatus}
+            className="px-5 py-2 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] text-white font-black text-xs shadow-2xs transition cursor-pointer flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saving && <Loader2 className="w-4 h-4 animate-spin" />}
             <span>{saving ? 'Saving...' : isEdit ? 'Update RFQ' : 'Create & Publish RFQ'}</span>

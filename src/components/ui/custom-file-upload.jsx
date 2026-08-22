@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { UploadCloud, FileText, X, CheckCircle2, AlertCircle, Loader2, ExternalLink } from 'lucide-react';
-import { apiFetch } from '../../services/api';
+import { apiFetch, getAccessToken } from '../../services/api';
 
 export function CustomFileUpload({
   value,
@@ -128,11 +128,7 @@ export function CustomFileUpload({
     const url = file.fileUrl || file.url || file.s3Key || file.fileName;
     if (!url) return null;
     if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('/uploads/')) return url;
-    const token = (typeof window !== 'undefined' && (
-      localStorage.getItem('rayzon_vendor_token') ||
-      localStorage.getItem('rayzon_access_token') ||
-      localStorage.getItem('rayzon_token')
-    )) || '';
+    const token = getAccessToken() || '';
     const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
     return `/api/documents/resolve-url?fileUrl=${encodeURIComponent(url)}&redirect=true${tokenParam}`;
   };

@@ -453,7 +453,7 @@ console.log("canMarkPaid",canMarkPaid);
                             </button>
                           )}
 
-                          {canEdit && (
+                          {canEdit && ['draft', 'returned'].includes(String(adv.status || '').toLowerCase()) && (
                             <button
                               onClick={() => navigate(`/p2p/advance-payments/${adv.reference}/edit`)}
                               title="Edit Advance"

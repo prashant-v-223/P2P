@@ -533,7 +533,7 @@ const getInitials = (name) => {
                             </button>
                           )}
 
-                          {canEdit && (
+                          {canEdit && ['draft', 'returned'].includes(String(inv.status || '').toLowerCase()) && (
                             <button
                               onClick={() => navigate(`/admin/invoice-payments/${inv.invoicePaymentId}/edit`)}
                               title="Edit Invoice"

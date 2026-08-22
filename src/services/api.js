@@ -1,16 +1,21 @@
 // Centralized API Client Service with Automatic JWT Bearer Headers, Multi-Port Fallback & Silent Token Refresh
 
-const getAccessToken = () => {
-  const path = window.location.pathname;
+export const getAccessToken = () => {
+  const path = typeof window !== 'undefined' ? window.location.pathname : '';
   if (path.startsWith('/vendor')) {
-    return localStorage.getItem('rayzon_vendor_token');
+    const vToken = localStorage.getItem('rayzon_vendor_token');
+    if (vToken) return vToken;
   }
   if (path.startsWith('/customs') || path.startsWith('/agent')) {
-    return localStorage.getItem('rayzon_agent_token');
+    const aToken = localStorage.getItem('rayzon_agent_token');
+    if (aToken) return aToken;
   }
   return localStorage.getItem('rayzon_access_token') ||
     sessionStorage.getItem('rayzon_access_token') ||
-    localStorage.getItem('rayzon_token');
+    localStorage.getItem('rayzon_token') ||
+    localStorage.getItem('rayzon_vendor_token') ||
+    localStorage.getItem('rayzon_agent_token') ||
+    null;
 };
 const getRefreshToken = () => {
   const path = window.location.pathname;

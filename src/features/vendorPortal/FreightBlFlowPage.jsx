@@ -71,13 +71,28 @@ export function FreightBlEntriesPage() {
             </p>
           </div>
 
-          {data.remainingContainers > 0 && (
+          {data.remainingContainers > 0 ? (
             <Link
               to={`/vendor/rfqs/${id}/bl-entries/create`}
               className="inline-flex items-center gap-1.5 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] px-4 py-2 text-xs font-black text-white shadow-2xs transition active:scale-95 shrink-0"
             >
               <Plus className="h-4 w-4" /> New BL Entry
             </Link>
+          ) : (
+            <div className="relative group shrink-0">
+              <button
+                disabled
+                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-200 text-slate-400 px-4 py-2 text-xs font-black cursor-not-allowed opacity-75 shadow-2xs"
+              >
+                <Plus className="h-4 w-4" /> New BL Entry
+              </button>
+              <div className="absolute right-0 bottom-full mb-2 hidden group-hover:flex flex-col items-center w-56 z-50 pointer-events-none">
+                <div className="bg-slate-900 text-white text-[11px] font-semibold rounded-lg py-1.5 px-3 shadow-lg text-center leading-snug">
+                  All awarded containers ({data.allocation?.containers}) have been allocated to BL entries.
+                </div>
+                <div className="w-2.5 h-2.5 bg-slate-900 rotate-45 -mt-1"></div>
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -254,7 +269,7 @@ export function FreightBlCreatePage() {
       errors.blNumber = 'BL Number can only contain letters, numbers, hyphens, and slashes.';
     }
 
-    if (!cleanAsn) {
+    if (requiresAsn && !cleanAsn) {
       errors.asnNumber = 'ASN Number is required to link with RFQ & PO records.';
     } else if (cleanAsn && cleanAsn.length < 3) {
       errors.asnNumber = 'ASN Number must be at least 3 characters.';
@@ -378,9 +393,9 @@ export function FreightBlCreatePage() {
             </div>
 
             {/* ASN Number Field - import BL only */}
-            {requiresAsn && <div>
+            <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                ASN Number (Advance Shipping Notice) <span className="text-rose-500">*</span>
+                ASN Number (Advance Shipping Notice) {requiresAsn ? <span className="text-rose-500">*</span> : <span className="text-slate-400 font-normal">(Optional)</span>}
               </label>
               <div className="relative">
                 <input
@@ -397,7 +412,7 @@ export function FreightBlCreatePage() {
                     fieldErrors.asnNumber ? 'border-rose-400 bg-rose-50/30 focus:border-rose-500 focus:ring-rose-100' : 
                     asnValidatedSuccess ? 'border-emerald-400 bg-emerald-50/20 focus:border-emerald-500' : ''
                   }`}
-                  required
+                  required={requiresAsn}
                 />
                 {asnValidating && (
                   <div className="absolute right-3 top-2.5 flex items-center gap-1 text-[11px] font-bold text-teal-600">
@@ -415,7 +430,7 @@ export function FreightBlCreatePage() {
                   <AlertCircle className="w-3 h-3 shrink-0" /> {fieldErrors.asnNumber}
                 </p>
               )}
-            </div>}
+            </div>
 
             {/* Container Count Field */}
             <div className="sm:col-span-2">
@@ -627,6 +642,8 @@ export function FreightBlDetailPage() {
   const activeIndex = ['custom_cleared', 'invoice_pending', 'payment_requested', 'payment_approved', 'payment_paid', 'closed'].includes(entry.status)
     ? 3
     : Math.max(0, steps.findIndex((s) => s.key === entry.status));
+
+  const canInvoice = Boolean(entry.canInvoice ?? ['custom_cleared', 'invoice_pending', 'payment_requested', 'payment_approved', 'payment_paid', 'closed'].includes(entry.status));
 
   return (
     <div className="mx-auto max-w-6xl space-y-3.5 pb-8 font-sans antialiased text-left">
@@ -850,13 +867,28 @@ export function FreightBlDetailPage() {
               </span>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setShowInvoiceForm(true)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] text-white text-xs font-black shadow-2xs transition active:scale-95 shrink-0 self-start sm:self-auto"
-            >
-              <Plus className="w-3.5 h-3.5" /> Raise New Invoice
-            </button>
+            <div className="relative group shrink-0 self-start sm:self-auto">
+              <button
+                type="button"
+                disabled={!canInvoice}
+                onClick={() => setShowInvoiceForm(true)}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black shadow-2xs transition active:scale-95 ${
+                  canInvoice
+                    ? 'bg-[#0d7676] hover:bg-[#0f766e] text-white cursor-pointer'
+                    : 'bg-slate-200 text-slate-400 cursor-not-allowed opacity-75'
+                }`}
+              >
+                <Plus className="w-3.5 h-3.5" /> Raise New Invoice
+              </button>
+              {!canInvoice && (
+                <div className="absolute right-0 bottom-full mb-2 hidden group-hover:flex flex-col items-center w-64 z-50 pointer-events-none">
+                  <div className="bg-slate-900 text-white text-[11px] font-semibold rounded-lg py-1.5 px-3 shadow-lg text-center leading-snug">
+                    Logistics invoice can only be raised after customs clearance is completed by the Customs Agent.
+                  </div>
+                  <div className="w-2.5 h-2.5 bg-slate-900 rotate-45 -mt-1"></div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Search & Filter bar (rendered neatly if invoices present) */}

@@ -133,11 +133,13 @@ export default function FreightRfqDetailPage() {
           <div className="space-y-1.5">
             <div className="flex items-center gap-2">
               <span className={`rounded-full px-3 py-0.5 text-xs font-black uppercase ${
-                status === 'awarded' || rfq.myAllocation
+                rfq.myAllocation
                   ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                  : 'bg-teal-50 text-[#0d7676] border border-teal-200'
+                  : status === 'pending_approval'
+                    ? 'bg-amber-50 text-amber-800 border border-amber-300'
+                    : 'bg-teal-50 text-[#0d7676] border border-teal-200'
               }`}>
-                {rfq.status || 'AWARDED'}
+                {rfq.myAllocation ? 'AWARDED' : (rfq.status || 'PUBLISHED')}
               </span>
               <span className="font-mono text-xs font-bold text-slate-400">
                 {rfq.rfqNumber}
@@ -214,8 +216,8 @@ export default function FreightRfqDetailPage() {
         </div>
       )}
 
-      {/* When RFQ is Awarded or Allocation Granted: Render Clean Awarded Quote Summary (Hides yellow disabled quote box) */}
-      {status === 'awarded' || rfq.myAllocation ? (
+      {/* When RFQ Allocation Granted: Render Clean Awarded Quote Summary (Hides quote form) */}
+      {Boolean(rfq.myAllocation) ? (
         <section className="rounded-3xl border border-slate-200 bg-white shadow-2xs overflow-hidden space-y-6 p-6 sm:p-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div>

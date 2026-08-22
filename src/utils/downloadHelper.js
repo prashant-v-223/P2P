@@ -1,3 +1,5 @@
+import { apiFetch } from '../services/api';
+
 // downloadHelper.js - Universal Instant File Downloader (AWS S3 & Server Storage)
 export async function downloadDocumentFile(fileUrlOrName, customTitle) {
   const fileStr = String(fileUrlOrName || customTitle || 'Document.pdf').trim();
@@ -30,9 +32,8 @@ export async function downloadDocumentFile(fileUrlOrName, customTitle) {
   // Triggers native browser attachment download immediately without async gesture blocking
   const downloadUrl = `/api/p2p/download-file?fileUrl=${encodeURIComponent(fileStr)}&name=${encodeURIComponent(filename)}`;
   
-  const token = localStorage.getItem('rayzon_access_token') || sessionStorage.getItem('rayzon_access_token') || localStorage.getItem('rayzon_token');
   try {
-    const response = await fetch(downloadUrl, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const response = await apiFetch(downloadUrl);
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.error || 'Document is not available for download.');

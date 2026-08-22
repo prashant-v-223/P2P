@@ -479,7 +479,7 @@ export default function RfqDetailView() {
               <span>Close RFQ</span>
             </button>
           )}
-          {canEdit && (
+          {canEdit && !['pending_approval', 'awarded', 'closed', 'cancelled'].includes(String(rfq.status || '').toLowerCase()) && (
             <button
               onClick={() => navigate(`/admin/rfqs/${rfq.rfqId}/edit`)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition shadow-2xs cursor-pointer"

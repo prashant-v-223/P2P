@@ -319,7 +319,7 @@ export default function RfqSourcingView() {
                           />
 
                           {/* Edit Button */}
-                          {canEdit && (
+                          {canEdit && !['pending_approval', 'awarded', 'closed', 'cancelled'].includes(String(rfq.status || '').toLowerCase()) && (
                             <ActionButton
                               onClick={() => navigate(`/admin/rfqs/${targetRfqId}/edit`)}
                               icon={Pencil}

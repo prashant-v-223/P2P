@@ -3131,28 +3131,98 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
     };
   }
 
+  async function syncRfqAwardStatus(rfq) {
+    if (!rfq) return rfq;
+    const plainRfq = typeof rfq.toObject === 'function' ? rfq.toObject() : rfq;
+    if (!plainRfq.awardApprovalId) return rfq;
+
+    const approval = await Approval.findOne({ id: plainRfq.awardApprovalId }).lean();
+    if (!approval || approval.status !== 'Approved & Dispatched') return rfq;
+
+    const allocations = Array.isArray(plainRfq.awardAllocations) ? plainRfq.awardAllocations : [];
+    let needsSave = false;
+
+    const updatedAllocations = allocations.map((alloc) => {
+      if (alloc.approved !== true) {
+        needsSave = true;
+        return { ...alloc, approved: true };
+      }
+      return alloc;
+    });
+
+    const totalQty = Number(plainRfq.totalQuantity) || Number(plainRfq.cargoDetails?.containerCount) || 1;
+    const totalAllocated = updatedAllocations.filter((a) => a.approved === true).reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
+    const expectedStatus = totalAllocated >= totalQty ? 'awarded' : totalAllocated > 0 ? 'partially_awarded' : plainRfq.status;
+
+    if (plainRfq.status !== expectedStatus) needsSave = true;
+
+    if (needsSave) {
+      const awardedVendorId = updatedAllocations.filter(a => a.approved).map(a => a.vendorId).join(',');
+      const awardedVendorName = updatedAllocations.filter(a => a.approved).map(a => a.vendorName).join(', ');
+      const awardedQuoteId = updatedAllocations.filter(a => a.approved).map(a => a.quoteId).join(',');
+      
+      const updateData = {
+        awardAllocations: updatedAllocations,
+        allocatedQuantity: totalAllocated,
+        pendingAllocation: Math.max(0, totalQty - totalAllocated),
+        status: expectedStatus,
+        ...(awardedVendorId ? { awardedVendorId, awardedVendorName, awardedQuoteId } : {})
+      };
+
+      if (typeof rfq.save === 'function') {
+        rfq.set(updateData);
+        await rfq.save();
+        return rfq;
+      } else {
+        await RfqHeader.updateOne({ _id: plainRfq._id }, { $set: updateData });
+        return { ...plainRfq, ...updateData };
+      }
+    }
+
+    return rfq;
+  }
+
   async function getRfqAwardApproval(rfq) {
-    if (!rfq.awardApprovalId) return { required: false, approved: true, approval: null };
-    const approval = await Approval.findOne({ id: rfq.awardApprovalId }).lean();
+    if (!rfq) return { required: false, approval: null, approved: false };
+    const plainRfq = typeof rfq.toObject === 'function' ? rfq.toObject() : rfq;
+
+    let approval = null;
+    const queryOrs = [];
+    if (plainRfq.awardApprovalId) queryOrs.push({ id: plainRfq.awardApprovalId });
+    if (plainRfq.rfqNumber) queryOrs.push({ id: plainRfq.rfqNumber }, { referenceId: plainRfq.rfqNumber });
+    if (plainRfq.rfqId) queryOrs.push({ id: plainRfq.rfqId }, { referenceId: plainRfq.rfqId }, { 'transactionSnapshot.rfqId': plainRfq.rfqId });
+
+    if (queryOrs.length > 0) {
+      approval = await Approval.findOne({ $or: queryOrs }).sort({ createdAt: -1 }).lean();
+    }
+
+    const required = Boolean(approval || plainRfq.awardApprovalId || String(plainRfq.status).toLowerCase() === 'pending_approval');
+    const approved = Boolean(approval && approval.status === 'Approved & Dispatched');
+
     return {
-      required: true,
-      approved: approval?.status === 'Approved & Dispatched',
-      approval
+      required,
+      approval,
+      approved
     };
   }
 
   async function resolveVendorAwardedRfq(req) {
     const vendor = await getFreightVendorFromRequest(req);
     if (!vendor) return { error: 'Freight Forwarder access is required.', status: 403 };
-    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
-    if (!rfq || !isFreightVendorInvited(rfq.toObject(), vendor)) return { error: 'Assigned RFQ not found.', status: 404 };
-    const awardApproval = await getRfqAwardApproval(rfq.toObject());
-    const allocation = getVendorAward(rfq.toObject(), vendor);
-    const allocationAlreadyApproved = allocation?.approved === true;
+    let rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
+    if (!rfq || !isFreightVendorInvited(rfq.toObject ? rfq.toObject() : rfq, vendor)) return { error: 'Assigned RFQ not found.', status: 404 };
+
+    rfq = await syncRfqAwardStatus(rfq);
+    const plainRfq = typeof rfq.toObject === 'function' ? rfq.toObject() : rfq;
+
+    const awardApproval = await getRfqAwardApproval(plainRfq);
+    const allocation = getVendorAward(plainRfq, vendor);
+    const allocationAlreadyApproved = allocation?.approved === true || (awardApproval.approved && allocation?.approved !== false);
+
     if (!allocationAlreadyApproved && !awardApproval.approved) {
       return { error: `Bill of Lading access is locked until the RFQ award approval is completed. Current approval status: ${awardApproval.approval?.status || 'Pending'}.`, status: 403 };
     }
-    if (!['pending_approval', 'partially_awarded', 'awarded'].includes(String(rfq.status).toLowerCase()) || !allocation || allocation.approved === false) {
+    if ((!['pending_approval', 'partially_awarded', 'awarded'].includes(String(plainRfq.status).toLowerCase()) && !awardApproval.approved) || !allocation || allocation.approved === false) {
       return { error: 'Only a vendor with an approved RFQ allocation can manage Bill of Lading entries.', status: 403 };
     }
     return { vendor, rfq, allocation };
@@ -3915,7 +3985,16 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         const allocated = normalized.reduce((sum, item) => sum + item.containers, 0);
 
         const existingAwardAllocations = Array.isArray(rfq.awardAllocations) ? rfq.awardAllocations : [];
-        const previouslyApprovedAllocations = isReassignment ? [] : existingAwardAllocations.filter(a => a.approved === true);
+        const approvedAllocationsList = existingAwardAllocations.filter(a => a.approved === true);
+        const currentApprovedQty = approvedAllocationsList.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
+        const openContainers = Math.max(0, totalContainers - currentApprovedQty);
+
+        let effectiveReassignment = Boolean(isReassignment);
+        if (!effectiveReassignment && currentApprovedQty > 0 && (allocated > openContainers || allocated === totalContainers)) {
+          effectiveReassignment = true;
+        }
+
+        const previouslyApprovedAllocations = effectiveReassignment ? [] : approvedAllocationsList;
         const previouslyAllocatedQty = previouslyApprovedAllocations.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
         const remainingToAllocate = Math.max(0, totalContainers - previouslyAllocatedQty);
 
@@ -3932,12 +4011,12 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
 
         const totalAmount = normalized.reduce((sum, item) => sum + item.allocationAmount, 0);
 
-        const approvalIdPrefix = isReassignment ? 'RFQ-REASSIGN' : 'RFQ-AWARD';
+        const approvalIdPrefix = effectiveReassignment ? 'RFQ-REASSIGN' : 'RFQ-AWARD';
         const approvalId = `${approvalIdPrefix}-${rfq.rfqNumber}-${Date.now().toString().slice(-5)}`;
 
         const awardWorkflow = await resolveWorkflowFromDB('RFQ Vendor Award', totalAmount, { currency: 'INR', cargoType: rfq.cargoDetails?.cargoType });
 
-        const previousAward = isReassignment && rfq.status === 'awarded' ? {
+        const previousAward = effectiveReassignment && ['awarded', 'partially_awarded'].includes(rfq.status) ? {
           previousVendorId: rfq.awardedVendorId,
           previousVendorName: rfq.awardedVendorName,
           previousAllocatedQuantity: rfq.allocatedQuantity,
@@ -3959,7 +4038,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
             containers: allocated,
             allocations: normalized,
             totalAmount,
-            isReassignment,
+            isReassignment: effectiveReassignment,
             ...previousAward
           },
           wf: awardWorkflow
@@ -3967,16 +4046,15 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
 
         approval.containersCount = allocated;
         approval.allocations = normalized;
-        approval.remarks = isReassignment
+        approval.remarks = effectiveReassignment
           ? `Container reassignment for ${rfq.rfqNumber} (Previous: ${rfq.awardedVendorName || 'N/A'})`
           : `Container allocation for ${rfq.rfqNumber}`;
         await approval.save();
 
-        const isFullReassignment = Boolean(isReassignment) && rfq.status === 'awarded' && (Number(rfq.allocatedQuantity) >= totalContainers);
+        const isFullReassignment = Boolean(effectiveReassignment) && ['awarded', 'partially_awarded'].includes(rfq.status) && (Number(rfq.allocatedQuantity) >= totalContainers);
 
         // Keep the current approved allocation active until a reassignment is approved.
         // This also lets a rejection restore the previous award without data loss.
-        const approvedAllocationsList = (rfq.get('awardAllocations') || []).filter(a => a.approved === true);
         const updatedAllocatedQty = approvedAllocationsList.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
 
         if (isFullReassignment) {
@@ -4009,7 +4087,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         rfq.set('awardApprovalId', approvalId);
         await rfq.save();
 
-        const message = isReassignment
+        const message = effectiveReassignment
           ? 'Vendor reassignment submitted for approval.'
           : 'Vendor allocations submitted for approval.';
 
@@ -4028,20 +4106,26 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
     try {
       const vendor = await getFreightVendorFromRequest(req);
       if (!vendor) return res.status(403).json({ success: false, error: 'Freight Forwarder access is required.' });
-      const rfqs = (await RfqHeader.find({}).sort({ createdAt: -1 }).lean())
-        .filter((rfq) => isFreightVendorInvited(rfq, vendor));
+      const rawRfqs = await RfqHeader.find({}).sort({ createdAt: -1 });
+      const invitedRfqs = rawRfqs.filter((rfq) => isFreightVendorInvited(rfq.toObject ? rfq.toObject() : rfq, vendor));
+      
+      const rfqs = await Promise.all(invitedRfqs.map((rfq) => syncRfqAwardStatus(rfq)));
+      const plainRfqs = rfqs.map((r) => typeof r.toObject === 'function' ? r.toObject() : r);
+
       const ids = [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean);
       const quotes = await RfqQuote.find({ vendorId: { $in: ids } }).lean();
-      const approvalIds = rfqs.map((rfq) => rfq.awardApprovalId).filter(Boolean);
+      const approvalIds = plainRfqs.map((rfq) => rfq.awardApprovalId).filter(Boolean);
       const approvals = approvalIds.length ? await Approval.find({ id: { $in: approvalIds } }).select('id status').lean() : [];
       const approvalById = new Map(approvals.map((approval) => [approval.id, approval]));
       return res.json({
-        success: true, data: rfqs.map((rfq) => {
+        success: true, data: plainRfqs.map((rfq) => {
           const approval = rfq.awardApprovalId ? approvalById.get(rfq.awardApprovalId) : null;
+          const isApprovalApproved = Boolean(approval && approval.status === 'Approved & Dispatched');
           const approvalPending = Boolean(rfq.awardApprovalId && approval && !['Approved & Dispatched', 'Rejected'].includes(approval.status));
           const allocation = getVendorAward(rfq, vendor);
-          const allocationReady = allocation?.approved === true || (['partially_awarded', 'awarded'].includes(String(rfq.status).toLowerCase()) && allocation?.approved !== false);
-          return { ...rfq, status: approvalPending ? 'pending_approval' : rfq.status, awardApprovalStatus: approval?.status || null, myQuote: quotes.find((q) => q.rfqId === rfq.rfqId) || null, myAllocation: allocationReady ? allocation : null };
+          const isVendorAllocated = Boolean(allocation && (allocation.approved === true || (isApprovalApproved && allocation.approved !== false)));
+          const effectiveStatus = isApprovalApproved ? (['published', 'pending_approval'].includes(rfq.status) ? 'awarded' : rfq.status) : (approvalPending ? 'pending_approval' : rfq.status);
+          return { ...rfq, status: effectiveStatus, awardApprovalStatus: approval?.status || null, myQuote: quotes.find((q) => q.rfqId === rfq.rfqId) || null, myAllocation: isVendorAllocated ? allocation : null };
         })
       });
     } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
@@ -4051,15 +4135,20 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
     try {
       const vendor = await getFreightVendorFromRequest(req);
       if (!vendor) return res.status(403).json({ success: false, error: 'Freight Forwarder access is required.' });
-      const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] }).lean();
-      if (!rfq || !isFreightVendorInvited(rfq, vendor)) return res.status(404).json({ success: false, error: 'Assigned RFQ not found.' });
+      let rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
+      if (!rfq || !isFreightVendorInvited(rfq.toObject ? rfq.toObject() : rfq, vendor)) return res.status(404).json({ success: false, error: 'Assigned RFQ not found.' });
+
+      rfq = await syncRfqAwardStatus(rfq);
+      const plainRfq = typeof rfq.toObject === 'function' ? rfq.toObject() : rfq;
+
       const ids = [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean);
-      const myQuote = await RfqQuote.findOne({ rfqId: rfq.rfqId, vendorId: { $in: ids } }).lean();
-      const awardApproval = await getRfqAwardApproval(rfq);
-      const allocation = getVendorAward(rfq, vendor);
-      const awardReady = allocation?.approved === true || (['partially_awarded', 'awarded'].includes(String(rfq.status).toLowerCase()) && awardApproval.approved && allocation?.approved !== false);
+      const myQuote = await RfqQuote.findOne({ rfqId: plainRfq.rfqId, vendorId: { $in: ids } }).lean();
+      const awardApproval = await getRfqAwardApproval(plainRfq);
+      const allocation = getVendorAward(plainRfq, vendor);
+      const isVendorAllocated = Boolean(allocation && (allocation.approved === true || (awardApproval.approved && allocation.approved !== false)));
       const approvalIsPending = awardApproval.required && awardApproval.approval && !['Approved & Dispatched', 'Rejected'].includes(awardApproval.approval.status);
-      return res.json({ success: true, data: { ...rfq, status: approvalIsPending ? 'pending_approval' : rfq.status, myQuote, myAllocation: awardReady ? allocation : null, awardPending: Boolean(allocation && approvalIsPending), awardApprovalStatus: awardApproval.approval?.status || null } });
+      const effectiveStatus = awardApproval.approved ? (['published', 'pending_approval'].includes(plainRfq.status) ? 'awarded' : plainRfq.status) : (approvalIsPending ? 'pending_approval' : plainRfq.status);
+      return res.json({ success: true, data: { ...plainRfq, status: effectiveStatus, myQuote, myAllocation: isVendorAllocated ? allocation : null, awardPending: Boolean(allocation && approvalIsPending), awardApprovalStatus: awardApproval.approval?.status || null } });
     } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
   });
 
