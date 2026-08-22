@@ -271,8 +271,8 @@ export default function AdvancePaymentDetailView() {
         <div className="flex items-center gap-2">
           <RecordDbInfoDrawer entityId={id} entityType="AdvancePayment" recordData={advance || approval} />
 
-          {/* Edit Request — shown for draft, returned, or rejected */}
-          {['draft', 'returned', 'rejected'].includes(String(st || '').toLowerCase()) && (
+          {/* Edit Request — shown for non-approved, non-paid advances */}
+          {!['approved', 'paid', 'completed'].includes(String(status || '').toLowerCase()) && (
             <button
               onClick={() => navigate(`/admin/advance-payments/${id}/edit`)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs transition-colors shadow-2xs cursor-pointer"
