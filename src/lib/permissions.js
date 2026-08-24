@@ -115,6 +115,7 @@ export const ROLE_PERMISSIONS = {
     'exim.view',
     'custom-agents.view',
     'approvals.view',
+    'approvals.action',
     'users.view',
     'users.create',
     'users.edit'
@@ -318,8 +319,8 @@ export function userHasPermission(userRole, permissionKey, customPermissions) {
   const roleClean = String(userRole || '').toLowerCase().replace(/[\s_-]+/g, '');
   const isDeptManager = roleClean.includes('manager') || roleClean.includes('head') || roleClean.includes('cfo') || roleClean.includes('lead') || roleClean.includes('director');
 
-  // Department managers automatically get access to view, create, edit users in directory
-  if (permissionKey.startsWith('users.') && isDeptManager) return true;
+  // Department managers automatically get access to users directory and pending approvals
+  if ((permissionKey.startsWith('users.') || permissionKey.startsWith('approvals.')) && isDeptManager) return true;
 
   const [mod, act] = String(permissionKey || '').split('.');
 

@@ -56,9 +56,12 @@ export const authorizePermission = (moduleKey, action) => {
       return next();
     }
 
-    // All department managers can view, create, and edit team members in user directory
+    // All department managers can view, create, and edit team members in user directory & view/act on pending approvals
     const isDeptManager = userRoleClean.includes('manager') || userRoleClean.includes('head') || userRoleClean.includes('cfo') || userRoleClean.includes('lead') || userRoleClean.includes('director') || req.user.isManager === true;
-    if (isDeptManager && moduleKey === 'users' && ['view', 'create', 'edit'].includes(action)) {
+    if (isDeptManager && (
+      (moduleKey === 'users' && ['view', 'create', 'edit'].includes(action)) ||
+      (moduleKey === 'approvals' && ['view', 'action'].includes(action))
+    )) {
       return next();
     }
 
