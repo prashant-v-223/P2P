@@ -10,14 +10,16 @@ export const getRoles = async (_req, res) => {
     return res.json({ success: true, count: result.length, roles: result });
   }
 
-  let roles = await Role.find().sort({ roleName: 1 }).lean();
-
-  if (!roles || roles.length === 0) {
-    console.log('[DB] No roles found. Seeding default system roles...');
-    await Role.insertMany(DEFAULT_ROLES);
-    roles = await Role.find().sort({ roleName: 1 }).lean();
+  // Ensure default system and manager roles exist in DB
+  for (const defRole of DEFAULT_ROLES) {
+    await Role.updateOne(
+      { roleName: defRole.roleName },
+      { $setOnInsert: defRole },
+      { upsert: true }
+    ).catch(() => {});
   }
 
+  const roles = await Role.find().sort({ roleName: 1 }).lean();
   const counts = await User.aggregate([{ $group: { _id: '$role', count: { $sum: 1 } } }]);
   const countMap = new Map(counts.map((item) => [item._id, item.count]));
   const result = roles.map((role) => ({ ...role, usersCount: countMap.get(role.roleName) || 0 }));

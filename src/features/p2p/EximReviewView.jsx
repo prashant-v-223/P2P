@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 import {
   Anchor, ArrowLeft, CheckCircle2, Download, Eye, FileText, Loader2,
   Search, Upload, UserPlus, X, XCircle, Clock, CornerUpLeft, ShieldCheck,
@@ -124,6 +125,10 @@ function AssignModal({ entry, agents, onClose, onSaved }) {
 
 function EximList() {
   const navigate = useNavigate();
+  const { user } = useSelector((state) => state.auth || {});
+  const userRole = String(user?.role || '').toLowerCase();
+  const canAssignAgent = !userRole.includes('logistics');
+
   const [entries, setEntries] = useState([]);
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -226,7 +231,7 @@ function EximList() {
                     <td className="p-4 text-right">
                       <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                         <button onClick={() => navigate(`/admin/exim/${entry.blId}`)} className="inline-flex items-center gap-1 rounded border px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50"><Eye className="h-3.5 w-3.5" />Review</button>
-                        {entry.status !== 'custom_cleared' && (
+                        {entry.status !== 'custom_cleared' && canAssignAgent && (
                           <button onClick={() => setSelected(entry)} className="inline-flex items-center gap-1 rounded bg-[#0d7676] px-2.5 py-1 text-xs font-bold text-white hover:bg-teal-700"><UserPlus className="h-3.5 w-3.5" />Assign</button>
                         )}
                       </div>
@@ -256,6 +261,10 @@ function EximList() {
 
 function EximDetail({ blId }) {
   const { showToast } = useToast();
+  const { user } = useSelector((state) => state.auth || {});
+  const userRole = String(user?.role || '').toLowerCase();
+  const canAssignAgent = !userRole.includes('logistics');
+
   const [entry, setEntry] = useState(null);
   const [agents, setAgents] = useState([]);
   const [error, setError] = useState('');
@@ -344,7 +353,7 @@ function EximDetail({ blId }) {
         </div>
         <div className="flex gap-2">
           <Link to={`/admin/rfqs/${entry.rfq?.rfqNumber || entry.rfqId}`} className="rounded-lg px-3 py-2 text-xs font-bold text-[#0d5bd7]">View RFQ →</Link>
-          {entry.status !== 'custom_cleared' && (
+          {entry.status !== 'custom_cleared' && canAssignAgent && (
             <button onClick={() => setAssigning(true)} className="inline-flex items-center gap-1 rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white hover:bg-teal-700 transition cursor-pointer">
               <UserPlus className="h-4 w-4" />
               {entry.customAgentId ? 'Reassign Agent' : 'Assign to Agent'}

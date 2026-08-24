@@ -85,7 +85,10 @@ export default function FreightRfqListPage() {
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
               {paginated.map((rfq, idx) => {
-                const isAwarded = ['partially_awarded', 'awarded'].includes(rfq.status) || Boolean(rfq.myAllocation);
+                const normStat = String(rfq.status || '').toLowerCase();
+                const awardedToMe = Boolean(rfq.myAllocation);
+                const isAwardedRfq = ['partially_awarded', 'awarded', 'fully_awarded'].includes(normStat) || normStat.includes('award') || Number(rfq.allocatedQuantity || 0) > 0;
+                const awardedToOther = isAwardedRfq && !awardedToMe;
                 const containerCount = rfq.myAllocation?.containers || rfq.cargoDetails?.containerCount || '—';
                 const cargoType = rfq.cargoDetails?.cargoType || '—';
 
@@ -93,6 +96,7 @@ export default function FreightRfqListPage() {
                 const closing = rfq.closingDate ? new Date(rfq.closingDate) : null;
                 const now = new Date();
                 const daysLeft = closing ? Math.ceil((closing - now) / (1000 * 60 * 60 * 24)) : null;
+                const isClosed = normStat !== 'published' || (closing && closing < now);
 
                 return (
                   <tr key={rfq.rfqId} className="transition hover:bg-slate-50/60">
@@ -108,32 +112,38 @@ export default function FreightRfqListPage() {
                         {closing ? closing.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
                       </div>
                       {daysLeft !== null && (
-                        <div className="text-[10px] font-extrabold text-emerald-600">
-                          {daysLeft > 0 ? `${daysLeft}d left` : 'Closed'}
+                        <div className={`text-[10px] font-extrabold ${daysLeft > 0 && !isClosed ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {daysLeft > 0 && !isClosed ? `${daysLeft}d left` : 'Closed'}
                         </div>
                       )}
                     </td>
                     <td className="p-3.5">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-extrabold capitalize ${
-                        isAwarded
-                          ? 'bg-emerald-50 text-emerald-600 border border-emerald-200/60'
+                        awardedToMe
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
+                          : awardedToOther
+                          ? 'bg-amber-50 text-amber-800 border border-amber-200/60'
+                          : isClosed
+                          ? 'bg-rose-50 text-rose-700 border border-rose-200/60'
                           : rfq.myQuote
                           ? 'bg-teal-50 text-[#0d7676] border border-teal-200/60'
                           : 'bg-amber-50 text-amber-800 border border-amber-200/60'
                       }`}>
-                        {isAwarded ? 'Awarded' : rfq.myQuote ? 'Quote Submitted' : rfq.status}
+                        {awardedToMe ? 'Awarded' : awardedToOther ? 'Awarded to Other Vendor' : isClosed ? 'Closed' : rfq.myQuote ? 'Quote Submitted' : rfq.status}
                       </span>
                     </td>
                     <td className="p-3.5 text-center">
                       <Link
                         to={`/vendor/rfqs/${rfq.rfqId}`}
                         className={`inline-flex items-center gap-1 rounded-xl px-3.5 py-1.5 font-bold text-xs shadow-2xs transition active:scale-95 ${
-                          isAwarded
+                          awardedToMe
                             ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'
+                            : awardedToOther || isClosed
+                            ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
                             : 'bg-[#0d7676] hover:bg-[#0f766e] text-white'
                         }`}
                       >
-                        {isAwarded ? 'View Result' : rfq.myQuote ? 'Update Quote' : 'View & Quote'}
+                        {awardedToMe ? 'Manage Shipment →' : awardedToOther ? 'View (Awarded to Other)' : isClosed ? 'View RFQ (Closed)' : rfq.myQuote ? 'Update Quote' : 'View & Quote'}
                       </Link>
                     </td>
                   </tr>

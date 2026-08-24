@@ -509,7 +509,7 @@ export default function RfqDetailView() {
               <span>Copy RFQ</span>
             </button>
           )}
-          {canDelete && (
+          {canDelete && !String(rfq?.status || '').toLowerCase().includes('award') && Number(rfq?.allocatedQuantity || 0) === 0 && !['awarded', 'partially_awarded', 'closed'].includes(String(rfq?.status || '').toLowerCase()) && (
             <button
               onClick={async () => {
                 if (window.confirm('Delete this RFQ from MongoDB?')) {

@@ -273,6 +273,8 @@ export default function RfqSourcingView() {
                   const deadlineExpired = Boolean(rfq.closingDate && new Date(rfq.closingDate) < new Date());
                   const canReopenRfq = normalizedStatus === 'closed' || (normalizedStatus === 'published' && deadlineExpired);
                   const canCloseRfq = ['published', 'partially_awarded'].includes(normalizedStatus) && !deadlineExpired;
+                  const isRfqAwarded = normalizedStatus.includes('award') || Number(rfq.allocatedQuantity || 0) > 0;
+                  const canDeleteRfq = canDelete && !isRfqAwarded && !['awarded', 'partially_awarded', 'closed'].includes(normalizedStatus);
 
                   return (
                     <tr key={rfq._id} onClick={() => navigate(`/admin/rfqs/${targetRfqId}`)} className="hover:bg-slate-50/80 transition cursor-pointer group">
@@ -358,7 +360,7 @@ export default function RfqSourcingView() {
                           )}
 
                           {/* Delete Button */}
-                          {canDelete && (
+                          {canDeleteRfq && (
                             <ActionButton
                               onClick={(e) => handleDelete(rfq, e)}
                               icon={Trash2}

@@ -420,6 +420,14 @@ function getDefaultWorkflow(moduleType, amount) {
   const isRfq = moduleName.toLowerCase().includes('rfq');
   const isBl = moduleName.toLowerCase().includes('bl');
   const isInvoice = moduleName.toLowerCase().includes('invoice');
+  const isLogistics = moduleName.toLowerCase().includes('logistics');
+
+  if (isLogistics) {
+    return buildWorkflowResult({ id: 'WF-BOOTSTRAP-LOGISTICS', name: 'Logistics Payment Approval', version: 1 }, [
+      { step: 1, title: 'Logistics Manager Approval', roleName: 'Logistics Manager', roleKey: 'logistics-manager' },
+      { step: 2, title: 'Finance Approval', roleName: 'Finance Lead', roleKey: 'finance' }
+    ]);
+  }
 
   if (isRfq) {
     return buildWorkflowResult({ id: 'WF-BOOTSTRAP-RFQ', name: 'RFQ Award Standard Approval', version: 1 }, [
@@ -4979,7 +4987,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
 
   router.post('/logistics-payments', authenticateToken, authorizePermission('logistics-payments', 'create'), async (req, res) => {
     try {
-      const { blNumber, typeDisplay, category, source, invoiceNumber, vendorName, amount, currency, remarks } = req.body;
+      const { blNumber, typeDisplay, category, source, invoiceNumber, vendorId, vendorName, amount, currency, remarks } = req.body;
       if (!invoiceNumber || !amount || Number(amount) <= 0) {
         return res.status(400).json({ success: false, error: 'Invoice Number and a valid positive amount are required.' });
       }
@@ -5009,7 +5017,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         typeDisplay: typeDisplay || 'Logistics Freight Payment',
         source: source || 'Logistics',
         invoiceNumber: String(invoiceNumber).trim().toUpperCase(),
-        vendorId: `VEND-${Math.floor(100 + Math.random() * 900)}`,
+        vendorId: vendorId || `VEND-${Math.floor(100 + Math.random() * 900)}`,
         vendorName: vendorName || 'Logistics Provider',
         amount: numAmount,
         totalAmount: numAmount,

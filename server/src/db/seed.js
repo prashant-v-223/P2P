@@ -216,7 +216,7 @@ export const DEFAULT_ROLES = [
       'exchange-rates': ['view'],
       'vendors': ['view'],
       'workflows': ['view'],
-      'users': ['view']
+      'users': ['view', 'create', 'edit']
     }
   },
   {
@@ -238,7 +238,7 @@ export const DEFAULT_ROLES = [
       'purchase-orders': ['view'],
       'rfq': ['view'],
       'sap': ['view'],
-      'users': ['view'],
+      'users': ['view', 'create', 'edit'],
       'workflows': ['view'],
       'roles': ['view'],
       'permissions': ['view-perms']
@@ -247,15 +247,29 @@ export const DEFAULT_ROLES = [
   {
     id: 'role-logistics',
     roleName: 'logistics',
-    description: 'Logistics team — logistics provider management and logistics payment visibility.',
+    description: 'Logistics team — logistics provider management, EXIM review, and logistics payment visibility.',
     type: 'System',
     status: 'Active',
     permissions: {
       'logistics-providers': ['view', 'manage'],
       'logistics-payments': ['view', 'create'],
-      'rfq': ['view'],
-      'bl': ['view'],
       'exim': ['view']
+    }
+  },
+  {
+    id: 'role-logistics-manager',
+    roleName: 'logistics-manager',
+    description: 'Logistics Manager — management of logistics operations, logistics providers, and logistics payment approvals.',
+    type: 'Custom',
+    status: 'Active',
+    permissions: {
+      'dashboard': ['view'],
+      'logistics-providers': ['view', 'manage'],
+      'logistics-payments': ['view', 'create', 'mark-paid'],
+      'exim': ['view'],
+      'custom-agents': ['view'],
+      'approvals': ['view', 'action'],
+      'users': ['view', 'create', 'edit']
     }
   },
   {
@@ -280,7 +294,7 @@ export const DEFAULT_ROLES = [
       'exchange-rates': ['view', 'manage'],
       'vendors': ['view', 'manage'],
       'workflows': ['view', 'manage'],
-      'users': ['view'],
+      'users': ['view', 'create', 'edit'],
       'roles': ['view'],
       'sap': ['view'],
       'custom-agents': ['view'],
@@ -428,6 +442,7 @@ import { PurchaseOrder } from '../models/PurchaseOrder.js';
 // ─────────────────────────────────────────────────────────────────────────────
 const DUMMY_USERS = [
   // ── Level 0 ── Admin (System Admin — full access)
+  { id: 'usr-000', name: 'System Admin', email: 'admin@rayzon.one', role: 'admin', department: 'Executive Administration', avatar: 'SA', status: 'Active' },
   { id: 'usr-001', name: 'Prashant Vadhvana', email: 'prashantvadhvana@gmail.com', role: 'admin', department: 'Executive Administration', avatar: 'PV', status: 'Active' },
 
   // ── Level 0 ── MD (Managing Director — full access, reports to root)
@@ -459,6 +474,7 @@ const DUMMY_USERS = [
 
 const DEMO_HIERARCHY = {
   // Level 0 — Admin (System Admin)
+  'usr-000': { managerId: null, managerName: null, team: 'Executive Administration', hierarchyLevel: 0, canSeeAllRequests: true },
   'usr-001': { managerId: null, managerName: null, team: 'Executive Administration', hierarchyLevel: 0, canSeeAllRequests: true },
 
   // Level 0 — MD (Managing Director)
@@ -498,7 +514,7 @@ export const seedDatabase = async () => {
     if (permCount < DEFAULT_PERMISSIONS.length) {
       console.log('[DB] Seeding/updating system permissions...');
       for (const perm of DEFAULT_PERMISSIONS) {
-        await Permission.updateOne({ id: perm.id }, { $setOnInsert: perm }, { upsert: true });
+        await Permission.updateOne({ key: perm.key }, { $setOnInsert: perm }, { upsert: true });
       }
     }
 
@@ -506,7 +522,7 @@ export const seedDatabase = async () => {
     console.log('[DB] Seeding/updating system roles...');
     for (const defRole of DEFAULT_ROLES) {
       await Role.updateOne(
-        { id: defRole.id },
+        { roleName: defRole.roleName },
         { $set: { ...defRole } },
         { upsert: true }
       );
@@ -521,7 +537,7 @@ export const seedDatabase = async () => {
       if (!existing) {
         await User.create({ ...u, ...hierarchy, passwordHash: defaultPassHash });
       } else {
-        Object.assign(existing, { ...u, ...hierarchy });
+        Object.assign(existing, { ...u, ...hierarchy, passwordHash: defaultPassHash });
         await existing.save();
       }
     }
@@ -708,7 +724,10 @@ export const seedDatabase = async () => {
     const lpCount = await LogisticsProvider.countDocuments();
     if (lpCount === 0) {
       console.log('[DB] Seeding Logistics Providers...');
-      await LogisticsProvider.insertMany();
+      await LogisticsProvider.insertMany([
+        { providerId: 'LP-001', name: 'Fast Forward Logistics India', code: 'FFLI', status: 'Active' },
+        { providerId: 'LP-002', name: 'Seaways Shipping & Logistics Ltd', code: 'SSLL', status: 'Active' }
+      ]);
     }
 
     // ── Approval Instances & Actions ──────────────────────────────────────────

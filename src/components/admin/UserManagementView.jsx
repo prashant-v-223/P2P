@@ -384,9 +384,11 @@ export default function UserManagementView() {
   };
 
   const currentPerms = currentUser?.permissions;
+  const userRoleClean = String(currentUser?.role || '').toLowerCase().replace(/[\s_-]+/g, '');
+  const isDeptManager = userRoleClean.includes('manager') || userRoleClean.includes('head') || userRoleClean.includes('cfo') || userRoleClean.includes('lead') || userRoleClean.includes('director') || currentUser?.isManager === true;
   const canManageUsers = userHasPermission(currentUser?.role, 'users.manage', currentPerms);
-  const canCreateUser = canManageUsers || userHasPermission(currentUser?.role, 'users.create', currentPerms);
-  const canEditUser = canManageUsers || userHasPermission(currentUser?.role, 'users.edit', currentPerms);
+  const canCreateUser = canManageUsers || isDeptManager || userHasPermission(currentUser?.role, 'users.create', currentPerms);
+  const canEditUser = canManageUsers || isDeptManager || userHasPermission(currentUser?.role, 'users.edit', currentPerms);
   const canDeleteUser = canManageUsers || userHasPermission(currentUser?.role, 'users.delete', currentPerms);
   const search = searchParams.get('q') || '';
   const statusFilter = searchParams.get('status') || 'All';

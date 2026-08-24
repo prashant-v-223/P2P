@@ -56,6 +56,12 @@ export const authorizePermission = (moduleKey, action) => {
       return next();
     }
 
+    // All department managers can view, create, and edit team members in user directory
+    const isDeptManager = userRoleClean.includes('manager') || userRoleClean.includes('head') || userRoleClean.includes('cfo') || userRoleClean.includes('lead') || userRoleClean.includes('director') || req.user.isManager === true;
+    if (isDeptManager && moduleKey === 'users' && ['view', 'create', 'edit'].includes(action)) {
+      return next();
+    }
+
     try {
       // Get effective roles (own + any delegated roles)
       const effectiveRoles = await getEffectiveRoles(req.user);

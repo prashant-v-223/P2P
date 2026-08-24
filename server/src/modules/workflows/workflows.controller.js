@@ -82,7 +82,11 @@ export const getWorkflows = async (req, res) => {
   }
   const filter = { status: { $in: ['Active', 'active'] } };
 
-  if (category && category !== 'All') filter.category = category;
+  if (category && category !== 'All') {
+    const escaped = escapeRegex(category);
+    const catPattern = new RegExp(`^${escaped.replace(/s$/i, '')}s?$`, 'i');
+    filter.$or = [{ category: catPattern }, { category: category }];
+  }
   if (query) {
     const matcher = new RegExp(escapeRegex(query), 'i');
     filter.$or = [

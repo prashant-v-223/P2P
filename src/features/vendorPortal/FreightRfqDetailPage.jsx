@@ -80,11 +80,34 @@ export default function FreightRfqDetailPage() {
     else if (utcMidnight) deadline.setUTCHours(23, 59, 59, 999);
   }
   const status = String(rfq.status || '').toLowerCase();
+  const isAwardedRfq = ['awarded', 'fully_awarded', 'partially_awarded'].includes(status) || Number(rfq.allocatedQuantity || 0) > 0;
+  const awardedToMe = Boolean(rfq.myAllocation);
+  const awardedToOther = isAwardedRfq && !awardedToMe;
   const deadlinePassed = Boolean(deadline && deadline < new Date());
   const closed = status !== 'published' || deadlinePassed;
   const closedReason = deadlinePassed ? 'The quotation deadline has passed.' : status === 'awarded' ? 'This RFQ has already been awarded.' : `This RFQ is ${rfq.status || 'not open'}.`;
   const fieldClass = 'w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-medium text-slate-900 outline-none transition focus:border-[#0d7676] focus:bg-white focus:ring-2 focus:ring-teal-100 disabled:cursor-not-allowed disabled:opacity-60';
   const inrCharges = Number(form.stChargesInr || 0) + Number(form.otherChargesInr || 0);
+
+  const badgeLabel = awardedToMe
+    ? 'AWARDED'
+    : awardedToOther
+      ? 'AWARDED TO OTHER VENDOR'
+      : status === 'pending_approval'
+        ? 'PENDING APPROVAL'
+        : closed
+          ? 'CLOSED'
+          : (rfq.status || 'PUBLISHED');
+
+  const badgeClass = awardedToMe
+    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+    : awardedToOther
+      ? 'bg-amber-100 text-amber-800 border border-amber-300'
+      : status === 'pending_approval'
+        ? 'bg-amber-50 text-amber-800 border border-amber-300'
+        : closed
+          ? 'bg-slate-100 text-slate-700 border border-slate-300'
+          : 'bg-teal-50 text-[#0d7676] border border-teal-200';
 
   const errors = {
     shippingLine: !String(form.shippingLine).trim() ? 'Enter shipping line name.' : '',
@@ -132,14 +155,8 @@ export default function FreightRfqDetailPage() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
           <div className="space-y-1.5">
             <div className="flex items-center gap-2">
-              <span className={`rounded-full px-3 py-0.5 text-xs font-black uppercase ${
-                rfq.myAllocation
-                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                  : status === 'pending_approval'
-                    ? 'bg-amber-50 text-amber-800 border border-amber-300'
-                    : 'bg-teal-50 text-[#0d7676] border border-teal-200'
-              }`}>
-                {rfq.myAllocation ? 'AWARDED' : (rfq.status || 'PUBLISHED')}
+              <span className={`rounded-full px-3 py-0.5 text-xs font-black uppercase ${badgeClass}`}>
+                {badgeLabel}
               </span>
               <span className="font-mono text-xs font-bold text-slate-400">
                 {rfq.rfqNumber}
@@ -202,10 +219,22 @@ export default function FreightRfqDetailPage() {
         </div>
       </section>
 
-      {/* Clean Awarded Green Banner */}
-      {rfq.myAllocation && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50/90 p-4 text-xs font-semibold text-emerald-800">
-          RFQ Awarded. You have been awarded {rfq.myAllocation.containers} container(s). Use the BL Entries section to manage shipments.
+      {/* Clean Awarded Green Banner (To You) */}
+      {awardedToMe && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50/90 p-4 text-xs font-semibold text-emerald-800 flex items-center gap-2">
+          <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+          <span>🎉 RFQ Awarded to You! You have been awarded {rfq.myAllocation.containers} container(s). Use the BL Entries section to manage shipments.</span>
+        </div>
+      )}
+
+      {/* Awarded to Other Vendor Banner */}
+      {awardedToOther && (
+        <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs font-bold text-amber-900 shadow-2xs">
+          <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
+          <div>
+            <span className="font-extrabold uppercase block text-[11px] text-amber-800">RFQ Awarded to Another Vendor</span>
+            <span>Bidding for this RFQ is complete and container allocations have been awarded to another vendor. Quote editing is locked.</span>
+          </div>
         </div>
       )}
 
@@ -213,6 +242,17 @@ export default function FreightRfqDetailPage() {
         <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs font-bold text-amber-900 shadow-2xs">
           <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
           <span>Your proposed allocation is awaiting internal approval. Current status: {rfq.awardApprovalStatus || 'Pending approval'}.</span>
+        </div>
+      )}
+
+      {/* Prominent RFQ Closed Banner */}
+      {closed && !awardedToMe && !awardedToOther && (
+        <div className="flex items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs font-bold text-rose-800 shadow-2xs">
+          <AlertCircle className="h-5 w-5 text-rose-600 shrink-0" />
+          <div>
+            <span className="font-extrabold uppercase block text-[11px] text-rose-700">RFQ Closed for Bidding</span>
+            <span>{closedReason} New quote submissions and updates are locked.</span>
+          </div>
         </div>
       )}
 
@@ -413,13 +453,20 @@ export default function FreightRfqDetailPage() {
               )}
             </div>
 
-            <button
-              type="submit"
-              disabled={saving || closed}
-              className="px-6 py-3 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] text-white text-xs font-black shadow-md transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {saving ? 'Saving...' : rfq.myQuote ? 'Update Freight Quote' : 'Submit Freight Quote'}
-            </button>
+            {closed ? (
+              <div className="flex items-center gap-2 text-xs font-extrabold text-slate-500 bg-slate-100 px-5 py-2.5 rounded-xl border border-slate-200 cursor-not-allowed">
+                <Clock className="w-4 h-4 text-slate-400" />
+                <span>RFQ Closed — Bidding Locked</span>
+              </div>
+            ) : (
+              <button
+                type="submit"
+                disabled={saving}
+                className="px-6 py-3 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] text-white text-xs font-black shadow-md transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saving ? 'Saving...' : rfq.myQuote ? 'Update Freight Quote' : 'Submit Freight Quote'}
+              </button>
+            )}
           </div>
         </form>
       )}

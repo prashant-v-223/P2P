@@ -224,6 +224,30 @@ const blInvoiceDefaults = [
   }
 ];
 
+// Logistics Payment Workflow Defaults (Logistics Manager 1st → Finance 2nd)
+const logisticsPaymentDefaults = [
+  {
+    id: 'WF-LOG-PAY-STANDARD-V1',
+    definitionKey: 'logistics_payment_standard',
+    name: 'Logistics Payment Standard Approval',
+    category: 'Logistics Payments',
+    minAmount: 0,
+    maxAmount: null,
+    formattedRange: 'All Amounts',
+    description: 'Logistics Payment Approval — Step 1: Logistics Manager → Step 2: Finance.',
+    status: 'Active',
+    priority: 100,
+    conditions: {},
+    version: 1,
+    createdBy: 'system-bootstrap',
+    activatedBy: 'system-bootstrap',
+    steps: [
+      { step: 1, title: 'Logistics Manager Approval', roleName: 'Logistics Manager', roleKey: 'logistics-manager', statusKey: 'Pending Logistics Manager Approval', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
+      { step: 2, title: 'Finance Approval', roleName: 'Finance Lead', roleKey: 'finance', statusKey: 'Pending Finance Approval', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 }
+    ]
+  }
+];
+
 export async function ensureRfqAwardWorkflows() {
   const now = new Date();
   await Promise.all(rfqAwardDefaults.map(({ id, ...defaults }) => Workflow.updateOne(
@@ -263,10 +287,21 @@ export async function ensureBlInvoiceWorkflows() {
   console.log('[Workflows] BL Freight Invoice workflows ensured.');
 }
 
+export async function ensureLogisticsPaymentWorkflows() {
+  const now = new Date();
+  await Promise.all(logisticsPaymentDefaults.map(({ id, ...defaults }) => Workflow.updateOne(
+    { id },
+    { $set: { ...defaults, effectiveFrom: now, activatedAt: now } },
+    { upsert: true }
+  )));
+  console.log('[Workflows] Logistics Payment workflows ensured.');
+}
+
 export async function ensureAllWorkflows() {
   await ensureRfqAwardWorkflows();
   await ensureAdvancePaymentWorkflows();
   await ensureInvoicePaymentWorkflows();
   await ensureBlInvoiceWorkflows();
+  await ensureLogisticsPaymentWorkflows();
   console.log('[Workflows] All default workflows ensured.');
 }

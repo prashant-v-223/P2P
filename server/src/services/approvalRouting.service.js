@@ -320,6 +320,37 @@ export async function resolveApprovalChain(moduleType, amount, requester) {
     ]
   }).lean();
 
+  if (String(moduleType || '').toLowerCase().includes('logistics')) {
+    const chain = [
+      {
+        step: 1,
+        title: 'Logistics Manager Approval',
+        roleKey: 'logistics-manager',
+        statusKey: 'Pending Logistics Manager Approval',
+        required: true
+      },
+      {
+        step: 2,
+        title: 'Finance Approval',
+        roleKey: 'finance',
+        statusKey: 'Pending Finance Approval',
+        required: true
+      }
+    ];
+
+    if (amount >= STRATEGIC_REVIEW_THRESHOLD) {
+      chain.push({
+        step: 3,
+        title: 'MD/Director Approval',
+        roleKey: 'md',
+        statusKey: 'Pending MD Approval',
+        required: true
+      });
+    }
+
+    return await attachApprovers(chain, requesterUser);
+  }
+
   // Determine if financial review is needed
   const needsFinancialReview = amount >= FINANCIAL_REVIEW_THRESHOLD;
   const needsStrategicReview = amount >= STRATEGIC_REVIEW_THRESHOLD;

@@ -40,14 +40,40 @@ export default function CreateLogisticsPaymentWizard() {
   useEffect(() => {
     async function loadData() {
       try {
-        const [pRes, bRes] = await Promise.all([
-          apiFetch('/api/p2p/vendors'),
-          apiFetch('/api/p2p/bl-invoices')
+        const [lpRes, vRes, bRes] = await Promise.all([
+          apiFetch('/api/p2p/logistics-providers').catch(() => ({ ok: false })),
+          apiFetch('/api/p2p/vendors').catch(() => ({ ok: false })),
+          apiFetch('/api/p2p/bl-invoices').catch(() => ({ ok: false }))
         ]);
-        if (pRes.ok) {
-          const json = await pRes.json();
-          setProviders(json.vendors || []);
+
+        let combined = [];
+
+        if (lpRes.ok) {
+          const json = await lpRes.json();
+          const list = (json.providers || json.data || []).map(p => ({
+            id: p.id || p.providerId || p._id,
+            companyName: p.name || p.companyName || 'Logistics Provider',
+            name: p.name || p.companyName || 'Logistics Provider'
+          }));
+          combined.push(...list);
         }
+
+        if (vRes.ok) {
+          const json = await vRes.json();
+          const list = (json.vendors || json.data || []).map(v => ({
+            id: v.id || v.vendorId || v._id,
+            companyName: v.companyName || v.name || 'Vendor',
+            name: v.companyName || v.name || 'Vendor'
+          }));
+          list.forEach(v => {
+            if (!combined.some(c => c.id === v.id || c.companyName.toLowerCase() === v.companyName.toLowerCase())) {
+              combined.push(v);
+            }
+          });
+        }
+
+        setProviders(combined);
+
         if (bRes.ok) {
           const json = await bRes.json();
           const rawInvoices = json.invoices || [];
@@ -69,11 +95,11 @@ export default function CreateLogisticsPaymentWizard() {
 
   const handleProviderChange = (val) => {
     setProviderId(val);
-    const target = providers.find(p => p.id === val || p.vendorId === val);
+    const target = providers.find(p => String(p.id || p.vendorId || p._id) === String(val));
     if (target) {
       setProviderName(target.companyName || target.name);
-    } else if (val === 'dhl') {
-      setProviderName('Fast Forward Logistics India Privat');
+    } else {
+      setProviderName('');
     }
   };
 
@@ -102,8 +128,12 @@ export default function CreateLogisticsPaymentWizard() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!providerId && !providerName) {
+      showToast({ title: 'Validation Error', description: 'Please select a Logistics Provider.', type: 'error' });
+      return;
+    }
     if (!invoiceNumber || !amount || Number(amount) <= 0) {
-      showToast({ title: 'Validation Error', description: 'Please enter Invoice Number and Amount.', type: 'error' });
+      showToast({ title: 'Validation Error', description: 'Please enter Invoice Number and a valid Amount.', type: 'error' });
       return;
     }
 
@@ -117,7 +147,8 @@ export default function CreateLogisticsPaymentWizard() {
           category: 'freight',
           typeDisplay: 'Logistics Freight Payment',
           referenceNumber: `LOG-${Date.now().toString().slice(-6)}`,
-          vendorName: providerName || 'Fast Forward Logistics India Privat',
+          vendorId: providerId || undefined,
+          vendorName: providerName || 'Logistics Provider',
           invoiceNumber,
           invoiceDate: invoiceDate || new Date().toISOString(),
           dueDate: dueDate || new Date().toISOString(),

@@ -78,7 +78,9 @@ export const ROLE_PERMISSIONS = {
     'exchange-rates.view',
     'vendors.view',
     'workflows.view',
-    'users.view'
+    'users.view',
+    'users.create',
+    'users.edit'
   ],
 
   'finance': [
@@ -95,14 +97,27 @@ export const ROLE_PERMISSIONS = {
     'rfq.view',
     'sap.view',
     'users.view',
+    'users.create',
+    'users.edit',
     'workflows.view'
   ],
 
   'logistics': [
     'logistics-providers.view',
     'logistics-payments.view',
-    'rfq.view',
-    'bl.view'
+    'exim.view'
+  ],
+
+  'logistics-manager': [
+    'dashboard.view',
+    'logistics-providers.view',
+    'logistics-payments.view',
+    'exim.view',
+    'custom-agents.view',
+    'approvals.view',
+    'users.view',
+    'users.create',
+    'users.edit'
   ],
 
   'md': [
@@ -122,6 +137,8 @@ export const ROLE_PERMISSIONS = {
     'vendors.view',
     'workflows.view',
     'users.view',
+    'users.create',
+    'users.edit',
     'sap.view',
     'custom-agents.view'
   ],
@@ -163,11 +180,21 @@ export const ROLE_PERMISSIONS = {
     'logistics-providers.view',
     'workflows.view',
     'users.view',
+    'users.create',
+    'users.edit',
     'sap.view'
   ]
 };
 
-for (const role of ['accounts', 'cfo', 'exim', 'exim-manager', 'finance', 'logistics', 'md', 'procurement', 'procurement_head']) {
+for (const role of ['accounts', 'cfo', 'exim', 'exim-manager', 'finance', 'logistics', 'logistics-manager', 'md', 'procurement', 'procurement_head']) {
+  if (ROLE_PERMISSIONS[role]) {
+    if (!ROLE_PERMISSIONS[role].includes('users.view') && (role.includes('manager') || role.includes('head') || role.includes('cfo'))) {
+      ROLE_PERMISSIONS[role].push('users.view', 'users.create', 'users.edit');
+    }
+  }
+}
+
+for (const role of ['accounts', 'cfo', 'exim', 'exim-manager', 'finance', 'logistics', 'logistics-manager', 'md', 'procurement', 'procurement_head']) {
   if (ROLE_PERMISSIONS[role] && !ROLE_PERMISSIONS[role].includes('reports.view')) ROLE_PERMISSIONS[role].push('reports.view');
 }
 for (const role of ['purchase-manager', 'cfo-inner', 'inner-team', 'manager']) {
@@ -244,6 +271,7 @@ const resolveStaticRolePerms = (userRole) => {
     else if (raw.includes('procurement')) rolePerms = ROLE_PERMISSIONS['procurement'];
     else if (raw.includes('exim') && raw.includes('manager')) rolePerms = ROLE_PERMISSIONS['exim-manager'];
     else if (raw.includes('exim')) rolePerms = ROLE_PERMISSIONS['exim'];
+    else if (raw.includes('logistics') && raw.includes('manager')) rolePerms = ROLE_PERMISSIONS['logistics-manager'];
     else if (raw.includes('logistics')) rolePerms = ROLE_PERMISSIONS['logistics'];
     else if (raw.includes('md') || raw.includes('managing')) rolePerms = ROLE_PERMISSIONS['md'];
   }
@@ -286,6 +314,12 @@ const hasPermissionInDbShape = (permissionsObj, moduleKey, action) => {
 export function userHasPermission(userRole, permissionKey, customPermissions) {
   if (!userRole) return false;
   if (permissionKey === '*') return true;
+
+  const roleClean = String(userRole || '').toLowerCase().replace(/[\s_-]+/g, '');
+  const isDeptManager = roleClean.includes('manager') || roleClean.includes('head') || roleClean.includes('cfo') || roleClean.includes('lead') || roleClean.includes('director');
+
+  // Department managers automatically get access to view, create, edit users in directory
+  if (permissionKey.startsWith('users.') && isDeptManager) return true;
 
   const [mod, act] = String(permissionKey || '').split('.');
 
