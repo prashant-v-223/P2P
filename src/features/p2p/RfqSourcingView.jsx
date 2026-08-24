@@ -250,8 +250,12 @@ export default function RfqSourcingView() {
                 <tr>
                   <th className="py-3.5 px-4 w-10 text-center">#</th>
                   <th className="py-3.5 px-4">RFQ Number</th>
-                  <th className="py-3.5 px-4">Title / Cargo</th>
                   <th className="py-3.5 px-4">Linked PO</th>
+                  <th className="py-3.5 px-4">Shipper name</th>
+                  <th className="py-3.5 px-4">POL</th>
+                  <th className="py-3.5 px-4">POD</th>
+                  <th className="py-3.5 px-4">Container Type</th>
+                  <th className="py-3.5 px-4">Container Count</th>
                   <th className="py-3.5 px-4">Closing Date</th>
                   <th className="py-3.5 px-4 text-center">Vendors</th>
                   <th className="py-3.5 px-4 text-center">Quotes</th>
@@ -280,6 +284,7 @@ export default function RfqSourcingView() {
                     <tr key={rfq._id} onClick={() => navigate(`/admin/rfqs/${targetRfqId}`)} className="hover:bg-slate-50/80 transition cursor-pointer group">
                       <td className="py-3.5 px-4 text-center font-mono text-slate-400 font-bold">{rowNum}</td>
                       <td className="py-3.5 px-4 font-bold text-[#0d7676] font-mono group-hover:underline">{rfq.rfqNumber || '—'}</td>
+                      <td className="py-3.5 px-4 text-center font-mono text-slate-400 font-bold">{rfq.poId}</td>
                       <td className="py-3.5 px-4 font-bold text-slate-900 max-w-xs">
                         <div className="truncate">{rfq.title || 'Untitled'}</div>
                         <div className="flex items-center gap-2 text-[10px] font-semibold text-slate-400 truncate mt-0.5">

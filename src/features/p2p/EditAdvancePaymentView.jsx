@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import { SearchableSelect } from '../../components/ui/searchable-select';
+import { downloadDocumentFile } from '../../utils/downloadHelper';
 import { 
   ChevronLeft, 
   Save, 
@@ -10,7 +11,9 @@ import {
   Upload, 
   FileText, 
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Download,
+  Paperclip
 } from 'lucide-react';
 
 export default function EditAdvancePaymentView() {
@@ -238,11 +241,18 @@ export default function EditAdvancePaymentView() {
                 <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">EXISTING DOCUMENTS</p>
                 {documents.map((doc, idx) => (
                   <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
-                    <div className="flex items-center gap-2.5">
-                      <FileText className="w-4 h-4 text-slate-500" />
-                      <span className="font-bold text-slate-800">{doc.name || doc.fileName || doc.title || `Document ${idx + 1}`}</span>
+                    <div className="flex items-center gap-2.5 truncate max-w-[75%]">
+                      <FileText className="w-4 h-4 text-slate-500 shrink-0" />
+                      <span className="font-bold text-slate-800 truncate">{doc.name || doc.fileName || doc.title || `Document ${idx + 1}`}</span>
                     </div>
-                    <span className="text-[11px] text-slate-400 font-mono">advance_request</span>
+                    <button
+                      type="button"
+                      onClick={() => downloadDocumentFile(doc.url || doc.path, doc.name || `Advance-Doc-${idx + 1}`)}
+                      className="p-1 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-200 transition"
+                      title="Download file"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 ))}
               </div>

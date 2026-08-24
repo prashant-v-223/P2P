@@ -5077,6 +5077,105 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
     }
   });
 
+  router.get('/logistics-payments/:id', authenticateToken, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const payment = await LogisticsPayment.findOne({
+        $or: [{ logisticsPaymentId: id }, { referenceNumber: id }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }]
+      }).lean();
+
+      if (!payment) {
+        return res.status(404).json({ success: false, error: 'Payment record not found.' });
+      }
+
+      const ref = payment.referenceNumber || payment.logisticsPaymentId;
+      const app = await Approval.findOne({ $or: [{ id: ref }, { referenceNumber: ref }] }).lean();
+
+      return res.json({
+        success: true,
+        data: {
+          ...payment,
+          id: payment.logisticsPaymentId || payment._id,
+          referenceNumber: ref,
+          status: app?.status || payment.status || 'Pending Approval',
+          currentStep: app?.currentStep || payment.currentStep || 1,
+          totalSteps: app?.totalSteps || payment.totalSteps || 1
+        }
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  router.put('/logistics-payments/:id', authenticateToken, authorizePermission('logistics-payments', 'create'), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const payment = await LogisticsPayment.findOne({
+        $or: [{ logisticsPaymentId: id }, { referenceNumber: id }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }]
+      });
+
+      if (!payment) {
+        return res.status(404).json({ success: false, error: 'Payment record not found.' });
+      }
+
+      const { invoiceNumber, vendorName, vendorId, amount, currency, paymentMode, sourceLocation, destinationLocation, hsnCode, remarks, documents } = req.body;
+
+      if (invoiceNumber) payment.invoiceNumber = String(invoiceNumber).trim().toUpperCase();
+      if (vendorName) payment.vendorName = vendorName;
+      if (vendorId) payment.vendorId = vendorId;
+      if (amount && Number(amount) > 0) {
+        payment.amount = Number(amount);
+        payment.totalAmount = Number(amount);
+      }
+      if (currency) payment.currency = currency;
+      if (paymentMode) payment.paymentMode = paymentMode;
+      if (sourceLocation !== undefined) payment.sourceLocation = sourceLocation;
+      if (destinationLocation !== undefined) payment.destinationLocation = destinationLocation;
+      if (hsnCode !== undefined) payment.hsnCode = hsnCode;
+      if (remarks !== undefined) payment.remarks = remarks;
+      if (Array.isArray(documents)) payment.documents = documents;
+      if (paymentMode) payment.paymentMode = paymentMode;
+      if (sourceLocation !== undefined) payment.sourceLocation = sourceLocation;
+      if (destinationLocation !== undefined) payment.destinationLocation = destinationLocation;
+      if (hsnCode !== undefined) payment.hsnCode = hsnCode;
+      if (remarks !== undefined) payment.remarks = remarks;
+
+      const numAmount = payment.amount;
+      const ref = payment.referenceNumber || payment.logisticsPaymentId;
+      const wf = await resolveWorkflowFromDB('Logistics Payment', numAmount, { currency: payment.currency || 'INR', category: payment.category || 'freight' });
+      const approval = await createApprovalRecord({
+        referenceId: ref,
+        type: 'Logistics Payment',
+        vendorName: payment.vendorName || 'Logistics Provider',
+        amountFormatted: `${payment.currency || 'INR'} ${numAmount}`,
+        poRef: payment.blNumber || 'N/A',
+        requestedBy: req.user?.name || req.user?.email || payment.createdBy || 'System User',
+        requestedById: req.user?.id || req.user?.email,
+        requestId: req.headers['x-request-id'],
+        transactionSnapshot: { blNumber: payment.blNumber || '', invoiceNumber: payment.invoiceNumber, category: payment.category || 'freight', typeDisplay: payment.typeDisplay || 'Logistics Freight Payment', source: payment.source || 'Logistics', amount: numAmount },
+        wf
+      });
+
+      payment.status = approval.status;
+      payment.currentStep = approval.currentStep || 1;
+      payment.totalSteps = approval.totalSteps || 1;
+      payment.assignedApprover = approval.assignedApprover || null;
+      payment.assignedApproverName = approval.assignedApproverName || null;
+      payment.submittedAt = new Date();
+      payment.updatedAt = new Date();
+
+      await payment.save();
+
+      return res.json({
+        success: true,
+        message: 'Logistics payment updated and resubmitted for approval.',
+        payment
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   router.delete('/logistics-payments/:id', authenticateToken, authorizePermission('logistics-payments', 'delete'), async (req, res) => {
     try {
       const { id } = req.params;
@@ -5086,6 +5185,11 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
 
       if (!target) {
         return res.status(404).json({ success: false, error: 'Payment record not found.' });
+      }
+
+      const targetStatus = String(target.status || '').toLowerCase();
+      if (targetStatus.includes('pending') || targetStatus.includes('approval') || (target.currentStep > 0 && !targetStatus.includes('draft') && !targetStatus.includes('reject'))) {
+        return res.status(409).json({ success: false, error: 'Payment record cannot be deleted while under active approval cycle.' });
       }
 
       const ref = target.referenceNumber || target.logisticsPaymentId;

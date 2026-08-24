@@ -543,7 +543,7 @@ const getInitials = (name) => {
                             </button>
                           )}
 
-                          {canDelete && (
+                          {canDelete && !String(inv.status || '').toLowerCase().includes('pending') && !String(inv.status || '').toLowerCase().includes('approval') && !String(inv.status || '').toLowerCase().includes('approved') && !String(inv.status || '').toLowerCase().includes('paid') && (
                             <button
                               onClick={() => handleDeleteInvoice(inv.invoicePaymentId, inv.status)}
                               title="Delete Invoice"

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
-import { Truck, DollarSign, CheckCircle2, FileText, Building2, Search, Plus, Trash2, AlertTriangle } from 'lucide-react';
+import { Truck, DollarSign, CheckCircle2, FileText, Building2, Search, Plus, Trash2, AlertTriangle, Pencil, Save, X, Loader2 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import DocumentUploader from '../../components/shared/DocumentUploader';
 import { SearchableSelect } from '../../components/ui/searchable-select';
@@ -27,12 +27,18 @@ export default function LogisticsPaymentsView() {
   const [deletingBli, setDeletingBli] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
 
+  // Edit Payment Modal states
+  const [editPayment, setEditPayment] = useState(null);
+  const [editForm, setEditForm] = useState({ invoiceNumber: '', amount: '', vendorName: '', remarks: '' });
+  const [savingEdit, setSavingEdit] = useState(false);
+
   const canCreate = userHasPermission(
     user?.role,
     'logistics-payments.create',
     user?.permissions || user?.customPermissions
   );
   const canMarkPaid = userHasPermission(user?.role, 'logistics-payments.mark-paid', user?.permissions || user?.customPermissions);
+  const canDelete = userHasPermission(user?.role, 'logistics-payments.delete', user?.permissions || user?.customPermissions);
 
   const handlePayout = async (payment, refId) => {
     const utrNumber = window.prompt('Enter bank UTR / payment reference number:');
@@ -65,6 +71,46 @@ export default function LogisticsPaymentsView() {
   useEffect(() => {
     fetchPayments();
   }, []);
+
+  const handleOpenEdit = (p) => {
+    setEditPayment(p);
+    setEditForm({
+      invoiceNumber: p.invoiceNumber || '',
+      amount: p.amount?.toString() || p.totalAmount?.toString() || '',
+      vendorName: p.vendorName || '',
+      remarks: p.remarks || ''
+    });
+  };
+
+  const handleSaveEdit = async (e) => {
+    e.preventDefault();
+    if (!editForm.invoiceNumber || !editForm.amount || Number(editForm.amount) <= 0) {
+      return showToast({ title: 'Validation Error', description: 'Enter valid Invoice Number and Amount.', type: 'error' });
+    }
+    setSavingEdit(true);
+    try {
+      const refId = editPayment.referenceNumber || editPayment.logisticsPaymentId || editPayment.id;
+      const res = await apiFetch(`/api/p2p/logistics-payments/${refId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invoiceNumber: editForm.invoiceNumber,
+          amount: Number(editForm.amount),
+          vendorName: editForm.vendorName,
+          remarks: editForm.remarks
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to update payment');
+      showToast({ title: 'Resent for Approval', description: `${refId} updated and sent again for approval cycle from Step 1.`, type: 'success' });
+      setEditPayment(null);
+      fetchPayments();
+    } catch (err) {
+      showToast({ title: 'Update Failed', description: err.message, type: 'error' });
+    } finally {
+      setSavingEdit(false);
+    }
+  };
 
   const handleClearAllBli = async () => {
     try {
@@ -260,14 +306,26 @@ export default function LogisticsPaymentsView() {
                             </span>
                           )}
 
-                          <button
-                            onClick={() => handleDeleteSingle(p.id || refId, refId)}
-                            disabled={deletingId === (p.id || refId)}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition cursor-pointer"
-                            title={`Delete ${refId}`}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {canCreate && !status.toLowerCase().includes('paid') && (
+                            <button
+                              onClick={() => navigate(`/p2p/logistics-payments/${refId}/edit`)}
+                              className="p-1.5 text-slate-400 hover:text-slate-900 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                              title={`Edit ${refId} & Resubmit for Approval`}
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                          )}
+
+                          {canDelete && !status.toLowerCase().includes('pending') && !status.toLowerCase().includes('approval') && !status.toLowerCase().includes('approved') && !status.toLowerCase().includes('paid') && (
+                            <button
+                              onClick={() => handleDeleteSingle(p.id || refId, refId)}
+                              disabled={deletingId === (p.id || refId)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition cursor-pointer"
+                              title={`Delete ${refId}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -333,6 +391,96 @@ export default function LogisticsPaymentsView() {
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT LOGISTICS PAYMENT MODAL */}
+      {editPayment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-lg w-full p-6 space-y-4 font-sans text-left">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Pencil className="w-5 h-5 text-[#0d7676]" />
+                <h3 className="text-base font-bold text-slate-900">Edit Logistics Payment</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditPayment(null)}
+                className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="space-y-4">
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 font-semibold">
+                ⚡ Editing this payment will reset its status and resubmit it for approval from Step 1.
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Number <span className="text-rose-500">*</span></label>
+                <input
+                  type="text"
+                  required
+                  value={editForm.invoiceNumber}
+                  onChange={(e) => setEditForm({ ...editForm, invoiceNumber: e.target.value })}
+                  className="w-full px-3.5 py-2 text-xs border border-slate-200 rounded-xl font-mono font-bold text-slate-900 focus:border-[#0d7676] outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Amount <span className="text-rose-500">*</span></label>
+                <input
+                  type="number"
+                  required
+                  min="1"
+                  step="any"
+                  value={editForm.amount}
+                  onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })}
+                  className="w-full px-3.5 py-2 text-xs border border-slate-200 rounded-xl font-mono font-bold text-slate-900 focus:border-[#0d7676] outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Logistics Provider Name</label>
+                <input
+                  type="text"
+                  value={editForm.vendorName}
+                  onChange={(e) => setEditForm({ ...editForm, vendorName: e.target.value })}
+                  className="w-full px-3.5 py-2 text-xs border border-slate-200 rounded-xl font-medium text-slate-900 focus:border-[#0d7676] outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Remarks / Update Reason</label>
+                <textarea
+                  rows={2}
+                  value={editForm.remarks}
+                  onChange={(e) => setEditForm({ ...editForm, remarks: e.target.value })}
+                  placeholder="Reason for editing or updated payment notes..."
+                  className="w-full px-3.5 py-2 text-xs border border-slate-200 rounded-xl font-medium text-slate-900 focus:border-[#0d7676] outline-none resize-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditPayment(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEdit}
+                  className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-bold bg-[#0d7676] hover:bg-[#0f766e] text-white shadow-xs transition disabled:opacity-50"
+                >
+                  {savingEdit ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                  <span>{savingEdit ? 'Resubmitting...' : 'Save & Resubmit for Approval'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

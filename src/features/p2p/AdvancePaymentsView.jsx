@@ -463,7 +463,7 @@ console.log("canMarkPaid",canMarkPaid);
                             </button>
                           )}
 
-                          {canDelete && (
+                          {canDelete && !String(adv.status || '').toLowerCase().includes('pending') && !String(adv.status || '').toLowerCase().includes('approval') && !String(adv.status || '').toLowerCase().includes('approved') && !String(adv.status || '').toLowerCase().includes('paid') && (
                             <button
                               onClick={() => handleDeleteAdvance(adv.reference)}
                               title="Delete Advance"

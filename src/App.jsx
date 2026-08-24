@@ -231,6 +231,8 @@ export default function App() {
                 <Route path="p2p/logistics-payments" element={<LogisticsPaymentsView />} />
                 <Route path="p2p/logistics-payments/create" element={<CreateLogisticsPaymentWizard />} />
                 <Route path="admin/logistics-payments/create" element={<CreateLogisticsPaymentWizard />} />
+                <Route path="p2p/logistics-payments/:id/edit" element={<CreateLogisticsPaymentWizard />} />
+                <Route path="admin/logistics-payments/:id/edit" element={<CreateLogisticsPaymentWizard />} />
 
                 {/* LOGISTICS Group Routes */}
                 <Route path="p2p/rfq" element={<RfqSourcingView />} />
