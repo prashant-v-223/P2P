@@ -1,17 +1,31 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ClipboardList, Search } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { CustomSelect } from '../../components/ui/custom-select';
 import { ServerPagination } from '../../components/ui/server-pagination';
 
 export default function FreightRfqListPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlStatus = searchParams.get('status') || 'All';
+  const urlSearch = searchParams.get('search') || '';
+  const urlPage = Number(searchParams.get('page')) || 1;
+
   const [rfqs, setRfqs] = useState([]);
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('All');
+  const [search, setSearch] = useState(urlSearch);
+  const [status, setStatus] = useState(urlStatus);
   const [error, setError] = useState('');
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(urlPage);
   const [pageSize, setPageSize] = useState(10);
+
+  // Sync state changes to URL query parameters
+  useEffect(() => {
+    const params = {};
+    if (status && status !== 'All') params.status = status;
+    if (search.trim()) params.search = search.trim();
+    if (page > 1) params.page = String(page);
+    setSearchParams(params, { replace: true });
+  }, [status, search, page, setSearchParams]);
 
   useEffect(() => {
     apiFetch('/api/p2p/vendor-rfqs')
@@ -25,7 +39,29 @@ export default function FreightRfqListPage() {
 
   const filtered = useMemo(() => rfqs.filter((rfq) => {
     const q = search.toLowerCase();
-    return (!q || `${rfq.rfqNumber} ${rfq.title} ${rfq.poId}`.toLowerCase().includes(q)) && (status === 'All' || rfq.status === status);
+    const matchesQuery = !q || `${rfq.rfqNumber} ${rfq.title} ${rfq.poId}`.toLowerCase().includes(q);
+    if (!matchesQuery) return false;
+
+    if (status === 'All') return true;
+
+    const normStat = String(rfq.status || '').toLowerCase();
+    const awardedToMe = Boolean(rfq.myAllocation);
+    const isClosed = rfq.closingDate && new Date(rfq.closingDate) < new Date();
+
+    if (status === 'published' || status === 'open') {
+      return normStat === 'published' && !isClosed;
+    }
+    if (status === 'quoted') {
+      return Boolean(rfq.myQuote);
+    }
+    if (status === 'awarded') {
+      return awardedToMe || normStat === 'awarded' || normStat === 'fully_awarded' || normStat === 'partially_awarded';
+    }
+    if (status === 'closed') {
+      return normStat === 'closed' || isClosed;
+    }
+
+    return normStat === status.toLowerCase();
   }), [rfqs, search, status]);
 
   const paginated = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
@@ -168,17 +204,17 @@ export default function FreightRfqListPage() {
               No RFQs found.
             </div>
           )}
-
-          <ServerPagination
-            page={page}
-            totalPages={Math.ceil(filtered.length / pageSize) || 1}
-            total={filtered.length}
-            pageSize={pageSize}
-            itemLabel="RFQs"
-            onPageChange={(p) => setPage(p)}
-            onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
-          />
         </div>
+
+        <ServerPagination
+          page={page}
+          totalPages={Math.ceil(filtered.length / pageSize) || 1}
+          total={filtered.length}
+          pageSize={pageSize}
+          itemLabel="RFQs"
+          onPageChange={(p) => setPage(p)}
+          onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+        />
       </div>
     </div>
   );

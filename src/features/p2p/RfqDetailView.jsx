@@ -174,6 +174,17 @@ export default function RfqDetailView() {
   };
 
   const handleAwardQuote = async (quote) => {
+    const isExpired = rfq.status === 'closed' || (rfq.closingDate && new Date(rfq.closingDate) < new Date());
+    if (isExpired) {
+      setReopenClosingDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16));
+      setShowReopenModal(true);
+      return showToast({
+        title: 'RFQ Bidding Expired',
+        description: 'This RFQ has expired. Please extend the closing date in the Reopen modal before awarding.',
+        type: 'error'
+      });
+    }
+
     const summary = getRfqAllocationSummary(rfq);
     const targetQty = summary.totalContainers || 1;
     setAwardRows([{
@@ -185,6 +196,17 @@ export default function RfqDetailView() {
   };
 
   const handleReassignRfq = () => {
+    const isExpired = rfq.status === 'closed' || (rfq.closingDate && new Date(rfq.closingDate) < new Date());
+    if (isExpired) {
+      setReopenClosingDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16));
+      setShowReopenModal(true);
+      return showToast({
+        title: 'RFQ Bidding Expired',
+        description: 'This RFQ has expired. Please extend the closing date in the Reopen modal before reassigning.',
+        type: 'error'
+      });
+    }
+
     const summary = getRfqAllocationSummary(rfq);
     const targetQty = summary.totalContainers || 1;
     const existingQuote = (quotesList || [])[0];
@@ -683,13 +705,23 @@ export default function RfqDetailView() {
       {normalizedOpenContainers > 0 && !normalizedIsPendingApproval && quotesList.length > 0 && (
         <button
           onClick={() => handleAwardQuote(quotesList[0])}
-          className="px-3.5 py-1.5 bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 text-white text-xs font-bold rounded-xl transition-all duration-200 inline-flex items-center gap-1.5 shadow-sm hover:shadow-md active:scale-95 whitespace-nowrap shrink-0"
+          className={`px-3.5 py-1.5 text-white text-xs font-bold rounded-xl transition-all duration-200 inline-flex items-center gap-1.5 shadow-sm hover:shadow-md active:scale-95 whitespace-nowrap shrink-0 ${
+            (rfq.status === 'closed' || (rfq.closingDate && new Date(rfq.closingDate) < new Date()))
+              ? 'bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800'
+              : 'bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800'
+          }`}
         >
-          <Award className="w-4 h-4 shrink-0" />
+          {(rfq.status === 'closed' || (rfq.closingDate && new Date(rfq.closingDate) < new Date())) ? (
+            <RefreshCw className="w-4 h-4 shrink-0" />
+          ) : (
+            <Award className="w-4 h-4 shrink-0" />
+          )}
           <span className="whitespace-nowrap">
-            {normalizedAllocatedContainers > 0 
-              ? `Allocate Remaining ${normalizedOpenContainers} Container${normalizedOpenContainers > 1 ? 's' : ''}` 
-              : `Award Vendors (${normalizedTotalContainers} Containers)`
+            {(rfq.status === 'closed' || (rfq.closingDate && new Date(rfq.closingDate) < new Date()))
+              ? `Reopen to Award (${normalizedTotalContainers} Containers)`
+              : normalizedAllocatedContainers > 0 
+                ? `Allocate Remaining ${normalizedOpenContainers} Container${normalizedOpenContainers > 1 ? 's' : ''}` 
+                : `Award Vendors (${normalizedTotalContainers} Containers)`
             }
           </span>
         </button>
@@ -800,10 +832,21 @@ export default function RfqDetailView() {
                     ) : normalizedOpenContainers > 0 ? (
                       <button
                         onClick={() => handleAwardQuote(q)}
-                        className="px-2 py-1 bg-[#0d7676] hover:bg-[#096464] text-white text-[9.5px] font-bold rounded-lg shadow-xs transition-all duration-150 inline-flex items-center gap-1 hover:shadow-md active:scale-95 whitespace-nowrap"
+                        className={`px-2 py-1 text-[9.5px] font-bold rounded-lg shadow-xs transition-all duration-150 inline-flex items-center gap-1 hover:shadow-md active:scale-95 whitespace-nowrap ${
+                          (rfq.status === 'closed' || (rfq.closingDate && new Date(rfq.closingDate) < new Date()))
+                            ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'
+                            : 'bg-[#0d7676] hover:bg-[#096464] text-white'
+                        }`}
                       >
-                        <Award className="w-3 h-3" />
-                        Allocate {normalizedOpenContainers} Ctr
+                        {(rfq.status === 'closed' || (rfq.closingDate && new Date(rfq.closingDate) < new Date())) ? (
+                          <RefreshCw className="w-3 h-3 text-amber-700" />
+                        ) : (
+                          <Award className="w-3 h-3" />
+                        )}
+                        {(rfq.status === 'closed' || (rfq.closingDate && new Date(rfq.closingDate) < new Date()))
+                          ? 'Reopen to Allocate'
+                          : `Allocate ${normalizedOpenContainers} Ctr`
+                        }
                       </button>
                     ) : (
                       <span className="px-2 py-0.5 rounded-lg text-[9.5px] font-bold text-slate-400 bg-slate-100 border border-slate-200">

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import {
@@ -40,21 +40,36 @@ const ActionButton = ({ onClick, icon: Icon, label, color = "slate", bordered = 
 
 export default function RfqSourcingView() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlStatus = searchParams.get('status') || 'All';
+  const urlSearch = searchParams.get('search') || '';
+  const urlPage = Number(searchParams.get('page')) || 1;
+
   const { showToast } = useToast();
   const { user } = useSelector((state) => state.auth || {});
   const userPerms = user?.permissions || user?.customPermissions;
   const canCreate = userHasPermission(user?.role, 'rfq.create', userPerms);
   const canEdit = canCreate || userHasPermission(user?.role, 'rfq.edit', userPerms);
   const canDelete = userHasPermission(user?.role, 'rfq.delete', userPerms);
+
   const [rfqs, setRfqs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('All');
-  const [currentPage, setCurrentPage] = useState(1);
+  const [search, setSearch] = useState(urlSearch);
+  const [statusFilter, setStatusFilter] = useState(urlStatus);
+  const [currentPage, setCurrentPage] = useState(urlPage);
   const [totalRfqs, setTotalRfqs] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState(urlSearch);
   const [pageSize, setPageSize] = useState(10);
+
+  // Sync state with URL search params
+  useEffect(() => {
+    const params = {};
+    if (statusFilter && statusFilter !== 'All') params.status = statusFilter;
+    if (debouncedSearch) params.search = debouncedSearch;
+    if (currentPage > 1) params.page = String(currentPage);
+    setSearchParams(params, { replace: true });
+  }, [statusFilter, debouncedSearch, currentPage, setSearchParams]);
 
   // Helper function
   const isRfqClosed = (rfq) => {
@@ -85,7 +100,6 @@ export default function RfqSourcingView() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      setCurrentPage(1);
       setDebouncedSearch(search.trim());
     }, 300);
     return () => clearTimeout(timer);

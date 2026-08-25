@@ -49,13 +49,18 @@ export default function FreightForwarderDashboard() {
 
     {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700">{error}</div>}
     <section className="grid gap-4 sm:grid-cols-3">
-      {[["Open RFQs", open, ClipboardList, 'text-[#0d7676] bg-teal-50'], ["Quotes Submitted", quoted, Ship, 'text-blue-600 bg-blue-50'], ["Awards", awarded, User, 'text-emerald-600 bg-emerald-50']].map(([label, value, Icon, tone]) =>
-        <Link key={label} to="/vendor/rfqs" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-teal-300 hover:shadow-md">
+      {[
+        ["Open RFQs", open, ClipboardList, 'text-[#0d7676] bg-teal-50', '/vendor/rfqs?status=published'],
+        ["Quotes Submitted", quoted, Ship, 'text-blue-600 bg-blue-50', '/vendor/rfqs?status=quoted'],
+        ["Awards", awarded, User, 'text-emerald-600 bg-emerald-50', '/vendor/rfqs?status=awarded']
+      ].map(([label, value, Icon, tone, linkUrl]) => (
+        <Link key={label} to={linkUrl} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-teal-300 hover:shadow-md">
           <div className={`inline-flex rounded-xl p-2.5 ${tone}`}><Icon className="h-5 w-5" /></div>
           <p className="mt-3 text-xs font-bold uppercase text-slate-500">{label}</p>
           <p className="text-3xl font-black text-slate-900">{value}</p>
           <span className="mt-3 flex items-center gap-1 text-xs font-bold text-[#0d7676]">View RFQs <ArrowUpRight className="h-3.5 w-3.5" /></span>
-        </Link>)}
+        </Link>
+      ))}
     </section>
   </div>;
 }

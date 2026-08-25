@@ -5709,12 +5709,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         return res.download(localPath, filename);
       }
 
-      return res.status(404).json({
-        success: false,
-        error: 'This legacy document is referenced in the database, but its physical file is not available in local or configured cloud storage.'
-      });
-
-      /* istanbul ignore next -- retained only for compatibility with old builds */
+      /* Fallback generator for legacy/demo documents whose physical file is not on disk or S3 */
       const lowerName = filename.toLowerCase();
 
       if (lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) {

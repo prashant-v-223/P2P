@@ -53,6 +53,7 @@ const formatMoney = (amount, currency = 'INR') => new Intl.NumberFormat('en-IN',
 
 function AssignModal({ entry, agents, onClose, onSaved }) {
   const { showToast } = useToast();
+  const isAssigned = Boolean(entry.customAgentId || entry.customAgentName || entry.status === 'assigned_to_agent');
   const [agentId, setAgentId] = useState(entry.customAgentId || '');
   const [notes, setNotes] = useState(entry.eximNotes || '');
   const [saving, setSaving] = useState(false);
@@ -79,7 +80,7 @@ function AssignModal({ entry, agents, onClose, onSaved }) {
       const response = await apiFetch(`/api/p2p/exim/bl-entries/${entry.blId}/assign`, { method: 'POST', body: JSON.stringify({ agentId, notes }) });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || 'Agent assignment failed.');
-      showToast({ type: 'success', title: 'Agent Assigned', description: `${entry.blNumber} is now available in the customs agent portal.` });
+      showToast({ type: 'success', title: isAssigned ? 'Agent Reassigned' : 'Agent Assigned', description: `${entry.blNumber} is now assigned in the customs agent portal.` });
       onSaved(json.data);
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
@@ -89,8 +90,10 @@ function AssignModal({ entry, agents, onClose, onSaved }) {
       <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-xl">
         <div className="flex items-start justify-between border-b p-5">
           <div>
-            <h2 className="text-base font-extrabold">Assign to Customs Agent</h2>
-            <p className="mt-1 text-xs text-slate-500">Select the agent handling customs clearance for BL {entry.blNumber}.</p>
+            <h2 className="text-base font-extrabold">{isAssigned ? 'Reassign Customs Agent' : 'Assign to Customs Agent'}</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              {isAssigned ? `Reassign or change the customs agent handling BL ${entry.blNumber}.` : `Select the agent handling customs clearance for BL ${entry.blNumber}.`}
+            </p>
           </div>
           <button onClick={onClose} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
         </div>
@@ -115,7 +118,7 @@ function AssignModal({ entry, agents, onClose, onSaved }) {
           <button onClick={onClose} className="rounded-lg border px-4 py-2 text-xs font-bold">Cancel</button>
           <button onClick={assign} disabled={saving || !agentId} className="inline-flex items-center gap-1 rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
-            Assign Agent
+            {isAssigned ? 'Reassign Agent' : 'Assign Agent'}
           </button>
         </div>
       </div>
@@ -202,45 +205,58 @@ function EximList() {
         {loading ? (
           <div className="p-14 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-[#0d7676]" /></div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="p-4">BL Number</th>
-                  <th>RFQ</th>
-                  <th>Vendor</th>
-                  <th>Clearing Port</th>
-                  <th>Containers</th>
-                  <th>Docs</th>
-                  <th>Agent</th>
-                  <th>Status</th>
-                  <th className="p-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {paginated.map((entry) => (
-                  <tr key={entry.blId} onClick={() => navigate(`/admin/exim/${entry.blId}`)} className="cursor-pointer hover:bg-slate-50 transition">
-                    <td className="p-4 font-mono font-bold text-slate-900">{entry.blNumber}</td>
-                    <td>{entry.rfqNumber || entry.rfqId}</td>
-                    <td className="font-semibold text-slate-700">{entry.vendorName}</td>
-                    <td>{entry.portOfClearing || '—'}</td>
-                    <td>{entry.containerCount}</td>
-                    <td><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold">{entry.documents?.length || 0}</span></td>
-                    <td>{entry.customAgentName || <span className="text-slate-400 italic">Unassigned</span>}</td>
-                    <td><span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold border ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</span></td>
-                    <td className="p-4 text-right">
-                      <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => navigate(`/admin/exim/${entry.blId}`)} className="inline-flex items-center gap-1 rounded border px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50"><Eye className="h-3.5 w-3.5" />Review</button>
-                        {entry.status !== 'custom_cleared' && canAssignAgent && (
-                          <button onClick={() => setSelected(entry)} className="inline-flex items-center gap-1 rounded bg-[#0d7676] px-2.5 py-1 text-xs font-bold text-white hover:bg-teal-700"><UserPlus className="h-3.5 w-3.5" />Assign</button>
-                        )}
-                      </div>
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="p-4">BL Number</th>
+                    <th>RFQ</th>
+                    <th>Vendor</th>
+                    <th>Clearing Port</th>
+                    <th>Containers</th>
+                    <th>Docs</th>
+                    <th>Agent</th>
+                    <th>Status</th>
+                    <th className="p-4 text-right">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {!filtered.length && <div className="p-12 text-center text-xs text-slate-400">No BL entries found.</div>}
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {paginated.map((entry) => (
+                    <tr key={entry.blId} onClick={() => navigate(`/admin/exim/${entry.blId}`)} className="cursor-pointer hover:bg-slate-50 transition">
+                      <td className="p-4 font-mono font-bold text-slate-900">{entry.blNumber}</td>
+                      <td>{entry.rfqNumber || entry.rfqId}</td>
+                      <td className="font-semibold text-slate-700">{entry.vendorName}</td>
+                      <td>{entry.portOfClearing || '—'}</td>
+                      <td>{entry.containerCount}</td>
+                      <td><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold">{entry.documents?.length || 0}</span></td>
+                      <td>{entry.customAgentName || <span className="text-slate-400 italic">Unassigned</span>}</td>
+                      <td><span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold border ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</span></td>
+                      <td className="p-4 text-right">
+                        <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                          <button onClick={() => navigate(`/admin/exim/${entry.blId}`)} className="inline-flex items-center gap-1 rounded border px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50"><Eye className="h-3.5 w-3.5" />Review</button>
+                          {entry.status !== 'custom_cleared' && canAssignAgent && (() => {
+                            const isAssigned = Boolean(entry.customAgentId || entry.customAgentName || entry.status === 'assigned_to_agent');
+                            return (
+                              <button
+                                onClick={() => setSelected(entry)}
+                                className={`inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs font-bold text-white transition ${
+                                  isAssigned ? 'bg-cyan-700 hover:bg-cyan-800' : 'bg-[#0d7676] hover:bg-teal-700'
+                                }`}
+                              >
+                                <UserPlus className="h-3.5 w-3.5" />
+                                {isAssigned ? 'Reassign' : 'Assign'}
+                              </button>
+                            );
+                          })()}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!filtered.length && <div className="p-12 text-center text-xs text-slate-400">No BL entries found.</div>}
+            </div>
             <ServerPagination
               page={page}
               totalPages={Math.ceil(filtered.length / pageSize) || 1}
@@ -250,7 +266,7 @@ function EximList() {
               onPageChange={(p) => setPage(p)}
               onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
             />
-          </div>
+          </>
         )}
       </section>
 
