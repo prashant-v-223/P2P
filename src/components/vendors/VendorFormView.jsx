@@ -716,6 +716,7 @@ export default function VendorFormView() {
       assignedPurchaseManagerId: formData.assignedPurchaseManagerId || '',
       buyerName: formData.assignedPurchaseManager || '',
       buyerId: formData.assignedPurchaseManagerId || '',
+      userId: formData.assignedPurchaseManagerId || '',
       contactPerson: formData.contactPerson.trim() || formData.companyName.trim(),
       phone: formData.phone.trim() || '+91 9800000000',
       status: formData.accountStatus || 'Active',

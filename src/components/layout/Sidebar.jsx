@@ -99,7 +99,7 @@ const NavItem = React.memo(({ item, collapsed, onNavigate, badgeValue }) => {
         cn(
           "group relative w-full flex items-center transition-all outline-none font-medium",
           collapsed
-            ? "justify-center py-3 rounded-xl mx-auto"
+            ? "justify-center py-2.5 px-0 rounded-xl mx-auto"
             : "justify-between pl-3 pr-3 py-2.5 rounded-xl",
           isActive
             ? "bg-[#0d9488] text-white shadow-sm font-semibold"
@@ -109,7 +109,7 @@ const NavItem = React.memo(({ item, collapsed, onNavigate, badgeValue }) => {
     >
       {({ isActive }) => (
         <>
-          <div className="flex items-center gap-3 min-w-0 flex-1 mr-2">
+          <div className={cn("flex items-center min-w-0", collapsed ? "justify-center" : "gap-3 flex-1 mr-2")}>
             <Icon className={cn(
               "flex-shrink-0 transition-colors",
               collapsed ? "w-5 h-5" : "w-[18px] h-[18px]",
@@ -129,9 +129,9 @@ const NavItem = React.memo(({ item, collapsed, onNavigate, badgeValue }) => {
             </span>
           )}
 
-      {/* Badge for collapsed state */}
+          {/* Badge for collapsed state */}
           {displayBadge !== null && collapsed && (
-            <span className="absolute -top-1 -right-0.5 min-w-[18px] h-[18px] px-1 bg-rose-500 text-white text-[10px] font-extrabold rounded-full flex items-center justify-center shadow-xs border border-white z-10">
+            <span className="absolute top-0.5 right-1 min-w-[16px] h-[16px] px-1 bg-rose-500 text-white text-[9px] font-black rounded-full flex items-center justify-center shadow-xs border border-white z-20 pointer-events-none">
               {displayBadge}
             </span>
           )}
@@ -140,15 +140,15 @@ const NavItem = React.memo(({ item, collapsed, onNavigate, badgeValue }) => {
           {collapsed && (
             <span
               className={cn(
-                "pointer-events-none absolute left-full ml-3 z-50",
-                "px-3 py-1.5 rounded-lg text-[12px] font-medium whitespace-nowrap",
-                "bg-slate-800 text-white shadow-lg",
+                "pointer-events-none absolute left-full ml-3 top-1/2 -translate-y-1/2 z-50",
+                "px-3 py-1.5 rounded-lg text-[12px] font-semibold whitespace-nowrap shadow-xl",
+                "bg-slate-900 text-white border border-slate-700/50",
                 "opacity-0 -translate-x-1 scale-95",
                 "group-hover:opacity-100 group-hover:translate-x-0 group-hover:scale-100",
                 "transition-all duration-150 ease-out",
                 // Arrow
                 "before:absolute before:top-1/2 before:-translate-y-1/2 before:-left-1.5",
-                "before:border-4 before:border-transparent before:border-r-slate-800",
+                "before:border-4 before:border-transparent before:border-r-slate-900",
                 "before:content-['']"
               )}
             >
@@ -171,16 +171,16 @@ const UserProfile = React.memo(({ user, collapsed, onNavigate }) => {
   const initials = user?.name ? user.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase() : 'SA';
 
   return (
-    <div className="p-3 border-t border-slate-200 bg-white flex-shrink-0">
+    <div className="p-2 border-t border-slate-200 bg-white shrink-0 relative group">
       <Link
         to="/profile"
         onClick={onNavigate}
         className={cn(
-          "flex items-center p-2.5 rounded-xl hover:bg-slate-50 transition-all duration-200 group",
+          "flex items-center p-1.5 rounded-xl hover:bg-slate-50 transition-all duration-200",
           collapsed ? "justify-center" : "justify-start gap-2.5"
         )}
       >
-        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#0d9488] to-[#0f766e] text-white font-bold text-sm flex items-center justify-center flex-shrink-0 shadow-sm">
+        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[#0d7676] to-[#096464] text-white font-black text-xs flex items-center justify-center shrink-0 shadow-xs">
           {initials}
         </div>
         {!collapsed && (
@@ -190,6 +190,25 @@ const UserProfile = React.memo(({ user, collapsed, onNavigate }) => {
           </div>
         )}
       </Link>
+
+      {/* Profile Tooltip for collapsed state */}
+      {collapsed && (
+        <span
+          className={cn(
+            "pointer-events-none absolute left-full ml-3 top-1/2 -translate-y-1/2 z-50",
+            "px-3 py-1.5 rounded-lg text-[12px] font-semibold whitespace-nowrap shadow-xl",
+            "bg-slate-900 text-white border border-slate-700/50",
+            "opacity-0 -translate-x-1 scale-95",
+            "group-hover:opacity-100 group-hover:translate-x-0 group-hover:scale-100",
+            "transition-all duration-150 ease-out",
+            "before:absolute before:top-1/2 before:-translate-y-1/2 before:-left-1.5",
+            "before:border-4 before:border-transparent before:border-r-slate-900",
+            "before:content-['']"
+          )}
+        >
+          {user?.name || 'Profile'} ({user?.email || 'Admin'})
+        </span>
+      )}
     </div>
   );
 });
@@ -215,7 +234,7 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
   return (
     <aside
       className={cn(
-        "bg-white border-r border-slate-200 h-screen flex flex-col transition-all duration-300 flex-shrink-0 select-none z-40",
+        "bg-white border-r border-slate-200 h-screen flex flex-col transition-all duration-300 flex-shrink-0 select-none z-40 relative",
         collapsed ? "w-[68px] overflow-visible" : "w-[232px] 2xl:w-[250px]",
         "fixed inset-y-0 left-0 lg:static lg:translate-x-0",
         mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
@@ -223,22 +242,22 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
     >
       {/* Brand Header with Improved Logo */}
       <header className={cn(
-        "border-b border-slate-200 flex items-center h-[64px] flex-shrink-0 bg-white",
-        collapsed ? "px-3 justify-center" : "px-4 justify-start"
+        "border-b border-slate-200 flex items-center h-[64px] flex-shrink-0 bg-white relative",
+        collapsed ? "px-2 justify-center" : "px-4 justify-start"
       )}>
         <Link to={homePath} onClick={onNavigate} className="flex items-center gap-3 overflow-hidden transition-all duration-200">
           {collapsed ? (
-            <img src="/favicon.ico" alt="logo" width={30} height={20} />
+            <div className="w-7 h-7 rounded-lg bg-[#0d7676] text-white font-black text-sm flex items-center justify-center shadow-2xs shrink-0">
+              R
+            </div>
           ) : (
-            <>
-              <img src="/logo.png" alt="logo" width={150} height={25} />
-            </>
+            <img src="/logo.png" alt="logo" width={150} height={25} />
           )}
         </Link>
       </header>
 
       {/* Navigation List */}
-      <nav className={cn("flex-1 py-3 space-y-1", collapsed ? "px-2 overflow-visible" : "px-3 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent")}>
+      <nav className={cn("flex-1 py-2 space-y-1 overflow-y-auto scrollbar-none", collapsed ? "px-2" : "px-3 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent")}>
         {allowedSections.map((section) => (
           <div key={section.id} className={cn("space-y-0.5", section.id !== 'core' && 'mt-5')}>
             {section.title && !collapsed && (
@@ -266,7 +285,7 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
 
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="hidden lg:flex absolute -right-3.5 top-5 z-50 w-7 h-7 rounded-full bg-white border border-slate-200 shadow-md items-center justify-center hover:bg-slate-50 hover:border-slate-300 transition-all active:scale-95 cursor-pointer"
+        className="hidden lg:flex absolute -right-3.5 top-[18px] z-50 w-7 h-7 rounded-full bg-white border border-slate-200 shadow-md items-center justify-center hover:bg-teal-50 hover:border-teal-300 hover:text-[#0d7676] transition-all active:scale-95 cursor-pointer"
         title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
       >
         <ChevronRight className={cn("w-4 h-4 text-slate-600 transition-transform duration-200", collapsed ? "" : "rotate-180")} />

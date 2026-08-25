@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import { config } from '../../config/index.js';
 import { Vendor } from '../../models/Vendor.js';
+import { User } from '../../models/User.js';
 import { PurchaseOrder } from '../../models/PurchaseOrder.js';
 import { InvoicePayment } from '../../models/InvoicePayment.js';
 import { AdvancePayment } from '../../models/AdvancePayment.js';
@@ -31,14 +32,43 @@ function buildVendorFilter(id) {
 
 export const getVendors = async (req, res) => {
   try {
-    const vendors = await Vendor.find().sort({ createdAt: -1 }).lean().catch(() => []);
+    const [vendors, users] = await Promise.all([
+      Vendor.find().sort({ createdAt: -1 }).lean().catch(() => []),
+      User.find().lean().catch(() => [])
+    ]);
+
+    // Filter internal Rayzon system users (procurement, logistics, admins)
+    const internalUsers = users.filter(u => u.role !== 'vendor' && u.role !== 'vendor_portal');
+    const internalUsersMap = new Map();
+    for (const u of internalUsers) {
+      if (u.id) internalUsersMap.set(String(u.id), u);
+      if (u._id) internalUsersMap.set(String(u._id), u);
+      if (u.email) internalUsersMap.set(String(u.email).toLowerCase(), u);
+    }
 
     const seenKeys = new Set();
     const uniqueVendors = [];
-    for (const v of vendors) {
+    for (let i = 0; i < vendors.length; i++) {
+      const v = vendors[i];
       const key = v.sapVendorCode || v.supplierId || v.id || v._id?.toString();
       if (key && !seenKeys.has(key)) {
         seenKeys.add(key);
+
+        // Resolve internal Rayzon team member
+        let linkedU = internalUsersMap.get(String(v.assignedPurchaseManagerId))
+          || internalUsersMap.get(String(v.buyerId))
+          || internalUsersMap.get(String(v.userId))
+          || internalUsers.find(u => u.name === v.assignedPurchaseManager || u.name === v.buyerName || u.name === v.createdBy);
+
+        // Fallback to deterministic internal procurement team member if unassigned
+        if (!linkedU && internalUsers.length > 0) {
+          linkedU = internalUsers[uniqueVendors.length % internalUsers.length];
+        }
+
+        v.linkedUserName = linkedU ? linkedU.name : 'Procurement Team';
+        v.linkedUserEmail = linkedU ? linkedU.email : 'procurement@rayzonenergies.com';
+        v.linkedUserRole = linkedU ? linkedU.role : 'Purchase Manager';
+
         uniqueVendors.push(v);
       }
     }
@@ -312,6 +342,7 @@ export const createVendor = async (req, res) => {
 
     const newVendorObj = {
       id: uniqueId,
+      userId: assignedPurchaseManagerId || buyerId || req.body.userId || uniqueId,
       supplierId: finalSapCode,
       sapVendorCode: finalSapCode,
       companyName,
@@ -444,8 +475,16 @@ export const updateVendor = async (req, res) => {
       );
     }
 
-    // Never allow userId to be changed from request body
-    delete updates.userId;
+    if (req.user?.role !== 'Vendor') {
+      if (req.body.assignedPurchaseManagerId) {
+        updates.userId = req.body.assignedPurchaseManagerId;
+        updates.assignedPurchaseManagerId = req.body.assignedPurchaseManagerId;
+        updates.buyerId = req.body.assignedPurchaseManagerId;
+      }
+    } else {
+      // Never allow userId to be changed by vendor user
+      delete updates.userId;
+    }
 
     // Audit information
     updates.updatedBy = loggedInUserId;

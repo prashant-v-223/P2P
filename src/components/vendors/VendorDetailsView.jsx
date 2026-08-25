@@ -285,8 +285,12 @@ export default function VendorDetailsView() {
                 <span className="font-bold text-slate-900">{vendor.vendorType || 'DOMESTIC'}</span>
               </div>
               <div>
-                <span className="text-slate-400 font-bold uppercase text-[10px] block mb-1">Payment Terms</span>
-                <span className="font-bold text-slate-900">{vendor.paymentTerms || '30 Days'}</span>
+                <span className="text-slate-400 font-bold uppercase text-[10px] block mb-1 flex items-center gap-1">
+                  <ShieldCheck className="w-3 h-3 text-[#0d7676]" /> Linked User Account
+                </span>
+                <span className="font-bold text-[#0d7676] bg-teal-50 px-2 py-0.5 rounded border border-teal-200 font-mono text-[11px] inline-flex items-center gap-1">
+                  {vendor.userId ? `ID: ${vendor.userId}` : vendor.email || 'Linked Account'}
+                </span>
               </div>
             </CardContent>
           </Card>

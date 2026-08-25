@@ -3,7 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { useLocation, Link, useNavigate } from 'react-router-dom';
 import { logout } from '../../features/auth/authSlice';
 import { fetchPendingApprovals } from '../../features/approvals/approvalsSlice';
-import { Menu, ChevronsLeft, ChevronsRight, ChevronDown, User, LogOut } from 'lucide-react';
+import { Menu, ChevronDown, User, LogOut } from 'lucide-react';
 import { routeMeta } from '../../config/navigation';
 import NotificationPanel from './NotificationPanel';
 
@@ -46,14 +46,7 @@ export default function Header({ collapsed, setCollapsed, onOpenMobile }) {
         <button onClick={onOpenMobile} className="rounded-xl border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50 lg:hidden" aria-label="Open navigation">
           <Menu className="h-5 w-5" />
         </button>
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="hidden h-8 w-8 items-center justify-center rounded-lg bg-slate-50 text-slate-500 transition hover:bg-teal-50 hover:text-teal-700 lg:flex"
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          {collapsed ? <ChevronsRight className="h-[18px] w-[18px]" /> : <ChevronsLeft className="h-[18px] w-[18px]" />}
-        </button>
+
         <div className="flex min-w-0 items-center gap-3">
           <span className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-teal-50 text-teal-700 ring-1 ring-teal-100 sm:flex">
             <PageIcon className="h-[18px] w-[18px]" />
@@ -114,7 +107,6 @@ export default function Header({ collapsed, setCollapsed, onOpenMobile }) {
           )}
         </div>
       </div>
-
     </header>
   );
 }

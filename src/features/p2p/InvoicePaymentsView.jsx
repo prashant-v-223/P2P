@@ -357,7 +357,7 @@ const getInitials = (name) => {
                 <th className="py-3.5 px-3.5 text-right">INVOICE AMT</th>
                 <th className="py-3.5 px-2.5 text-center whitespace-nowrap">TDS</th>
                 <th className="py-3.5 px-3.5 text-right">NET PAYABLE</th>
-                <th className="py-3.5 px-3.5 text-center">3-WAY MATCH</th>
+                {/* <th className="py-3.5 px-3.5 text-center">3-WAY MATCH</th> */}
                 <th className="py-3.5 px-3.5 text-center">STATUS</th>
                 <th className="py-3.5 px-3.5 whitespace-nowrap">SUBMITTED</th>
                 <th className="py-3.5 px-3.5 whitespace-nowrap">DUE DATE</th>
@@ -469,7 +469,7 @@ const getInitials = (name) => {
                       </td>
 
                       {/* 3-WAY MATCH */}
-                      <td className="py-3 px-3.5 text-center">
+                      {/* <td className="py-3 px-3.5 text-center">
                         <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border ${
                           isMatched 
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
@@ -478,7 +478,7 @@ const getInitials = (name) => {
                           <span className={`w-1.5 h-1.5 rounded-full ${isMatched ? 'bg-emerald-500' : 'bg-amber-500'}`} />
                           {isMatched ? 'Matched' : 'Pending'}
                         </span>
-                      </td>
+                      </td> */}
 
                       {/* STATUS */}
                       <td className="py-3 px-3.5 text-center">
