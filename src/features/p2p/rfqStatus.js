@@ -65,3 +65,24 @@ export function getRfqAllocationSummary(rfq) {
     badgeText
   };
 }
+
+export function getShipperName(rfq) {
+  if (!rfq) return 'IMPORT SEA FREIGHT';
+
+  // 1. Check explicit non-generic shipper fields first
+  if (rfq.shipperName && typeof rfq.shipperName === 'string' && rfq.shipperName.trim()) {
+    const sName = rfq.shipperName.trim();
+    if (!/^(Rayzon Solar|Rayzon)/i.test(sName)) {
+      return sName;
+    }
+  }
+
+  // 2. Clean title: strip trailing container count and port details e.g. "- 4 X 40 FT - SHANGHAI to NHAVA SHEVA"
+  const title = (rfq.title || '').trim();
+  if (title) {
+    const mainTitle = title.split(' - ')[0].trim();
+    if (mainTitle) return mainTitle;
+  }
+
+  return 'IMPORT SEA FREIGHT';
+}

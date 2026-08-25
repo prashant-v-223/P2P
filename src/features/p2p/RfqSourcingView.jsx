@@ -244,32 +244,29 @@ export default function RfqSourcingView() {
         ) : rfqs.length === 0 ? (
           <div className="py-20 px-4 flex flex-col items-center justify-center text-center space-y-2"><FileSpreadsheet className="w-10 h-10 text-slate-300 stroke-[1.5]" /><h3 className="text-xs font-bold text-slate-700">No RFQs found</h3><p className="text-[11px] text-slate-400 font-medium">Adjust filters or create a new RFQ.</p></div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+          <div className="overflow-x-auto table-scrollbar">
+            <table className="w-full text-left text-[11px] border-collapse">
+              <thead className="bg-slate-50 border-b border-slate-200 text-[9.5px] font-extrabold uppercase tracking-tight text-slate-500">
                 <tr>
-                  <th className="py-3.5 px-4 w-10 text-center">#</th>
-                  <th className="py-3.5 px-4">RFQ Number</th>
-                  <th className="py-3.5 px-4">Linked PO</th>
-                  <th className="py-3.5 px-4">Shipper name</th>
-                  <th className="py-3.5 px-4">POL</th>
-                  <th className="py-3.5 px-4">POD</th>
-                  <th className="py-3.5 px-4">Container Type</th>
-                  <th className="py-3.5 px-4">Container Count</th>
-                  <th className="py-3.5 px-4">Closing Date</th>
-                  <th className="py-3.5 px-4 text-center">Vendors</th>
-                  <th className="py-3.5 px-4 text-center">Quotes</th>
-                  <th className="py-3.5 px-4">Status</th>
-                  <th className="py-3.5 px-4 text-right">Actions</th>
+                  <th className="py-2.5 px-2 w-7 text-center whitespace-nowrap">#</th>
+                  <th className="py-2.5 px-2.5 w-28 whitespace-nowrap">RFQ Number</th>
+                  <th className="py-2.5 px-2.5 w-24 whitespace-nowrap">Linked PO</th>
+                  <th className="py-2.5 px-2.5 whitespace-nowrap">Shipper name</th>
+                  <th className="py-2.5 px-2.5 w-32 whitespace-nowrap">POL</th>
+                  <th className="py-2.5 px-2.5 w-32 whitespace-nowrap">POD</th>
+                  <th className="py-2.5 px-2 text-center whitespace-nowrap">Ctr Type</th>
+                  <th className="py-2.5 px-2 text-center whitespace-nowrap">Ctr Qty</th>
+                  <th className="py-2.5 px-2.5 w-28 whitespace-nowrap">Closing Date</th>
+                  <th className="py-2.5 px-2.5 w-28 whitespace-nowrap">Status</th>
+                  <th className="py-2.5 px-2.5 w-24 text-right sticky right-0 bg-slate-100 font-extrabold text-slate-800 border-l border-slate-300 shadow-[-6px_0_12px_-2px_rgba(0,0,0,0.1)] z-20 whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                 {displayedRfqs.map((rfq, idx) => {
                   const rowNum = startIndex + idx + 1;
                   const closingDateStr = formatDate(rfq.closingDate);
-                  const vendorCount = Number(rfq.invitedVendorsCount ?? rfq.invitedVendors?.length ?? 0);
-                  const quoteCount = Number(rfq.quotesCount ?? rfq.quotes?.length ?? 0);
-                  const cargoType = rfq.cargoDetails?.cargoType || 'General';
+                  const containerType = rfq.cargoDetails?.containerType || rfq.cargoDetails?.cargoType || '—';
+                  const containerCount = rfq.cargoDetails?.containerCount ?? '—';
                   const origin = rfq.cargoDetails?.portOfOrigin || '—';
                   const dest = rfq.cargoDetails?.portOfDestination || '—';
                   const targetRfqId = rfq.rfqId || rfq._id;
@@ -281,38 +278,37 @@ export default function RfqSourcingView() {
                   const canDeleteRfq = canDelete && !isRfqAwarded && !['awarded', 'partially_awarded', 'closed'].includes(normalizedStatus);
 
                   return (
-                    <tr key={rfq._id} onClick={() => navigate(`/admin/rfqs/${targetRfqId}`)} className="hover:bg-slate-50/80 transition cursor-pointer group">
-                      <td className="py-3.5 px-4 text-center font-mono text-slate-400 font-bold">{rowNum}</td>
-                      <td className="py-3.5 px-4 font-bold text-[#0d7676] font-mono group-hover:underline">{rfq.rfqNumber || '—'}</td>
-                      <td className="py-3.5 px-4 text-center font-mono text-slate-400 font-bold">{rfq.poId}</td>
-                      <td className="py-3.5 px-4 font-bold text-slate-900 max-w-xs">
-                        <div className="truncate">{rfq.title || 'Untitled'}</div>
-                        <div className="flex items-center gap-2 text-[10px] font-semibold text-slate-400 truncate mt-0.5">
-                          <span className="flex items-center gap-1"><Box className="w-3 h-3" />{rfq.cargoDetails?.containerCount || 0} ctrs</span>
-                          <span className="text-slate-200">|</span>
-                          <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{origin} → {dest}</span>
-                        </div>
-                      </td>
-                      <td className="py-3.5 px-4 font-mono text-slate-700">{rfq.sapPoNumber || rfq.poId || '—'}</td>
-                      <td className="py-3.5 px-4">
+                    <tr key={rfq._id || rfq.rfqId} onClick={() => navigate(`/admin/rfqs/${targetRfqId}`)} className="hover:bg-slate-50/80 transition cursor-pointer group">
+                      <td className="py-2 px-2 text-center font-mono text-slate-400 font-bold text-[10px] whitespace-nowrap">{rowNum}</td>
+                      <td className="py-2 px-2.5 font-bold text-[#0d7676] font-mono text-[11px] group-hover:underline whitespace-nowrap">{rfq.rfqNumber || '—'}</td>
+                      <td className="py-2 px-2.5 font-mono text-slate-700 font-bold text-[11px] whitespace-nowrap">{rfq.sapPoNumber || rfq.poId || '—'}</td>
+        <td
+  className="py-2 px-2.5 font-bold text-slate-900 text-[11px] whitespace-nowrap max-w-[200px] truncate"
+  title={rfq.title}
+>
+  {rfq.title}
+</td>
+                      <td className="py-2 px-2.5 font-medium text-slate-700 text-[11px] whitespace-nowrap">{origin}</td>
+                      <td className="py-2 px-2.5 font-medium text-slate-700 text-[11px] whitespace-nowrap">{dest}</td>
+                      <td className="py-2 px-2 text-center font-medium text-slate-700 text-[11px] whitespace-nowrap">{containerType}</td>
+                      <td className="py-2 px-2 text-center font-bold text-slate-800 text-[11px] whitespace-nowrap">{containerCount}</td>
+                      <td className="py-2 px-2.5 text-[11px] whitespace-nowrap">
                         <span className={`
     ${isRfqClosed(rfq)
-                            ? 'text-red-600 font-semibold bg-red-50 px-2 py-0.5 rounded'
+                            ? 'text-red-600 font-semibold bg-red-50 px-1.5 py-0.5 rounded text-[10.5px]'
                             : 'text-slate-600'
                           }
   `}>
                           {closingDateStr}
                           {isRfqClosed(rfq) && (
-                            <span className="ml-1 text-xs text-red-400">(Closed)</span>
+                            <span className="ml-1 text-[10px] text-red-400">(Closed)</span>
                           )}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 text-center"><span className="w-6 h-6 rounded-full bg-sky-100 text-sky-800 text-[11px] font-extrabold inline-flex items-center justify-center">{vendorCount}</span></td>
-                      <td className="py-3.5 px-4 text-center"><span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-extrabold inline-flex items-center justify-center">{quoteCount}</span></td>
-                      <td className="py-3.5 px-4">
+                      <td className="py-2 px-2.5 whitespace-nowrap">
                         {getStatusBadge(rfq)}
                       </td>
-                      <td className="py-3.5 px-4 text-right">
+                      <td className="py-2 px-2.5 text-right sticky right-0 bg-white group-hover:bg-slate-50/90 border-l border-slate-200 shadow-[-6px_0_12px_-2px_rgba(0,0,0,0.08)] z-10 whitespace-nowrap">
                         <div
                           className="flex items-center justify-end gap-1"
                           onClick={(e) => e.stopPropagation()}

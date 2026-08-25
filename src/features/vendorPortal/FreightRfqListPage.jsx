@@ -31,7 +31,7 @@ export default function FreightRfqListPage() {
   const paginated = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
 
   return (
-    <div className="space-y-6 font-sans antialiased text-left max-w-6xl mx-auto pb-10">
+    <div className="space-y-6 font-sans antialiased text-left w-full pb-10">
       <div>
         <h1 className="flex items-center gap-2.5 text-2xl font-black text-slate-900 tracking-tight">
           <ClipboardList className="h-6 w-6 text-[#0d7676]" /> My RFQs
@@ -69,18 +69,21 @@ export default function FreightRfqListPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-50/80 border-b border-slate-100 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+        <div className="overflow-x-auto table-scrollbar">
+          <table className="w-full text-left text-[11px] border-collapse">
+            <thead className="bg-slate-50/80 border-b border-slate-100 text-[9.5px] font-black uppercase text-slate-500 tracking-tight">
               <tr>
-                <th className="p-3.5 pl-4">#</th>
-                <th className="p-3.5">RFQ NO.</th>
-                <th className="p-3.5">TITLE</th>
-                <th className="p-3.5">PO</th>
-                <th className="p-3.5">CONTAINERS</th>
-                <th className="p-3.5">CLOSING DATE</th>
-                <th className="p-3.5">STATUS</th>
-                <th className="p-3.5 text-center">ACTIONS</th>
+                <th className="py-2.5 px-2 w-7 text-center whitespace-nowrap">#</th>
+                <th className="py-2.5 px-2.5 w-28 whitespace-nowrap">RFQ NUMBER</th>
+                <th className="py-2.5 px-2.5 w-24 whitespace-nowrap">LINKED PO</th>
+                <th className="py-2.5 px-2.5 whitespace-nowrap">SHIPPER NAME</th>
+                <th className="py-2.5 px-2.5 w-32 whitespace-nowrap">POL</th>
+                <th className="py-2.5 px-2.5 w-32 whitespace-nowrap">POD</th>
+                <th className="py-2.5 px-2 text-center whitespace-nowrap">CTR TYPE</th>
+                <th className="py-2.5 px-2 text-center whitespace-nowrap">CTR QTY</th>
+                <th className="py-2.5 px-2.5 w-28 whitespace-nowrap">CLOSING DATE</th>
+                <th className="py-2.5 px-2.5 w-28 whitespace-nowrap">STATUS</th>
+                <th className="py-2.5 px-2.5 w-24 text-center whitespace-nowrap sticky right-0 bg-slate-100 font-extrabold text-slate-800 border-l border-slate-300 shadow-[-6px_0_12px_-2px_rgba(0,0,0,0.1)] z-20">ACTIONS</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
@@ -90,7 +93,9 @@ export default function FreightRfqListPage() {
                 const isAwardedRfq = ['partially_awarded', 'awarded', 'fully_awarded'].includes(normStat) || normStat.includes('award') || Number(rfq.allocatedQuantity || 0) > 0;
                 const awardedToOther = isAwardedRfq && !awardedToMe;
                 const containerCount = rfq.myAllocation?.containers || rfq.cargoDetails?.containerCount || '—';
-                const cargoType = rfq.cargoDetails?.cargoType || '—';
+                const containerType = rfq.cargoDetails?.containerType || rfq.cargoDetails?.cargoType || '—';
+                const origin = rfq.cargoDetails?.portOfOrigin || '—';
+                const dest = rfq.cargoDetails?.portOfDestination || '—';
 
                 // Calculate days left
                 const closing = rfq.closingDate ? new Date(rfq.closingDate) : null;
@@ -99,16 +104,22 @@ export default function FreightRfqListPage() {
                 const isClosed = normStat !== 'published' || (closing && closing < now);
 
                 return (
-                  <tr key={rfq.rfqId} className="transition hover:bg-slate-50/60">
-                    <td className="p-3.5 pl-4 text-slate-400 font-mono text-xs">{(page - 1) * pageSize + idx + 1}</td>
-                    <td className="p-3.5 font-mono font-bold text-slate-700 text-xs">{rfq.rfqNumber}</td>
-                    <td className="p-3.5 font-bold text-slate-900 uppercase">{rfq.title}</td>
-                    <td className="p-3.5 font-mono text-slate-600">{rfq.poId || rfq.sapPoNumber || '—'}</td>
-                    <td className="p-3.5 font-bold text-slate-700">
-                      {containerCount} <span className="text-slate-400 font-semibold text-[11px]">({cargoType})</span>
-                    </td>
-                    <td className="p-3.5">
-                      <div className="font-bold text-slate-700">
+                  <tr key={rfq.rfqId} className="transition hover:bg-slate-50/60 group">
+                    <td className="py-2 px-2 text-center text-slate-400 font-mono text-[10px] whitespace-nowrap">{(page - 1) * pageSize + idx + 1}</td>
+                    <td className="py-2 px-2.5 font-mono font-bold text-slate-700 text-[11px] whitespace-nowrap">{rfq.rfqNumber}</td>
+                    <td className="py-2 px-2.5 font-mono text-slate-600 font-bold text-[11px] whitespace-nowrap">{rfq.poId || rfq.sapPoNumber || '—'}</td>
+         <td
+  className="py-2 px-2.5 font-bold text-slate-900 text-[11px] whitespace-nowrap max-w-[200px] truncate"
+  title={rfq.title}
+>
+  {rfq.title}
+</td>
+                    <td className="py-2 px-2.5 font-medium text-slate-700 text-[11px] whitespace-nowrap">{origin}</td>
+                    <td className="py-2 px-2.5 font-medium text-slate-700 text-[11px] whitespace-nowrap">{dest}</td>
+                    <td className="py-2 px-2 text-center font-medium text-slate-700 text-[11px] whitespace-nowrap">{containerType}</td>
+                    <td className="py-2 px-2 text-center font-bold text-slate-800 text-[11px] whitespace-nowrap">{containerCount}</td>
+                    <td className="py-2 px-2.5 text-[11px] whitespace-nowrap">
+                      <div className="font-bold text-slate-700 text-[11px]">
                         {closing ? closing.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
                       </div>
                       {daysLeft !== null && (
@@ -117,8 +128,8 @@ export default function FreightRfqListPage() {
                         </div>
                       )}
                     </td>
-                    <td className="p-3.5">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-extrabold capitalize ${
+                    <td className="py-2 px-2.5 whitespace-nowrap">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold capitalize ${
                         awardedToMe
                           ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
                           : awardedToOther
@@ -129,13 +140,13 @@ export default function FreightRfqListPage() {
                           ? 'bg-teal-50 text-[#0d7676] border border-teal-200/60'
                           : 'bg-amber-50 text-amber-800 border border-amber-200/60'
                       }`}>
-                        {awardedToMe ? 'Awarded' : awardedToOther ? 'Awarded to Other Vendor' : isClosed ? 'Closed' : rfq.myQuote ? 'Quote Submitted' : rfq.status}
+                        {awardedToMe ? 'Awarded' : awardedToOther ? 'Awarded (Other)' : isClosed ? 'Closed' : rfq.myQuote ? 'Quoted' : rfq.status}
                       </span>
                     </td>
-                    <td className="p-3.5 text-center">
+                    <td className="py-2 px-2.5 text-center whitespace-nowrap sticky right-0 bg-white group-hover:bg-slate-50/90 border-l border-slate-200 shadow-[-6px_0_12px_-2px_rgba(0,0,0,0.08)] z-10">
                       <Link
                         to={`/vendor/rfqs/${rfq.rfqId}`}
-                        className={`inline-flex items-center gap-1 rounded-xl px-3.5 py-1.5 font-bold text-xs shadow-2xs transition active:scale-95 ${
+                        className={`inline-flex items-center gap-1 rounded-xl px-3 py-1 font-bold text-[11px] shadow-2xs transition active:scale-95 whitespace-nowrap ${
                           awardedToMe
                             ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'
                             : awardedToOther || isClosed
@@ -143,7 +154,7 @@ export default function FreightRfqListPage() {
                             : 'bg-[#0d7676] hover:bg-[#0f766e] text-white'
                         }`}
                       >
-                        {awardedToMe ? 'Manage Shipment →' : awardedToOther ? 'View (Awarded to Other)' : isClosed ? 'View RFQ (Closed)' : rfq.myQuote ? 'Update Quote' : 'View & Quote'}
+                        {awardedToMe ? 'Shipment →' : awardedToOther || isClosed ? 'View RFQ' : rfq.myQuote ? 'Edit Quote' : 'View & Quote'}
                       </Link>
                     </td>
                   </tr>

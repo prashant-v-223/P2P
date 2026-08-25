@@ -47,18 +47,14 @@
 
   th {
     font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif !important;
-    font-size: 10px !important;
-    font-weight: 700 !important;
-    letter-spacing: 0.05em !important;
-    text-transform: uppercase !important;
-    color: #94a3b8 !important;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
     white-space: nowrap;
   }
 
   td {
     font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif !important;
-    font-size: 12px !important;
-    color: #0f172a !important;
   }
 
   button, a, input, select, textarea {
@@ -159,8 +155,8 @@
 
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: #f1f5f9;
@@ -171,6 +167,26 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+
+/* Explicit Horizontal Table Scrollbar */
+.table-scrollbar {
+  scrollbar-width: auto;
+  scrollbar-color: #0d7676 #e2e8f0;
+}
+.table-scrollbar::-webkit-scrollbar {
+  height: 9px;
+}
+.table-scrollbar::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 6px;
+}
+.table-scrollbar::-webkit-scrollbar-thumb {
+  background: #0d7676;
+  border-radius: 6px;
+}
+.table-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #085a5a;
 }
 
 @media (max-width: 640px) {

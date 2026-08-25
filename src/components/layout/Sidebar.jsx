@@ -129,9 +129,9 @@ const NavItem = React.memo(({ item, collapsed, onNavigate, badgeValue }) => {
             </span>
           )}
 
-          {/* Badge for collapsed state */}
+      {/* Badge for collapsed state */}
           {displayBadge !== null && collapsed && (
-            <span className="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-sm">
+            <span className="absolute -top-1 -right-0.5 min-w-[18px] h-[18px] px-1 bg-rose-500 text-white text-[10px] font-extrabold rounded-full flex items-center justify-center shadow-xs border border-white z-10">
               {displayBadge}
             </span>
           )}
@@ -266,10 +266,10 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
 
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="hidden lg:flex absolute -right-3 top-1/2 transform -translate-y-1/2 w-8 h-8 rounded-full bg-white border border-slate-200 shadow-xs items-center justify-center hover:bg-slate-50 transition-colors"
+        className="hidden lg:flex absolute -right-3.5 top-5 z-50 w-7 h-7 rounded-full bg-white border border-slate-200 shadow-md items-center justify-center hover:bg-slate-50 hover:border-slate-300 transition-all active:scale-95 cursor-pointer"
         title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
       >
-        <ChevronRight className={cn("w-4 h-4 ml-0.5 text-slate-500 transition-transform", collapsed ? "" : "rotate-180")} />
+        <ChevronRight className={cn("w-4 h-4 text-slate-600 transition-transform duration-200", collapsed ? "" : "rotate-180")} />
       </button>
     </aside>
   );

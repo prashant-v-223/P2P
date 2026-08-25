@@ -32,7 +32,8 @@ import {
   AlertCircle,
   Clock,
   Box,
-  RefreshCw
+  RefreshCw,
+  ArrowRightLeft
 } from 'lucide-react';
 
 export default function RfqDetailView() {
@@ -641,30 +642,30 @@ export default function RfqDetailView() {
 {/* Right Column: Quotes & Vendors Matrix Matching Screenshot 2 */}
 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden lg:col-span-2">
   {/* Enhanced Tabs with better visual hierarchy */}
-  <div className="flex items-center justify-between border-b border-slate-200 px-6 pt-4 pb-0">
-    <div className="flex items-center gap-1 text-xs font-medium">
+  <div className="flex flex-wrap sm:flex-nowrap items-center justify-between border-b border-slate-200 px-6 pt-3 pb-2 gap-3 overflow-x-auto table-scrollbar">
+    <div className="flex items-center gap-1 text-xs font-medium shrink-0">
       {[
         { id: 'quotes', icon: FileText, label: 'Quotes', count: quotesList.length, color: 'amber' },
         { id: 'vendors', icon: Users, label: 'Vendors', count: (rfq.invitedVendors || []).length, color: 'slate' },
         { id: 'bl', icon: Ship, label: 'BL Entries', count: (rfq.blEntries || []).length, color: 'slate' },
-        { id: 'documents', icon: FileText, label: 'Documents',  color: 'slate' }
+        { id: 'documents', icon: FileText, label: 'Documents', color: 'slate' }
       ].map((tab) => (
         <button
           key={tab.id}
           onClick={() => setActiveTab(tab.id)}
           className={`
-            flex items-center gap-2 px-4 pb-3.5 border-b-2 transition-all duration-200
+            flex items-center gap-2 px-3.5 pb-2.5 border-b-2 transition-all duration-200 whitespace-nowrap shrink-0
             ${activeTab === tab.id 
-              ? 'border-teal-600 text-teal-700' 
+              ? 'border-teal-600 text-teal-700 font-bold' 
               : 'border-transparent text-slate-400 hover:text-slate-600 hover:border-slate-300'
             }
           `}
         >
-          <tab.icon className={`h-4 w-4 ${activeTab === tab.id ? 'text-teal-600' : ''}`} />
-          <span className="font-semibold">{tab.label}</span>
+          <tab.icon className={`h-4 w-4 shrink-0 ${activeTab === tab.id ? 'text-teal-600' : ''}`} />
+          <span className="font-semibold whitespace-nowrap">{tab.label}</span>
           {tab.count !== undefined && (
             <span className={`
-              px-2 py-0.5 rounded-full text-[10px] font-bold
+              px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0
               ${activeTab === tab.id 
                 ? 'bg-teal-100 text-teal-700' 
                 : 'bg-slate-100 text-slate-500'
@@ -677,15 +678,15 @@ export default function RfqDetailView() {
       ))}
     </div>
 
-    {/* Action Buttons - Improved layout */}
-    <div className="flex items-center gap-2 pb-2">
+    {/* Action Buttons - Improved layout & no text wrap */}
+    <div className="flex items-center gap-2 pb-1 shrink-0 whitespace-nowrap">
       {normalizedOpenContainers > 0 && !normalizedIsPendingApproval && quotesList.length > 0 && (
         <button
           onClick={() => handleAwardQuote(quotesList[0])}
-          className="px-4 py-2 bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 text-white text-xs font-bold rounded-xl transition-all duration-200 inline-flex items-center gap-2 shadow-sm hover:shadow-md active:scale-95"
+          className="px-3.5 py-1.5 bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 text-white text-xs font-bold rounded-xl transition-all duration-200 inline-flex items-center gap-1.5 shadow-sm hover:shadow-md active:scale-95 whitespace-nowrap shrink-0"
         >
-          <Award className="w-4 h-4" />
-          <span>
+          <Award className="w-4 h-4 shrink-0" />
+          <span className="whitespace-nowrap">
             {normalizedAllocatedContainers > 0 
               ? `Allocate Remaining ${normalizedOpenContainers} Container${normalizedOpenContainers > 1 ? 's' : ''}` 
               : `Award Vendors (${normalizedTotalContainers} Containers)`
@@ -695,18 +696,14 @@ export default function RfqDetailView() {
       )}
 
       {normalizedOpenContainers === 0 && (
-        <div className="flex items-center gap-2">
-          <span className="px-4 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs font-bold inline-flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            All {normalizedTotalContainers} Containers Awarded
-          </span>
+        <div className="flex items-center gap-2 shrink-0">
           {!normalizedIsPendingApproval && (
             <button
               onClick={handleReassignRfq}
-              className="px-4 py-2 border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs font-bold rounded-xl transition-all duration-200 inline-flex items-center gap-2 hover:shadow-sm"
+              className="px-3.5 py-1.5 border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs font-bold rounded-xl transition-all duration-200 inline-flex items-center gap-1.5 hover:shadow-sm whitespace-nowrap shrink-0"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Reassign</span>
+              <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+              <span className="whitespace-nowrap">Reassign</span>
             </button>
           )}
         </div>
@@ -714,126 +711,115 @@ export default function RfqDetailView() {
 
       <button
         onClick={() => { setActiveTab('vendors'); setShowVendorManager(true); }}
-        className="px-4 py-2 border border-teal-200 bg-teal-50 hover:bg-teal-100 text-teal-700 text-xs font-bold rounded-xl transition-all duration-200 inline-flex items-center gap-2 hover:shadow-sm"
+        className="px-3.5 py-1.5 border border-teal-200 bg-teal-50 hover:bg-teal-100 text-teal-700 text-xs font-bold rounded-xl transition-all duration-200 inline-flex items-center gap-1.5 hover:shadow-sm whitespace-nowrap shrink-0"
       >
-        <Users className="w-3.5 h-3.5" />
-        Manage Vendors
+        <Users className="w-3.5 h-3.5 shrink-0" />
+        <span className="whitespace-nowrap">Manage Vendors</span>
       </button>
     </div>
   </div>
 
   {/* Content Area with improved styling */}
   {activeTab === 'quotes' && (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[960px] text-left text-xs border-collapse">
-        <thead className="border-b border-slate-200 bg-slate-50/90 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
-          <tr>
-            <th className="px-4 py-3.5">Vendor</th>
-            <th className="px-4 py-3.5">Shipping Line</th>
-            <th className="px-4 py-3.5">Route</th>
-            <th className="px-4 py-3.5 text-right">Ocean Freight (USD)</th>
-            <th className="px-4 py-3.5 text-right">St. Charges (INR)</th>
-            <th className="px-4 py-3.5 text-right">Other (INR)</th>
-            <th className="px-4 py-3.5 text-right">Total (INR)</th>
-            <th className="px-4 py-3.5 text-center">Allocation Status</th>
-            <th className="px-4 py-3.5 text-center">Transit</th>
-            <th className="px-4 py-3.5 text-center">ETD</th>
-            <th className="px-4 py-3.5 text-center">ETA</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100 bg-white">
-          {quotesList.map((q, idx) => {
-            const approvedAlloc = normalizedApprovedAllocations.find(
-              (a) => a.quoteId === q.quoteId || a.vendorId === q.vendorId || a.vendorName === q.vendorName
-            );
-            const pendingAlloc = normalizedPendingAllocations.find(
-              (a) => a.quoteId === q.quoteId || a.vendorId === q.vendorId || a.vendorName === q.vendorName
-            );
+    <div className="space-y-4">
+      <div className="overflow-x-auto table-scrollbar">
+        <table className="w-full text-left text-[11px] border-collapse">
+          <thead className="border-b border-slate-200 bg-slate-50/90 text-[9.5px] font-extrabold uppercase tracking-tight text-slate-500">
+            <tr>
+              <th className="py-2.5 px-2.5 whitespace-nowrap w-36">Vendor</th>
+              <th className="py-2.5 px-2 whitespace-nowrap w-16">Line</th>
+              <th className="py-2.5 px-2 whitespace-nowrap min-w-[80px]">Route</th>
+              <th className="py-2.5 px-2.5 text-right whitespace-nowrap min-w-[85px]">Freight</th>
+              <th className="py-2.5 px-2.5 text-right whitespace-nowrap min-w-[95px]">St. Charges</th>
+              <th className="py-2.5 px-2.5 text-right whitespace-nowrap min-w-[105px]">Total (INR)</th>
+              <th className="py-2.5 px-1.5 text-center whitespace-nowrap w-14">Transit</th>
+              <th className="py-2.5 px-2 text-center whitespace-nowrap min-w-[95px]">Schedule</th>
+              <th className="py-2.5 px-2.5 text-center whitespace-nowrap sticky right-0 bg-slate-50 text-slate-500 font-extrabold uppercase tracking-tight text-[9.5px] shadow-[-6px_0_12px_-2px_rgba(0,0,0,0.08)] border-l border-slate-200 z-20 min-w-[110px]">Allocation Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 bg-white">
+            {quotesList.map((q, idx) => {
+              const approvedAlloc = normalizedApprovedAllocations.find(
+                (a) => a.quoteId === q.quoteId || a.vendorId === q.vendorId || a.vendorName === q.vendorName
+              );
+              const pendingAlloc = normalizedPendingAllocations.find(
+                (a) => a.quoteId === q.quoteId || a.vendorId === q.vendorId || a.vendorName === q.vendorName
+              );
+              const etdStr = q.vesselEtd ? new Date(q.vesselEtd).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '21 Aug';
+              const etaStr = q.vesselEta ? new Date(q.vesselEta).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '30 Aug';
 
-            return (
-              <tr key={q.quoteId || idx} className="hover:bg-teal-50/20 transition-colors duration-150 group">
-                <td className="px-4 py-3.5">
-                  <div className="flex items-center gap-2.5">
-                    <div className={`
-                      w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-black shadow-2xs shrink-0
-                      ${q.rank === 'L1' || idx === 0 ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-slate-100 text-slate-600 border border-slate-200'}
-                    `}>
-                      {q.rank || `L${idx + 1}`}
+              return (
+                <tr key={q.quoteId || idx} className="hover:bg-teal-50/20 transition-colors duration-150 group">
+                  <td className="py-2 px-2.5 whitespace-nowrap">
+                    <div className="flex items-center gap-1.5 max-w-[135px]">
+                      <div className={`
+                        w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black shadow-2xs shrink-0
+                        ${q.rank === 'L1' || idx === 0 ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-slate-100 text-slate-600 border border-slate-200'}
+                      `}>
+                        {q.rank || `L${idx + 1}`}
+                      </div>
+                      <span className="font-bold text-slate-900 truncate text-[11px]" title={q.vendorName}>{q.vendorName}</span>
                     </div>
-                    <span className="font-extrabold text-slate-900">{q.vendorName}</span>
-                  </div>
-                </td>
-                <td className="px-4 py-3.5 font-bold text-slate-700">{q.shippingLine}</td>
-                <td className="px-4 py-3.5 text-slate-600 font-semibold">{q.vesselRoute || 'SHANGHAI → NHAVA SHEVA'}</td>
-                <td className="px-4 py-3.5 text-right font-mono font-bold text-slate-900">
-                  ${(Number(q.oceanFreightUsd) || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                </td>
-                <td className="px-4 py-3.5 text-right font-mono font-bold text-slate-900">
-                  ₹{(Number(q.stChargesInr) || 0).toLocaleString('en-IN')}
-                </td>
-                <td className="px-4 py-3.5 text-right font-mono text-slate-600">
-                  {q.otherChargesInr ? `₹${Number(q.otherChargesInr).toLocaleString('en-IN')}` : '—'}
-                </td>
-                <td className="px-4 py-3.5 text-right">
-                  <div className="font-black text-[#0d7676] text-xs">
-                    ₹{(Number(q.totalInr) || 0).toLocaleString('en-IN')}
-                  </div>
-                  <div className="text-[9px] text-slate-400 font-mono">
-                    @ ₹{q.exchangeRate || 95.37}/USD
-                  </div>
-                </td>
-                <td className="px-4 py-3.5 text-center">
-                  {approvedAlloc?.containers > 0 ? (
-                    <div className="inline-flex flex-col items-center gap-0.5">
-                      <span className="px-3 py-1 rounded-xl text-[10px] font-black bg-emerald-50 text-emerald-800 border border-emerald-300 inline-flex items-center gap-1.5 shadow-2xs">
-                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                        {approvedAlloc.containers}/{normalizedTotalContainers} Containers
-                      </span>
-                      <span className="text-[9px] font-mono font-bold text-emerald-700">
-                        ₹{(approvedAlloc.allocationAmount || 0).toLocaleString('en-IN')}
-                      </span>
+                  </td>
+                  <td className="py-2 px-2 font-bold text-slate-700 whitespace-nowrap text-[11px]">{q.shippingLine}</td>
+                  <td className="py-2 px-2 text-slate-600 font-medium whitespace-nowrap text-[11px]">
+                    <div className="max-w-[85px] truncate" title={q.vesselRoute || 'DIRECT'}>{q.vesselRoute || 'DIRECT'}</div>
+                  </td>
+                  <td className="py-2 px-2.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap text-[11px]">
+                    ${(Number(q.oceanFreightUsd) || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  </td>
+                  <td className="py-2 px-2.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap text-[11px]">
+                    ₹{(Number(q.stChargesInr) || 0).toLocaleString('en-IN')}
+                  </td>
+                  <td className="py-2 px-2.5 text-right whitespace-nowrap">
+                    <div className="font-extrabold text-[#0d7676] text-[11px]">
+                      ₹{(Number(q.totalInr) || 0).toLocaleString('en-IN')}
                     </div>
-                  ) : pendingAlloc?.containers > 0 ? (
-                    <div className="inline-flex flex-col items-center gap-0.5">
-                      <span className="px-3 py-1 rounded-xl text-[10px] font-extrabold bg-amber-50 text-amber-800 border border-amber-300 inline-flex items-center gap-1.5 shadow-2xs">
-                        <Clock className="w-3 h-3 text-amber-600 animate-pulse" />
-                        Pending · {pendingAlloc.containers} Ctr
+                  </td>
+                  <td className="py-2 px-1.5 text-center font-bold text-slate-700 whitespace-nowrap text-[11px]">
+                    {q.transitDays ? `${q.transitDays}d` : '15d'}
+                  </td>
+                  <td className="py-2 px-2 text-center font-medium text-slate-600 whitespace-nowrap text-[10.5px]">
+                    {etdStr} → {etaStr}
+                  </td>
+                  <td className="py-2 px-2 text-center whitespace-nowrap sticky right-0 bg-white group-hover:bg-teal-50/90 shadow-[-6px_0_12px_-2px_rgba(0,0,0,0.08)] border-l border-slate-200 z-10">
+                    {approvedAlloc?.containers > 0 ? (
+                      <div className="inline-flex flex-col items-center gap-0.5">
+                        <span className="px-2 py-0.5 rounded-lg text-[9.5px] font-extrabold bg-emerald-50 text-emerald-800 border border-emerald-300 inline-flex items-center gap-1 shadow-2xs">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          {approvedAlloc.containers}/{normalizedTotalContainers} Ctr
+                        </span>
+                      </div>
+                    ) : pendingAlloc?.containers > 0 ? (
+                      <div className="inline-flex flex-col items-center gap-0.5">
+                        <span className="px-2 py-0.5 rounded-lg text-[9.5px] font-extrabold bg-amber-50 text-amber-800 border border-amber-300 inline-flex items-center gap-1 shadow-2xs">
+                          <Clock className="w-3 h-3 text-amber-600 animate-pulse" />
+                          Pending · {pendingAlloc.containers} Ctr
+                        </span>
+                      </div>
+                    ) : normalizedOpenContainers > 0 ? (
+                      <button
+                        onClick={() => handleAwardQuote(q)}
+                        className="px-2 py-1 bg-[#0d7676] hover:bg-[#096464] text-white text-[9.5px] font-bold rounded-lg shadow-xs transition-all duration-150 inline-flex items-center gap-1 hover:shadow-md active:scale-95 whitespace-nowrap"
+                      >
+                        <Award className="w-3 h-3" />
+                        Allocate {normalizedOpenContainers} Ctr
+                      </button>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-lg text-[9.5px] font-bold text-slate-400 bg-slate-100 border border-slate-200">
+                        Awarded
                       </span>
-                      <span className="text-[9px] font-mono text-slate-500">
-                        ₹{(pendingAlloc.allocationAmount || 0).toLocaleString('en-IN')}
-                      </span>
-                    </div>
-                  ) : normalizedOpenContainers > 0 ? (
-                    <button
-                      onClick={() => handleAwardQuote(q)}
-                      className="px-3 py-1.5 bg-[#0d7676] hover:bg-[#096464] text-white text-[10px] font-bold rounded-xl shadow-xs transition-all duration-150 inline-flex items-center gap-1.5 hover:shadow-md active:scale-95"
-                    >
-                      <Award className="w-3 h-3" />
-                      Allocate {normalizedOpenContainers} Ctr
-                    </button>
-                  ) : (
-                    <span className="px-3 py-1 rounded-xl text-[10px] font-bold text-slate-400 bg-slate-100 border border-slate-200">
-                      Awarded
-                    </span>
-                  )}
-                </td>
-                <td className="px-4 py-3.5 text-center font-bold text-slate-700">
-                  {q.transitDays ? `${q.transitDays}d` : '15d'}
-                </td>
-                <td className="px-4 py-3.5 text-center font-semibold text-slate-600">
-                  {q.vesselEtd ? new Date(q.vesselEtd).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '21 Aug'}
-                </td>
-                <td className="px-4 py-3.5 text-center font-semibold text-slate-600">
-                  {q.vesselEta ? new Date(q.vesselEta).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '30 Aug'}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
 
-      {/* Expandable Details Section - Improved */}
-      <div className="divide-y divide-slate-100 border-t border-slate-200">
+  {/* Expandable Details Section - Improved */}
+  <div className="divide-y divide-slate-100 border-t border-slate-200">
         {quotesList.map((quote, index) => {
           const key = quote.quoteId || index;
           const isExpanded = expandedQuotes[key];
