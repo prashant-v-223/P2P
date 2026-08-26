@@ -122,6 +122,22 @@ export const DEFAULT_ROLES = [
     }
   },
   {
+    id: 'role-procurement-manager',
+    roleName: 'procurement_manager',
+    description: 'Level 2 Procurement Manager — handles level-2 team approvals and procurement management.',
+    type: 'System',
+    status: 'Active',
+    permissions: {
+      'dashboard': ['view'],
+      'purchase-orders': ['view'],
+      'advance-payments': ['view', 'create'],
+      'invoice-payments': ['view', 'create'],
+      'approvals': ['view', 'action'],
+      'rfq': ['view', 'create'],
+      'vendors': ['view']
+    }
+  },
+  {
     id: 'role-admin',
     roleName: 'admin',
     description: 'Full administrative control across all modules and settings.',

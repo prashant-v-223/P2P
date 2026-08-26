@@ -9,6 +9,7 @@ import {
   Receipt,
   ShieldCheck,
   Truck,
+  CreditCard,
   FileSpreadsheet,
   Anchor,
   Package,
@@ -43,7 +44,8 @@ const NAV_SECTIONS = [
       { path: '/p2p/advances', label: 'Advance Payments', icon: Wallet },
       { path: '/p2p/invoices', label: 'Invoice Payments', icon: Receipt },
       { path: '/p2p/custom-duty', label: 'Custom Duty', icon: ShieldCheck },
-      { path: '/p2p/logistics-payments', label: 'Logistics Payments', icon: Truck }
+      { path: '/p2p/logistics-payments', label: 'Logistics Payments', icon: Truck },
+      { path: '/p2p/settlement-ledger', label: 'Settlement Ledger', icon: CreditCard }
     ]
   },
   {
@@ -234,8 +236,8 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
   return (
     <aside
       className={cn(
-        "bg-white border-r border-slate-200 h-screen flex flex-col transition-all duration-300 flex-shrink-0 select-none z-40 relative",
-        collapsed ? "w-[68px] overflow-visible" : "w-[232px] 2xl:w-[250px]",
+        "bg-white border-r border-slate-200 h-screen flex flex-col transition-all duration-300 flex-shrink-0 select-none z-40 relative overflow-visible",
+        collapsed ? "w-[68px]" : "w-[232px] 2xl:w-[250px]",
         "fixed inset-y-0 left-0 lg:static lg:translate-x-0",
         mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       )}
@@ -257,7 +259,7 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, onNavigat
       </header>
 
       {/* Navigation List */}
-      <nav className={cn("flex-1 py-2 space-y-1 overflow-y-auto scrollbar-none", collapsed ? "px-2" : "px-3 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent")}>
+      <nav className={cn("flex-1 py-2 space-y-1 overflow-y-auto overflow-x-hidden scrollbar-none", collapsed ? "px-2" : "px-3 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent")}>
         {allowedSections.map((section) => (
           <div key={section.id} className={cn("space-y-0.5", section.id !== 'core' && 'mt-5')}>
             {section.title && !collapsed && (

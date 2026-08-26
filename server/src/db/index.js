@@ -64,8 +64,11 @@ export const connectDB = async ({ seed = process.env.AUTO_SEED === 'true', ensur
     if (ensureWorkflows) await ensureAllWorkflows().catch((err) => console.warn('[DB WORKFLOW SEED WARN]', err.message));
     if (seed) await seedDatabase();
 
-    // Auto-repair active approval workflow records in background
-    void repairAllActiveApprovals().catch((err) => console.warn('[DB APPROVAL REPAIR WARN]', err.message));
+    // Auto-repair active approval workflow and old payment records in background
+    void repairAllActiveApprovals()
+      .then(() => import('../services/approvalRouting.service.js'))
+      .then(({ repairAllOldPaymentRecords }) => repairAllOldPaymentRecords())
+      .catch((err) => console.warn('[DB APPROVAL REPAIR WARN]', err.message));
     return true;
   } catch (error) {
     mongoose.set('bufferCommands', false);

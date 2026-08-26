@@ -120,6 +120,9 @@ export function isApprovalForRole(approval, roleFilter, userId = null) {
   const assignedEmail = activeStepObj?.assignedApproverEmail;
   const isPool = activeStepObj?.isPoolApproval;
 
+  const targetRole = getCurrentStepRole(approval);
+  const isRoleMatch = roles.some(r => isRoleMatchingStep(r, targetRole));
+
   if ((assignedId || assignedName || assignedEmail) && !isPool) {
     if (userId) {
       const uStr = String(userId).toLowerCase();
@@ -127,7 +130,8 @@ export function isApprovalForRole(approval, roleFilter, userId = null) {
         return true;
       }
     }
-    return isSuperUser; // Strict isolation: cross-users with same role cannot act
+    if (isRoleMatch) return true;
+    return isSuperUser; // Strict isolation: cross-users with non-matching roles are blocked
   }
 
   // 4. POOL APPROVAL MATCHING:
@@ -175,12 +179,15 @@ function getNextStepStatus(approval) {
     try {
       const steps = typeof approval.workflowSteps === 'string' ? JSON.parse(approval.workflowSteps) : approval.workflowSteps;
       if (Array.isArray(steps) && steps.length > 0) {
-        const sorted = steps.sort((a, b) => (a.step || 0) - (b.step || 0));
+        const sorted = steps.sort((a, b) => (a.step || a.stepNumber || 0) - (b.step || b.stepNumber || 0));
         const currentStepNum = approval.currentStep || 1;
-        const currentIdx = sorted.findIndex(s => (s.step || s.stepNumber) === currentStepNum);
+        let currentIdx = sorted.findIndex(s => Number(s.step || s.stepNumber) === Number(currentStepNum));
+        if (currentIdx === -1 && currentStepNum <= sorted.length) {
+          currentIdx = Math.max(0, currentStepNum - 1);
+        }
         if (currentIdx >= 0 && currentIdx < sorted.length - 1) {
           const nextStep = sorted[currentIdx + 1];
-          return nextStep.statusKey || `Pending ${nextStep.title || nextStep.roleName || 'Approval'}`;
+          return nextStep.statusKey || nextStep.title || nextStep.status || `Pending ${nextStep.roleName || nextStep.roleKey || 'Approval'}`;
         }
         return 'Approved & Dispatched';
       }
@@ -189,42 +196,24 @@ function getNextStepStatus(approval) {
     }
   }
 
-  const NEXT_STEP = {
-    'Pending Purchase Manager Approval': 'Approved & Dispatched',  // New default single-step flow
-    'Pending Procurement Head Approval': 'Approved & Dispatched',  // Legacy fallback
-    'Pending Finance Approval':          'Approved & Dispatched'
-  };
-  return NEXT_STEP[approval.status] || 'Approved & Dispatched';
+  return 'Approved & Dispatched';
 }
 
 // ── Helper: determine which role should act on the current step ───────────
 function getCurrentStepRole(approval) {
-  const status = approval.status || '';
-  const statusLower = status.toLowerCase();
-
-  // Try workflowSteps first
   if (approval.workflowSteps) {
     try {
       const steps = typeof approval.workflowSteps === 'string' ? JSON.parse(approval.workflowSteps) : approval.workflowSteps;
-      if (Array.isArray(steps)) {
-        const activeStepObj = steps.find(s => (s.step || s.stepNumber) === (approval.currentStep || 1));
+      if (Array.isArray(steps) && steps.length > 0) {
+        const activeStepObj = steps.find(s => Number(s.step || s.stepNumber) === Number(approval.currentStep || 1));
         if (activeStepObj) {
-          return (activeStepObj.roleName || activeStepObj.roleKey || activeStepObj.title || '').toLowerCase();
+          return (activeStepObj.roleKey || activeStepObj.assignedApproverRole || activeStepObj.roleName || activeStepObj.title || '').toLowerCase();
         }
       }
     } catch (_) {}
   }
 
-  // Fallback: infer from status string
-  if (statusLower.includes('purchase manager')) return 'purchase manager';
-  if (statusLower.includes('procurement head')) return 'procurement head';
-  if (statusLower.includes('procurement manager')) return 'procurement manager';
-  if (statusLower.includes('procurement')) return 'purchase manager';
-  if (statusLower.includes('finance')) return 'finance';
-  if (statusLower.includes('md') || statusLower.includes('director')) return 'md';
-  if (statusLower.includes('exim')) return 'exim';
-  if (statusLower.includes('logistics')) return 'logistics';
-  return '';
+  return String(approval.assignedApproverRole || approval.status || '').toLowerCase();
 }
 
 async function getStepAssignment(approval, stepNumber) {
@@ -234,35 +223,30 @@ async function getStepAssignment(approval, stepNumber) {
       ? JSON.parse(approval.workflowSteps || '[]')
       : (approval.workflowSteps || []);
     if (Array.isArray(steps)) {
-      stepObj = steps.find((item) => (item.step || item.stepNumber) === stepNumber);
+      stepObj = steps.find((item) => Number(item.step || item.stepNumber) === Number(stepNumber));
     }
   } catch (_) {}
 
-  // Pool approval step → reuse pool names from stepObj
-  if (stepObj?.isPoolApproval) {
-    return {
-      assignedApprover: null,
-      assignedApproverName: stepObj.assignedApproverName || null,
-      assignedApproverRole: stepObj.assignedApproverRole || stepObj.roleKey || null
-    };
-  }
-
-  // Single approver was hydrated at creation time → reuse it
+  // Single approver assigned at creation time → reuse it
   if (stepObj?.assignedApproverId) {
     return {
       assignedApprover: stepObj.assignedApproverId,
       assignedApproverName: stepObj.assignedApproverName || null,
-      assignedApproverRole: stepObj.assignedApproverRole || stepObj.roleKey || null
+      assignedApproverRole: stepObj.assignedApproverRole || stepObj.roleKey || stepObj.roleName || null
     };
   }
 
-  // Derive role from step
-  const role = String(stepObj?.roleKey || stepObj?.roleName || '').replace(/[\s-]+/g, '_').toLowerCase();
-
-  // Finance / CFO / MD steps → no explicit user assignment needed (role-based)
-  if (!role || role.includes('finance') || role === 'md' || role.includes('director') || role.includes('cfo')) {
-    return { assignedApprover: null, assignedApproverName: null, assignedApproverRole: role || null };
+  // Pool approval step → reuse pool details from stepObj
+  if (stepObj?.isPoolApproval) {
+    return {
+      assignedApprover: null,
+      assignedApproverName: stepObj.assignedApproverName || null,
+      assignedApproverRole: stepObj.assignedApproverRole || stepObj.roleKey || stepObj.roleName || null
+    };
   }
+
+  // Derive role dynamically from step object
+  const role = String(stepObj?.roleKey || stepObj?.roleName || stepObj?.title || '').replace(/[\s-]+/g, '_').toLowerCase();
 
   // Manager step: find requester's direct manager
   if (role === 'manager' || role.includes('team_manager') || role.includes('procurement_manager')) {
@@ -284,38 +268,15 @@ async function getStepAssignment(approval, stepNumber) {
           };
         }
       }
-      if (requester?.team) {
-        const teamManager = await User.findOne(
-          { status: 'Active', team: requester.team, isManager: true },
-          { id: 1, name: 1, role: 1 }
-        ).lean();
-        if (teamManager) {
-          return {
-            assignedApprover: teamManager.id,
-            assignedApproverName: teamManager.name,
-            assignedApproverRole: teamManager.role || role
-          };
-        }
-      }
     }
-    return { assignedApprover: null, assignedApproverName: null, assignedApproverRole: role || null };
   }
 
-  // Procurement Head / EXIM Manager step
-  const PH_REGEX = /procurement[\s_-]*head/i;
-  if (PH_REGEX.test(role) || role.includes('exim')) {
-    const manager = await User.findOne(
-      { status: 'Active', role: PH_REGEX },
-      { id: 1, name: 1, role: 1 }
-    ).lean();
-    return {
-      assignedApprover: manager?.id || null,
-      assignedApproverName: manager?.name || null,
-      assignedApproverRole: manager?.role || role
-    };
-  }
-
-  return { assignedApprover: null, assignedApproverName: null, assignedApproverRole: role || null };
+  // Default role-based pool assignment (Finance, MD, CFO, EXIM, Custom Roles)
+  return {
+    assignedApprover: null,
+    assignedApproverName: null,
+    assignedApproverRole: role || null
+  };
 }
 
 // ── Check if user role(s) can act on current step ────────────────────────────
@@ -442,9 +403,42 @@ export const getPendingApprovals = async (req, res) => {
 
       const isUserTurnToApprove = isApprovalForRole(a, effectiveRoles, currentUserId);
 
+      const parseAmountNum = (val) => {
+        if (typeof val === 'number') return isNaN(val) ? 0 : val;
+        if (!val) return 0;
+        const str = String(val).trim();
+        if (!str) return 0;
+        const inrMatch = str.match(/₹\s*([0-9,.]+)/);
+        if (inrMatch) {
+          const parsed = parseFloat(inrMatch[1].replace(/,/g, ''));
+          if (!isNaN(parsed) && parsed > 0) return parsed;
+        }
+        const match = str.match(/([0-9,]+(?:\.[0-9]+)?)/);
+        if (match) {
+          const parsed = parseFloat(match[1].replace(/,/g, ''));
+          if (!isNaN(parsed)) return parsed;
+        }
+        return 0;
+      };
+
+      let formattedAmount = a.amountFormatted || a.transactionSnapshot?.amountFormatted;
+      if (!formattedAmount || formattedAmount === '₹0' || formattedAmount === '₹0.00' || formattedAmount === '₹ 0.00' || formattedAmount === 'INR 0') {
+        const origNum = parseAmountNum(a.amountOriginal || a.transactionSnapshot?.amount || a.transactionSnapshot?.grossAmount);
+        const inrNum = parseAmountNum(a.amountINR || a.transactionSnapshot?.amountINR || origNum);
+        const curr = String(a.currency || a.transactionSnapshot?.currency || 'INR').toUpperCase();
+
+        if (curr !== 'INR' && curr !== '₹' && origNum > 0) {
+          formattedAmount = `${curr} ${origNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${inrNum > 0 ? ` (₹${inrNum.toLocaleString('en-IN')})` : ''}`;
+        } else if (inrNum > 0 || origNum > 0) {
+          formattedAmount = `₹${(inrNum || origNum).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        } else {
+          formattedAmount = `₹0.00`;
+        }
+      }
+
       return {
         ...a,
-        amountFormatted:  a.amountFormatted || `INR ${(a.amountINR || 0).toLocaleString('en-IN')}`,
+        amountFormatted:  formattedAmount,
         workflowId:       a.workflowId || 'WF-STD-001',
         workflowCode:     a.workflowCode || 'WF-STD',
         workflowVersion:  a.workflowVersion || 1,
@@ -555,7 +549,18 @@ export const processApprovalAction = async (req, res) => {
     }
 
     const isAssignedApprover = approval.assignedApprover && approval.assignedApprover === actingUserId;
-    if (!isAssignedApprover && !canActOnStep(effectiveRoles, approval, actingUserId)) {
+    const isRoleMatch = canActOnStep(effectiveRoles, approval, actingUserId);
+    const isAdmin = ['admin', 'superadmin', 'system_admin', 'systemadmin'].includes(primaryRole.toLowerCase());
+    const isProd = process.env.NODE_ENV === 'production';
+
+    if (isAdmin && isProd && !isAssignedApprover && !isRoleMatch) {
+      return res.status(403).json({
+        success: false,
+        error: 'Admin override approval is restricted in production environment. Log in as designated step approver.'
+      });
+    }
+
+    if (!isAdmin && !isAssignedApprover && !isRoleMatch) {
       const requiredRole = getCurrentStepRole(approval);
       return res.status(403).json({
         success: false,
@@ -601,18 +606,52 @@ export const processApprovalAction = async (req, res) => {
     };
 
     const expectedVersion = Number(approval.version || 0);
+    const versionCondition = expectedVersion === 0
+      ? { $or: [{ version: 0 }, { version: { $exists: false } }] }
+      : { version: expectedVersion };
+
     const actionTime = new Date();
     approval = await Approval.findOneAndUpdate(
-      { _id: approval._id, version: expectedVersion, status: previousState.status, currentStep: previousState.currentStep },
+      { _id: approval._id, ...versionCondition },
       {
-        $set: { status: newStatus, currentStep: newStep, remarks: actionRemarks, actionedBy: actingUser, actionedAt: actionTime, ...nextAssignment, ...(['Approved & Dispatched', 'Rejected'].includes(newStatus) ? { completedAt: actionTime } : {}) },
+        $set: {
+          status: newStatus,
+          currentStep: newStep,
+          remarks: actionRemarks,
+          actionedBy: actingUser,
+          actionedAt: actionTime,
+          ...nextAssignment,
+          ...(['Approved & Dispatched', 'Rejected'].includes(newStatus) ? { completedAt: actionTime } : {})
+        },
         $inc: { version: 1 },
         $push: { actionHistory: actionRecord }
       },
       { new: true, runValidators: true }
     );
     if (!approval) return res.status(409).json({ success: false, error: 'This approval changed while you were reviewing it. Refresh and try again.' });
-    await WorkflowAudit.create({ eventId: `wa-${crypto.randomUUID()}`, eventType: `APPROVAL_${rawAction.toUpperCase()}`, actorId: actingUserId, actorName: actingUser, actorRole: actingRole, entityType: approval.type, entityId: approval.id, workflowId: approval.workflowId, workflowVersion: approval.workflowVersion || 1, step: actionRecord.step, action: rawAction, previousState, newState: { status: newStatus, currentStep: newStep, version: approval.version }, reason: actionRemarks, requestId: req.headers['x-request-id'], source: req.headers['x-client-source'] || 'web' });
+    
+    try {
+      await WorkflowAudit.create({
+        eventId: `wa-${crypto.randomUUID()}`,
+        eventType: `APPROVAL_${rawAction.toUpperCase()}`,
+        actorId: actingUserId,
+        actorName: actingUser,
+        actorRole: actingRole,
+        entityType: approval.type,
+        entityId: approval.id,
+        workflowId: approval.workflowId,
+        workflowVersion: approval.workflowVersion || 1,
+        step: actionRecord.step,
+        action: rawAction,
+        previousState,
+        newState: { status: newStatus, currentStep: newStep, version: approval.version },
+        reason: actionRemarks,
+        requestId: req.headers['x-request-id'],
+        source: req.headers['x-client-source'] || 'web'
+      });
+    } catch (auditErr) {
+      console.warn('[WorkflowAudit Warn] Failed to record audit log:', auditErr.message);
+    }
 
     // ── Fire-and-forget email notifications ───────────────────────────────
     sendApprovalEmails({ approval: approval.toObject(), action: rawAction, newStatus, actingUser });
@@ -640,27 +679,46 @@ export const processApprovalAction = async (req, res) => {
       s === 'Returned for changes'  ? 'returned' :
       'pending';
 
+    const activeRole = nextAssignment.assignedApproverRole || approval.assignedApproverRole || getCurrentStepRole(approval);
+    const activeName = nextAssignment.assignedApproverName || approval.assignedApproverName || null;
+    const activeUser = nextAssignment.assignedApprover || approval.assignedApprover || null;
+
+    const childSyncPayload = {
+      currentStep: newStep,
+      assignedApproverRole: activeRole,
+      assignedApproverName: activeName,
+      assignedApprover: activeUser
+    };
+    const targetStatus = terminalMap(newStatus);
+
+    const refId = approval.referenceId || approval.referenceNumber || approval.id;
+
     if (approval.type === 'Advance Payment') {
       try {
         const { AdvancePayment } = await import('../../models/AdvancePayment.js');
-        await AdvancePayment.findOneAndUpdate({ advanceId: approval.id }, { status: terminalMap(newStatus) });
+        await AdvancePayment.updateMany(
+          { $or: [{ advanceId: refId }, { advanceId: approval.id }, { id: refId }, { referenceNumber: refId }], status: { $ne: 'paid' } },
+          { $set: { ...childSyncPayload, status: targetStatus } }
+        );
       } catch (e) {
         console.error('[Approvals] Sync AdvancePayment failed:', e.message);
       }
     } else if (approval.type === 'Invoice Payment') {
       try {
         const { InvoicePayment } = await import('../../models/InvoicePayment.js');
-        await InvoicePayment.findOneAndUpdate({ invoicePaymentId: approval.id }, { status: terminalMap(newStatus) });
+        await InvoicePayment.updateMany(
+          { $or: [{ invoicePaymentId: refId }, { invoicePaymentId: approval.id }, { id: refId }, { invoiceNumber: refId }], status: { $ne: 'paid' } },
+          { $set: { ...childSyncPayload, status: targetStatus } }
+        );
       } catch (e) {
         console.error('[Approvals] Sync InvoicePayment failed:', e.message);
       }
     } else if (['Logistics Payment', 'BL Freight Invoice', 'Logistics Payments'].includes(approval.type)) {
       try {
         const { LogisticsPayment } = await import('../../models/LogisticsPayment.js');
-        const refId = approval.referenceId || approval.id;
-        await LogisticsPayment.findOneAndUpdate(
-          { $or: [{ logisticsPaymentId: refId }, { referenceNumber: refId }] },
-          { status: terminalMap(newStatus), currentStep: nextStepIndex + 1 }
+        await LogisticsPayment.updateMany(
+          { $or: [{ logisticsPaymentId: refId }, { referenceNumber: refId }], status: { $ne: 'paid' } },
+          { $set: { ...childSyncPayload, status: targetStatus } }
         );
       } catch (e) {
         console.error('[Approvals] Sync LogisticsPayment failed:', e.message);
@@ -668,10 +726,9 @@ export const processApprovalAction = async (req, res) => {
     } else if (['Custom Duty', 'Customs Duty'].includes(approval.type)) {
       try {
         const { CustomDutyPayment } = await import('../../models/CustomDutyPayment.js');
-        const refId = approval.referenceId || approval.id;
-        await CustomDutyPayment.findOneAndUpdate(
-          { $or: [{ dutyId: refId }, { _id: refId.match(/^[0-9a-fA-F]{24}$/) ? refId : null }] },
-          { status: terminalMap(newStatus) }
+        await CustomDutyPayment.updateMany(
+          { $or: [{ dutyId: refId }, { _id: refId.match(/^[0-9a-fA-F]{24}$/) ? refId : null }], status: { $ne: 'paid' } },
+          { $set: { ...childSyncPayload, status: targetStatus } }
         );
       } catch (e) {
         console.error('[Approvals] Sync CustomDutyPayment failed:', e.message);

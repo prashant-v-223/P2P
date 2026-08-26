@@ -8,15 +8,15 @@ import { SearchableSelect } from '../../components/ui/searchable-select';
 import { ServerPagination } from '../../components/ui/server-pagination';
 import { useToast } from '../../components/ui/toast';
 import { userHasPermission } from '../../lib/permissions';
+import MarkAsPaidModal from '../../components/common/MarkAsPaidModal';
 
 export default function LogisticsPaymentsView() {
   const navigate = useNavigate();
-  const { showToast } = useToast();
   const { user } = useSelector((state) => state.auth);
+  const { showToast } = useToast();
 
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedPaymentId, setSelectedPaymentId] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [page, setPage] = useState(1);
@@ -32,6 +32,8 @@ export default function LogisticsPaymentsView() {
   const [editForm, setEditForm] = useState({ invoiceNumber: '', amount: '', vendorName: '', remarks: '' });
   const [savingEdit, setSavingEdit] = useState(false);
 
+  const [paidModalItem, setPaidModalItem] = useState(null);
+
   const canCreate = userHasPermission(
     user?.role,
     'logistics-payments.create',
@@ -40,16 +42,8 @@ export default function LogisticsPaymentsView() {
   const canMarkPaid = userHasPermission(user?.role, 'logistics-payments.mark-paid', user?.permissions || user?.customPermissions);
   const canDelete = userHasPermission(user?.role, 'logistics-payments.delete', user?.permissions || user?.customPermissions);
 
-  const handlePayout = async (payment, refId) => {
-    const utrNumber = window.prompt('Enter bank UTR / payment reference number:');
-    if (!utrNumber?.trim()) return;
-    const res = await apiFetch(`/api/p2p/logistics-payments/${refId}/payout`, {
-      method: 'POST', body: JSON.stringify({ utrNumber: utrNumber.trim() })
-    });
-    const data = await res.json();
-    if (!res.ok) return showToast({ title: 'Payout Failed', description: data.error || 'Unable to record payout.', type: 'error' });
-    showToast({ title: 'Payment Recorded', description: data.message, type: 'success' });
-    fetchPayments();
+  const handlePayout = (item) => {
+    setPaidModalItem(item);
   };
 
   const fetchPayments = async () => {
@@ -197,6 +191,37 @@ export default function LogisticsPaymentsView() {
         </div>
       </div>
 
+      {/* KPI Metrics Header */}
+      {(() => {
+        const totalAmt = payments.reduce((acc, p) => acc + (Number(p.amount || p.totalAmount) || 0), 0);
+        const paidAmt = payments.filter(p => String(p.status || '').toLowerCase().includes('paid')).reduce((acc, p) => acc + (Number(p.amount || p.totalAmount) || 0), 0);
+        const paidCnt = payments.filter(p => String(p.status || '').toLowerCase().includes('paid')).length;
+        const pendingCnt = payments.filter(p => !String(p.status || '').toLowerCase().includes('paid')).length;
+
+        return (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-1">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Total Freight Bills</span>
+              <p className="font-mono text-2xl font-black text-slate-900">{payments.length}</p>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-1">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Total Freight Amount</span>
+              <p className="font-mono text-2xl font-black text-[#0d7676]">₹{totalAmt.toLocaleString('en-IN')}</p>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-1">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600">Disbursed & Cleared</span>
+              <p className="font-mono text-2xl font-black text-emerald-700">₹{paidAmt.toLocaleString('en-IN')}</p>
+              <span className="text-[10px] text-slate-400 font-medium">{paidCnt} Paid Bills</span>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-1">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600">Pending Treasury Payout</span>
+              <p className="font-mono text-2xl font-black text-amber-700">{pendingCnt}</p>
+              <span className="text-[10px] text-slate-400 font-medium">Awaiting Payout</span>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Filter Toolbar */}
       <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
@@ -258,7 +283,7 @@ export default function LogisticsPaymentsView() {
                   <th className="py-3.5 px-4">Invoice / Ref No</th>
                   <th className="py-3.5 px-4">Category</th>
                   <th className="py-3.5 px-4 text-right">Amount</th>
-                  <th className="py-3.5 px-4 text-center">Status</th>
+                  <th className="py-3.5 px-4 text-center">Approval Stage</th>
                   <th className="py-3.5 px-4 text-right">Action</th>
                 </tr>
               </thead>
@@ -282,20 +307,41 @@ export default function LogisticsPaymentsView() {
                         {curr === 'USD' ? '$' : '₹'}{Number(amt).toLocaleString('en-IN')}
                       </td>
                       <td className="py-4 px-4 text-center">
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase border ${
-                          status.toLowerCase().includes('approved') ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                          status.toLowerCase().includes('paid') ? 'bg-purple-50 text-purple-700 border-purple-200' :
-                          status.toLowerCase().includes('reject') ? 'bg-rose-50 text-rose-700 border-rose-200' :
-                          'bg-amber-50 text-amber-700 border-amber-200'
-                        }`}>
-                          {status}
-                        </span>
+                        {(() => {
+                          const st = status.toLowerCase();
+                          if (st.includes('paid')) {
+                            return (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase border bg-sky-50 text-sky-700 border-sky-200">
+                                Paid & Cleared
+                              </span>
+                            );
+                          }
+                          if (st.includes('approved')) {
+                            return (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase border bg-emerald-50 text-emerald-700 border-emerald-200">
+                                Fully Approved
+                              </span>
+                            );
+                          }
+                          if (st.includes('reject')) {
+                            return (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase border bg-rose-50 text-rose-700 border-rose-200">
+                                Rejected
+                              </span>
+                            );
+                          }
+                          return (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase border bg-amber-50 text-amber-700 border-amber-200">
+                              Pending: Logistics Head
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="py-4 px-4 text-right">
                         <div className="flex items-center justify-end gap-2">
                           {canMarkPaid && status.toLowerCase().includes('approved') ? (
                             <button
-                              onClick={() => handlePayout(p, refId)}
+                              onClick={() => handlePayout(p)}
                               className="px-3 py-1.5 rounded-lg bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-[11px] cursor-pointer shadow-2xs transition"
                             >
                               Record Payout
@@ -484,6 +530,15 @@ export default function LogisticsPaymentsView() {
           </div>
         </div>
       )}
+
+      {/* Mark As Paid Modal */}
+      <MarkAsPaidModal
+        open={Boolean(paidModalItem)}
+        onClose={() => setPaidModalItem(null)}
+        item={paidModalItem}
+        type="LogisticsPayment"
+        onSuccess={fetchPayments}
+      />
     </div>
   );
 }

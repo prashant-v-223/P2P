@@ -6,7 +6,7 @@ const documentSchema = new mongoose.Schema({
   documentType: { 
     type: String, 
     required: true, 
-    enum: ['vendor_invoice', 'advance_request', 'custom_duty_receipt', 'bill_of_lading', 'po_copy', 'rfq_document', 'other'],
+    enum: ['vendor_invoice', 'advance_request', 'custom_duty', 'custom_duty_receipt', 'bill_of_lading', 'po_copy', 'rfq_document', 'bank_advice', 'receipt', 'payment_proof', 'logistics_bill', 'other'],
     index: true 
   },
   fileUrl: { type: String, required: true },
@@ -18,7 +18,7 @@ const documentSchema = new mongoose.Schema({
   documentableType: {
     type: String,
     required: true,
-    enum: ['AdvancePayment', 'InvoicePayment', 'CustomDutyPayment', 'LogisticsPayment', 'RfqHeader', 'PurchaseOrder'],
+    enum: ['AdvancePayment', 'InvoicePayment', 'CustomDuty', 'CustomDutyPayment', 'LogisticsPayment', 'RfqHeader', 'PurchaseOrder'],
     index: true
   },
   documentableId: { 

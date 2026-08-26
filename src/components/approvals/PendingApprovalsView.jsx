@@ -116,9 +116,12 @@ const formatSubmitted = (value) => {
 };
 
 const formatCurrency = (amount, currency = 'INR', amountFormatted = '') => {
-  if (amountFormatted) return amountFormatted;
-  if (!amount && amount !== 0) return `${currency === 'USD' ? '$' : '₹'} 0.00`;
-  const val = typeof amount === 'string' ? parseFloat(amount.replace(/[^0-9.-]+/g, '')) || 0 : amount;
+  if (amountFormatted && amountFormatted !== '₹0' && amountFormatted !== '₹0.00' && amountFormatted !== '₹ 0.00') return amountFormatted;
+  if (typeof amount === 'string' && (amount.includes('USD') || amount.includes('INR') || (amount.includes('₹') && !amount.startsWith('₹0')) || amount.includes('$') || amount.includes('€') || amount.includes('£'))) {
+    return amount;
+  }
+  if (!amount && amount !== 0) return `${currency === 'USD' ? '$' : '₹'}0.00`;
+  const val = typeof amount === 'string' ? parseFloat(amount.replace(/[^0-9.-]+/g, '')) || 0 : Number(amount) || 0;
   const curr = String(currency || 'INR').toUpperCase();
   if (curr === 'USD') return `$${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   if (curr === 'EUR') return `€${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -292,9 +295,18 @@ export default function PendingApprovalsView() {
     let awaitingMe = 0;
     let aging = 0;
     approvals.forEach((approval) => {
-      const amt = typeof approval.amountINR === 'string'
-        ? parseFloat(approval.amountINR.replace(/[^0-9.-]+/g, '')) || 0
-        : (approval.amountINR || 0);
+      let amt = 0;
+      const rawInr = approval.amountINR;
+      if (typeof rawInr === 'number') {
+        amt = rawInr;
+      } else if (typeof rawInr === 'string') {
+        const inrMatch = rawInr.match(/₹\s*([0-9,.]+)/);
+        if (inrMatch) {
+          amt = parseFloat(inrMatch[1].replace(/,/g, '')) || 0;
+        } else {
+          amt = parseFloat(rawInr.replace(/[^0-9.-]+/g, '')) || 0;
+        }
+      }
       value += amt;
       if (getUrgency(approval.submittedAt) === 'critical') aging += 1;
     });
@@ -491,25 +503,12 @@ export default function PendingApprovalsView() {
                         <div className={`flex h-8 w-8 items-center justify-center rounded-lg border ${typeStyle.border} ${typeStyle.bg} ${typeStyle.text}`}>
                           <FileText className="h-4 w-4" />
                         </div>
-                        {(() => {
-                          const hasDueDate = Boolean(approval.dueDate || approval.paymentDueDate || approval.expectedPaymentDate || approval.transactionSnapshot?.dueDate || approval.transactionSnapshot?.paymentDueDate);
-                          const isFinanceUser = isFinanceRole(user?.role);
-                          if (isFinanceUser && !hasDueDate) {
-                            return (
-                              <span className="font-mono text-xs font-extrabold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-200" title="Request number is hidden for Finance until a due date is specified">
-                                [Pending Due Date]
-                              </span>
-                            );
-                          }
-                          return (
-                            <Link
-                              to={getApprovalDetailUrl(approval)}
-                              className="font-mono text-base font-extrabold text-slate-900 transition-colors hover:text-teal-700"
-                            >
-                              {approval.id}
-                            </Link>
-                          );
-                        })()}
+                        <Link
+                          to={getApprovalDetailUrl(approval)}
+                          className="font-mono text-base font-extrabold text-slate-900 transition-colors hover:text-teal-700"
+                        >
+                          {approval.id}
+                        </Link>
                         <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider ${typeStyle.bg} ${typeStyle.text} ${typeStyle.border}`}>
                           {approval.type}
                         </span>

@@ -213,22 +213,20 @@ export default function UniversalApprovalWorkflowCard({
     const canView = true;
     const isTerminal = ['Approved & Dispatched', 'Rejected', 'Returned for changes'].includes(approvalData.status);
     
-    // Strict Action Permission:
-    // If explicit assignee exists (e.g. Yash Naik), ONLY that specific user or Admin can act.
+    // Action Permission:
+    // Any user whose role matches the current step role (or is admin or explicitly assigned) can act!
     let canAct = false;
     if (!isTerminal) {
-      if (isAdmin) {
+      const isDev = Boolean(import.meta.env?.DEV) || process.env.NODE_ENV === 'development';
+      if (isRoleMatch || isDirectExplicitUser) {
         canAct = true;
-      } else if (!isRequester) {
-        if (hasExplicitAssignee) {
-          canAct = isDirectExplicitUser;
-        } else {
-          canAct = isRoleMatch;
-        }
+      } else if (isAdmin && isDev) {
+        // Admin testing override enabled in Development mode
+        canAct = true;
       }
     }
 
-    const isApprover = hasExplicitAssignee ? isDirectExplicitUser : isRoleMatch;
+    const isApprover = isRoleMatch || isDirectExplicitUser || isAdmin;
 
     setUserPermissions({
       canView,
@@ -574,11 +572,7 @@ export default function UniversalApprovalWorkflowCard({
                   Confirm {confirmModal.action === 'reject' ? 'Rejection' : confirmModal.action === 'return' ? 'Return Request' : 'Approval'}
                 </h3>
                 <p className="text-xs text-slate-500 font-medium">
-                  Reference: <strong className="font-mono">{
-                    isFinanceRole(currentUser?.role) && !(approval?.dueDate || approval?.paymentDueDate || approval?.expectedPaymentDate)
-                      ? '[Pending Due Date]'
-                      : referenceId
-                  }</strong>
+                  Reference: <strong className="font-mono">{referenceId}</strong>
                 </p>
               </div>
             </div>

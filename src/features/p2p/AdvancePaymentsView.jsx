@@ -41,16 +41,18 @@ const getInitials = (name) => {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 };
 
+import MarkAsPaidModal from '../../components/common/MarkAsPaidModal';
+
 export default function AdvancePaymentsView() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useSelector((state) => state.auth);
+  const { showToast } = useToast();
   const userPerms = user?.permissions || user?.customPermissions;
   const canCreate = userHasPermission(user?.role, 'advance-payments.create', userPerms);
   const canEdit = canCreate || userHasPermission(user?.role, 'advance-payments.edit', userPerms);
   const canDelete = userHasPermission(user?.role, 'advance-payments.delete', userPerms);
   const canMarkPaid = userHasPermission(user?.role, 'advance-payments.mark-paid', userPerms);
-console.log("canMarkPaid",canMarkPaid);
 
   // Read state directly from URL search params
   const currentPage = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
@@ -64,6 +66,7 @@ console.log("canMarkPaid",canMarkPaid);
   const [pageSize, setPageSize] = useState(pageSizeParam);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+  const [paidModalItem, setPaidModalItem] = useState(null);
 
   // Status Metrics
   const [metrics, setMetrics] = useState({
@@ -130,8 +133,7 @@ console.log("canMarkPaid",canMarkPaid);
             dueDate: item.dueDate || item.approvalDueDate
               ? new Date(item.dueDate || item.approvalDueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
               : '—',
-            approvalStage: item.assignedApproverRole || item.assignedApproverName ||
-              (item.status === 'pending' ? 'Purchase Manager' : '')
+            approvalStage: item.assignedApproverRole || item.assignedApproverName || item.approvalStage || 'Approval'
           }));
 
           setAdvances(mapped);
@@ -186,14 +188,8 @@ console.log("canMarkPaid",canMarkPaid);
     }
   };
 
-  const handlePayout = async (reference) => {
-    const utrNumber = window.prompt('Enter bank UTR / payment reference number:');
-    if (!utrNumber?.trim()) return;
-    const res = await apiFetch(`/api/p2p/advances/${reference}/payout`, { method: 'POST', body: JSON.stringify({ utrNumber: utrNumber.trim() }) });
-    const data = await res.json();
-    if (!res.ok) return showToast({ title: 'Payout Failed', description: data.error || 'Unable to record payout.', type: 'error' });
-    showToast({ title: 'Payment Recorded', description: data.message, type: 'success' });
-    fetchAdvances();
+  const handlePayout = (advItem) => {
+    setPaidModalItem(advItem);
   };
 
   return (
@@ -322,7 +318,6 @@ console.log("canMarkPaid",canMarkPaid);
                 <th className="py-3.5 px-4 text-right">ADJUSTED AMOUNT</th>
                 <th className="py-3.5 px-4 text-center">% OF PO</th>
                 <th className="py-3.5 px-4 text-center">MODE</th>
-                <th className="py-3.5 px-4 text-center">STATUS</th>
                 <th className="py-3.5 px-4 text-center whitespace-nowrap">SUBMITTED</th>
                 <th className="py-3.5 px-4 text-center whitespace-nowrap">DUE DATE</th>
                 <th className="py-3.5 px-4 text-center whitespace-nowrap">APPROVAL STAGE</th>
@@ -410,13 +405,6 @@ console.log("canMarkPaid",canMarkPaid);
                         {adv.mode}
                       </td>
 
-                      <td className="py-3.5 px-4 text-center">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border ${color.badge}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${color.dot}`} />
-                          {adv.status}
-                        </span>
-                      </td>
-
                       <td className="py-3.5 px-4 text-center text-slate-500 font-mono text-[11px]">
                         {adv.submittedDate}
                       </td>
@@ -426,11 +414,50 @@ console.log("canMarkPaid",canMarkPaid);
                       </td>
 
                       <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                        {adv.approvalStage ? (
-                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">
-                            {formatRoleName(adv.approvalStage)}
-                          </span>
-                        ) : '—'}
+                        {(() => {
+                          const status = String(adv.status || '').toLowerCase().trim();
+                          if (status === 'approved') {
+                            return (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-extrabold text-emerald-700">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Fully Approved
+                              </span>
+                            );
+                          }
+                          if (status === 'paid') {
+                            return (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-[10px] font-extrabold text-sky-700">
+                                <CheckCircle2 className="w-3 h-3 text-sky-600" /> Paid & Cleared
+                              </span>
+                            );
+                          }
+                          if (status === 'rejected') {
+                            return (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-[10px] font-extrabold text-rose-700">
+                                Rejected
+                              </span>
+                            );
+                          }
+                          if (status === 'returned') {
+                            return (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-orange-200 bg-orange-50 px-2.5 py-0.5 text-[10px] font-extrabold text-orange-700">
+                                Returned
+                              </span>
+                            );
+                          }
+                          if (status === 'draft') {
+                            return (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[10px] font-bold text-slate-500">
+                                Draft
+                              </span>
+                            );
+                          }
+                          const activeRole = formatRoleName(adv.approvalStage || 'Purchase Manager');
+                          return (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">
+                              <Clock className="w-3 h-3 text-amber-600 shrink-0" /> Pending: {activeRole}
+                            </span>
+                          );
+                        })()}
                       </td>
 
                       <td className="py-3.5 px-4 text-right">
@@ -445,7 +472,7 @@ console.log("canMarkPaid",canMarkPaid);
 
                           {canMarkPaid && adv.status === 'Approved' && (
                             <button
-                              onClick={() => handlePayout(adv.reference)}
+                              onClick={() => handlePayout(adv)}
                               title="Mark Advance as Paid"
                               className="p-1.5 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition-colors"
                             >
@@ -494,6 +521,14 @@ console.log("canMarkPaid",canMarkPaid);
           onPageChange={handlePageChange}
         />
       </div>
+
+      <MarkAsPaidModal
+        open={Boolean(paidModalItem)}
+        onClose={() => setPaidModalItem(null)}
+        item={paidModalItem}
+        type="AdvancePayment"
+        onSuccess={fetchAdvances}
+      />
     </div>
   );
 }

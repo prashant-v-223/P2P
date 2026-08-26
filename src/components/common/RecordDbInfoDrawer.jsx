@@ -50,11 +50,39 @@ export default function RecordDbInfoDrawer({ entityId, entityType, recordData })
       const res = await apiFetch(`/api/p2p/audit/${queryId}`);
       if (res.ok) {
         const json = await res.json();
-        const logs = (json.auditLogs || []).filter(log => {
+        const rawLogs = (json.auditLogs || []).filter(log => {
           const act = String(log.action || log.eventType || '').toLowerCase();
           return !act.includes('delete');
         });
-        setAuditLogs(logs);
+
+        // Preserve all distinct step approvals and deduplicate only exact identical calls (same step, actor, and action within 3s)
+        const dedupped = [];
+        for (const log of rawLogs) {
+          const logAction = String(log.action || log.eventType || '').toLowerCase().trim();
+          const logTime = new Date(log.createdAt || log.occurredAt || log.timestamp || 0).getTime();
+          const logStep = Number(log.step || 0);
+          const logActor = String(log.actorName || log.actionedBy || log.performedBy || '').toLowerCase().trim();
+
+          const isDuplicate = dedupped.some(item => {
+            const itemAction = String(item.action || item.eventType || '').toLowerCase().trim();
+            const itemTime = new Date(item.createdAt || item.occurredAt || item.timestamp || 0).getTime();
+            const itemStep = Number(item.step || 0);
+            const itemActor = String(item.actorName || item.actionedBy || item.performedBy || '').toLowerCase().trim();
+
+            const sameAction = logAction === itemAction;
+            const sameStep = logStep > 0 && itemStep > 0 ? logStep === itemStep : true;
+            const sameActor = logActor && itemActor ? logActor === itemActor : true;
+            const closeInTime = Math.abs(logTime - itemTime) < 3000;
+
+            return sameAction && sameStep && sameActor && closeInTime;
+          });
+
+          if (!isDuplicate) {
+            dedupped.push(log);
+          }
+        }
+
+        setAuditLogs(dedupped);
       }
     } catch (e) {
       console.error('Error fetching audit trail:', e);
@@ -184,8 +212,16 @@ export default function RecordDbInfoDrawer({ entityId, entityType, recordData })
                               <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase border ${colorClass}`}>
                                 {log.action || log.eventType || 'ACTION'}
                               </span>
-                              <span className="text-[10px] font-mono text-slate-400">
-                                {new Date(log.createdAt || log.occurredAt || Date.now()).toLocaleString('en-IN')}
+                              <span className="text-[10px] font-mono font-bold text-slate-500">
+                                {(() => {
+                                  try {
+                                    return new Date(log.createdAt || log.occurredAt || Date.now()).toLocaleString('en-IN', {
+                                      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                                    });
+                                  } catch (_) {
+                                    return String(log.createdAt || log.occurredAt || '');
+                                  }
+                                })()}
                               </span>
                             </div>
 

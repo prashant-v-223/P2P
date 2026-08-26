@@ -29,16 +29,80 @@ export function isRoleMatchingStep(userRole = '', targetStepRole = '', allowAdmi
       (u.includes('procurement_head') || u.includes('procurement_lead') || u.includes('purchase_head') || u.includes('purchase_hod') || u.includes('procurement_hod'))) return true;
 
   if ((t.includes('procurement_manager') || t.includes('purchase_manager') || t === 'manager' || t.includes('team_manager')) &&
-      (u.includes('procurement_manager') || u.includes('purchase_manager') || u.includes('manager') || u.includes('team_manager'))) return true;
+      (u.includes('procurement_manager') || u.includes('purchase_manager') || u.includes('manager') || u.includes('team_manager') || u.includes('procurement_head'))) return true;
 
-  if ((t.includes('inner_team') || t.includes('procurement_executive') || t === 'procurement') &&
-      (u.includes('inner_team') || u.includes('procurement_executive') || u === 'procurement')) return true;
+  if ((t.includes('procurement') || t.includes('purchase')) &&
+      (u.includes('procurement') || u.includes('purchase'))) return true;
 
   if (t.includes('exim') && u.includes('exim')) return true;
 
   if (t.includes('logistics') && u.includes('logistics')) return true;
 
   return false;
+}
+
+/**
+ * Resolves internal procurement owner for a vendor matching vendors.controller.js
+ */
+export async function resolveVendorOwnerUser(rawVendorQuery) {
+  if (!rawVendorQuery) return null;
+  try {
+    const { Vendor } = await import('../models/Vendor.js');
+    const [vendors, users] = await Promise.all([
+      Vendor.find().sort({ createdAt: -1 }).lean().catch(() => []),
+      User.find().lean().catch(() => [])
+    ]);
+
+    const internalUsers = users.filter(u => u.role !== 'vendor' && u.role !== 'vendor_portal');
+    const internalUsersMap = new Map();
+    for (const u of internalUsers) {
+      if (u.id) internalUsersMap.set(String(u.id), u);
+      if (u._id) internalUsersMap.set(String(u._id), u);
+      if (u.email) internalUsersMap.set(String(u.email).toLowerCase(), u);
+    }
+
+    const normalize = (str) => String(str || '')
+      .toLowerCase()
+      .replace(/[(),.\-_/\\]/g, ' ')
+      .replace(/\b(co|ltd|limited|sdn|bhd|inc|corp|corporation|pv|products|regular|one-time|import|domestic)\b/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const normQuery = normalize(rawVendorQuery);
+
+    const seenKeys = new Set();
+    const uniqueVendors = [];
+    for (let i = 0; i < vendors.length; i++) {
+      const v = vendors[i];
+      const key = v.sapVendorCode || v.supplierId || v.id || v._id?.toString();
+      if (key && !seenKeys.has(key)) {
+        seenKeys.add(key);
+
+        let linkedU = internalUsersMap.get(String(v.assignedPurchaseManagerId))
+          || internalUsersMap.get(String(v.buyerId))
+          || internalUsersMap.get(String(v.userId))
+          || internalUsers.find(u => u.name === v.assignedPurchaseManager || u.name === v.buyerName || u.name === v.createdBy);
+
+        if (!linkedU && internalUsers.length > 0) {
+          linkedU = internalUsers[uniqueVendors.length % internalUsers.length];
+        }
+
+        v.linkedUserDoc = linkedU;
+        uniqueVendors.push(v);
+      }
+    }
+
+    const matchedVendor = uniqueVendors.find(v => {
+      const normV = normalize(v.companyName);
+      return v.sapVendorCode === rawVendorQuery || v.supplierId === rawVendorQuery || v.id === rawVendorQuery ||
+        normV === normQuery || (normQuery && normV.includes(normQuery)) || (normV && normQuery.includes(normV));
+    });
+
+    return matchedVendor?.linkedUserDoc || null;
+  } catch (err) {
+    console.error('[resolveVendorOwnerUser Error]:', err.message);
+    return null;
+  }
 }
 
 /**
@@ -74,6 +138,10 @@ export async function attachApprovers(steps, requester) {
     return await attachFallbackApprovers(steps);
   }
 
+  // Check if vendor is linked to a specific user (e.g. Drashti Malaviya -> Vaibhav Parekh)
+  const rawVendorQuery = requester?.vendorName || requester?.supplierId || requester?.vendorId;
+  const vendorOwnerUser = await resolveVendorOwnerUser(rawVendorQuery);
+
   // Process each step
   const resolvedSteps = await Promise.all(
     steps.map(async (step, index) => {
@@ -86,13 +154,25 @@ export async function attachApprovers(steps, requester) {
 
       const isRequesterRoleMatch = isRoleMatchingStep(requesterUser.role, roleKey, false);
 
-      // 1. Check parent manager first if requester has a managerId
-      if (requesterUser.managerId) {
-        approver = await findParentManager(requesterUser, roleKey);
+      // 1. Check parent manager first if requester or vendor owner has a managerId
+      const targetUserForHierarchy = (requesterUser.managerId ? requesterUser : (vendorOwnerUser?.managerId ? vendorOwnerUser : (vendorOwnerUser || requesterUser)));
+      if (targetUserForHierarchy?.managerId) {
+        const hierarchyApprover = await findParentManager(targetUserForHierarchy, roleKey);
+        if (hierarchyApprover && isRoleMatchingStep(hierarchyApprover.role, roleKey, false)) {
+          approver = hierarchyApprover;
+        }
+      } else if (targetUserForHierarchy && isRoleMatchingStep(targetUserForHierarchy.role, roleKey, false)) {
+        approver = {
+          id: targetUserForHierarchy.id || targetUserForHierarchy.userId,
+          name: targetUserForHierarchy.name,
+          role: targetUserForHierarchy.role,
+          email: targetUserForHierarchy.email,
+          resolutionMethod: 'direct_connected_user'
+        };
       }
 
       // 2. If requester has NO parent manager, self-approval is ON if requester matches step role!
-      if (!approver && !requesterUser.managerId && isRequesterRoleMatch) {
+      if (!approver && !requesterUser.managerId && !vendorOwnerUser?.managerId && isRequesterRoleMatch) {
         approver = {
           id: requesterUser.id || requesterUser.userId,
           name: requesterUser.name,
@@ -102,22 +182,11 @@ export async function attachApprovers(steps, requester) {
         };
       }
 
-      // 3. Fallback: If still unassigned, assign to designated active role manager (single assigned approver, no multi-user pool string)
+      // 3. Fallback: If no reporting manager exists, set pool approval so ALL matching role members can approve
       if (!approver) {
-        const allRoleManagers = await User.find({
-          status: 'Active'
-        }).lean().then(users => users.filter(u => isRoleMatchingStep(u.role, roleKey, false)));
-
-        if (allRoleManagers && allRoleManagers.length > 0) {
-          const designated = allRoleManagers.find(u => u.isManager || ['Head', 'Manager', 'CFO', 'MD'].includes(u.hierarchyLevel) || ['Procurement Head', 'CFO', 'Managing Director (MD)'].includes(u.role)) || allRoleManagers[0];
-          approver = {
-            id: designated.id || designated.userId,
-            name: designated.name,
-            role: designated.role,
-            email: designated.email,
-            resolutionMethod: 'designated_role_manager'
-          };
-        }
+        isPoolApproval = true;
+        const allRoleUsers = await User.find({ status: 'Active' }).lean().then(users => users.filter(u => isRoleMatchingStep(u.role, roleKey, false)));
+        approverPool = allRoleUsers.map(u => ({ id: u.id || u.userId, name: u.name, role: u.role, email: u.email }));
       }
 
       // 3. Fallback check by role or active user if still unresolved
@@ -622,7 +691,12 @@ export async function repairAllActiveApprovals() {
         $or: [{ id: app.requestedById }, { userId: app.requestedById }, { email: app.requestedByEmail }]
       }).lean() : null;
 
-      const freshSteps = await attachApprovers(rawSteps, requester);
+      const freshSteps = await attachApprovers(rawSteps, {
+        ...requester,
+        vendorName: app.vendorName,
+        vendorId: app.vendorId || app.supplierId,
+        supplierId: app.supplierId || app.vendorId
+      });
       const currentStepNum = app.currentStep || 1;
       const activeStep = freshSteps.find(s => (s.step || s.stepNumber) === currentStepNum) || freshSteps[0];
 
@@ -640,11 +714,186 @@ export async function repairAllActiveApprovals() {
       }
 
       await app.save();
+
+      // Sync child payment documents to ensure MongoDB records match Approval state
+      const childPayload = {
+        assignedApproverRole: app.assignedApproverRole,
+        assignedApproverName: app.assignedApproverName,
+        assignedApprover: app.assignedApprover,
+        currentStep: app.currentStep || 1
+      };
+
+      const refId = app.referenceId || app.referenceNumber || app.id;
+      if (app.type === 'Advance Payment') {
+        const { AdvancePayment } = await import('../models/AdvancePayment.js');
+        await AdvancePayment.updateMany(
+          { $or: [{ advanceId: refId }, { _id: app.id }, { advanceId: app.id }] },
+          { $set: childPayload }
+        ).catch(() => {});
+      } else if (app.type === 'Invoice Payment') {
+        const { InvoicePayment } = await import('../models/InvoicePayment.js');
+        await InvoicePayment.updateMany(
+          { $or: [{ invoicePaymentId: refId }, { _id: app.id }, { invoicePaymentId: app.id }] },
+          { $set: childPayload }
+        ).catch(() => {});
+      } else if (['Logistics Payment', 'BL Freight Invoice', 'Logistics Payments'].includes(app.type)) {
+        const { LogisticsPayment } = await import('../models/LogisticsPayment.js');
+        await LogisticsPayment.updateMany(
+          { $or: [{ logisticsPaymentId: refId }, { referenceNumber: refId }] },
+          { $set: childPayload }
+        ).catch(() => {});
+      } else if (['Custom Duty', 'Customs Duty'].includes(app.type)) {
+        const { CustomDutyPayment } = await import('../models/CustomDutyPayment.js');
+        await CustomDutyPayment.updateMany(
+          { $or: [{ dutyId: refId }, { _id: refId }] },
+          { $set: childPayload }
+        ).catch(() => {});
+      }
+
       repairedCount++;
     }
 
     console.log(`[Approval Repair] Successfully repaired ${repairedCount} active approval workflow records.`);
   } catch (err) {
     console.error('[Approval Repair] Failed to repair active approvals:', err.message);
+  }
+}
+
+export async function repairAllOldPaymentRecords() {
+  try {
+    const { AdvancePayment } = await import('../models/AdvancePayment.js');
+    const { InvoicePayment } = await import('../models/InvoicePayment.js');
+    const { LogisticsPayment } = await import('../models/LogisticsPayment.js');
+    const { CustomDutyPayment } = await import('../models/CustomDutyPayment.js');
+
+    let repaired = 0;
+
+    const mapDocStatus = (appStatus, curStatus) => {
+      if (curStatus === 'paid') return 'paid';
+      if (appStatus === 'Approved & Dispatched') return 'approved';
+      if (appStatus === 'Rejected') return 'rejected';
+      if (appStatus === 'Returned for changes') return 'returned';
+      return curStatus || 'pending';
+    };
+
+    const getDynamicStepRole = (app, fallbackRole, stepNum) => {
+      if (app?.assignedApproverRole) return app.assignedApproverRole;
+      if (app?.workflowSteps) {
+        try {
+          const steps = typeof app.workflowSteps === 'string' ? JSON.parse(app.workflowSteps) : app.workflowSteps;
+          const active = steps.find(s => Number(s.step || s.stepNumber) === Number(stepNum));
+          if (active) return active.roleKey || active.assignedApproverRole || active.roleName || active.title;
+        } catch (_) {}
+      }
+      return fallbackRole || null;
+    };
+
+    const advances = await AdvancePayment.find({}).lean();
+    for (const adv of advances) {
+      const refId = adv.advanceId || adv.id || String(adv._id);
+      const app = await Approval.findOne({
+        $or: [{ referenceId: refId }, { id: refId }, { referenceNumber: refId }]
+      }).lean();
+
+      let step = app?.currentStep || adv.currentStep || 1;
+      let role = getDynamicStepRole(app, adv.assignedApproverRole, step);
+      const targetStatus = mapDocStatus(app?.status, adv.status);
+
+      await AdvancePayment.updateOne(
+        { _id: adv._id },
+        {
+          $set: {
+            status: targetStatus,
+            assignedApproverRole: role,
+            assignedApproverName: app?.assignedApproverName || adv.assignedApproverName || null,
+            assignedApprover: app?.assignedApprover || adv.assignedApprover || null,
+            currentStep: step
+          }
+        }
+      );
+      repaired++;
+    }
+
+    const invoices = await InvoicePayment.find({}).lean();
+    for (const inv of invoices) {
+      const refId = inv.invoicePaymentId || inv.id || String(inv._id);
+      const app = await Approval.findOne({
+        $or: [{ referenceId: refId }, { id: refId }, { referenceNumber: refId }]
+      }).lean();
+
+      let step = app?.currentStep || inv.currentStep || 1;
+      let role = getDynamicStepRole(app, inv.assignedApproverRole, step);
+      const targetStatus = mapDocStatus(app?.status, inv.status);
+
+      await InvoicePayment.updateOne(
+        { _id: inv._id },
+        {
+          $set: {
+            status: targetStatus,
+            assignedApproverRole: role,
+            assignedApproverName: app?.assignedApproverName || inv.assignedApproverName || null,
+            assignedApprover: app?.assignedApprover || inv.assignedApprover || null,
+            currentStep: step
+          }
+        }
+      );
+      repaired++;
+    }
+
+    const logistics = await LogisticsPayment.find({}).lean();
+    for (const log of logistics) {
+      const refId = log.logisticsPaymentId || log.referenceNumber || String(log._id);
+      const app = await Approval.findOne({
+        $or: [{ referenceId: refId }, { id: refId }, { referenceNumber: refId }]
+      }).lean();
+
+      let step = app?.currentStep || log.currentStep || 1;
+      let role = getDynamicStepRole(app, log.assignedApproverRole, step);
+      const targetStatus = mapDocStatus(app?.status, log.status);
+
+      await LogisticsPayment.updateOne(
+        { _id: log._id },
+        {
+          $set: {
+            status: targetStatus,
+            assignedApproverRole: role,
+            assignedApproverName: app?.assignedApproverName || log.assignedApproverName || null,
+            assignedApprover: app?.assignedApprover || log.assignedApprover || null,
+            currentStep: step
+          }
+        }
+      );
+      repaired++;
+    }
+
+    const duties = await CustomDutyPayment.find({}).lean();
+    for (const duty of duties) {
+      const refId = duty.dutyId || String(duty._id);
+      const app = await Approval.findOne({
+        $or: [{ referenceId: refId }, { id: refId }, { referenceNumber: refId }]
+      }).lean();
+
+      let step = app?.currentStep || duty.currentStep || 1;
+      let role = getDynamicStepRole(app, duty.assignedApproverRole, step);
+      const targetStatus = mapDocStatus(app?.status, duty.status);
+
+      await CustomDutyPayment.updateOne(
+        { _id: duty._id },
+        {
+          $set: {
+            status: targetStatus,
+            assignedApproverRole: role,
+            assignedApproverName: app?.assignedApproverName || duty.assignedApproverName || null,
+            assignedApprover: app?.assignedApprover || duty.assignedApprover || null,
+            currentStep: step
+          }
+        }
+      );
+      repaired++;
+    }
+
+    console.log(`[DB REPAIR SUCCESS] Repaired ${repaired} old payment records across MongoDB.`);
+  } catch (err) {
+    console.error('[DB REPAIR ERROR] Failed to repair old records:', err.message);
   }
 }

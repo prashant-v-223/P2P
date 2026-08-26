@@ -10,6 +10,7 @@ export default function DocumentUploader({
   documentableType, 
   documentableId, 
   documentType = 'other',
+  filterDocumentType = null,
   onUploadComplete,
   onDocumentsChange,
   multiple = false,
@@ -19,7 +20,6 @@ export default function DocumentUploader({
   const { showToast } = useToast();
   const { user } = useSelector((s) => s.auth || {});
   const [uploading, setUploading] = useState(false);
-  const [selectedFiles, setSelectedFiles] = useState([]);
   const [documents, setDocuments] = useState(existingDocuments);
 
   const canDeleteDoc = (doc) => {
@@ -34,16 +34,8 @@ export default function DocumentUploader({
     return isUploader || isAdmin;
   };
 
-  const handleFileSelect = (e) => {
-    const files = Array.from(e.target.files || []);
-    setSelectedFiles(files);
-  };
-
-  const handleUpload = async () => {
-    if (!selectedFiles.length) {
-      return showToast({ title: 'No files selected', description: 'Please select at least one file', type: 'error' });
-    }
-
+  const performUpload = async (filesToUpload) => {
+    if (!filesToUpload || !filesToUpload.length) return;
     if (!documentableType || !documentableId) {
       return showToast({ title: 'Configuration Error', description: 'Missing documentableType or documentableId', type: 'error' });
     }
@@ -53,8 +45,8 @@ export default function DocumentUploader({
     try {
       const formData = new FormData();
 
-      if (multiple) {
-        selectedFiles.forEach(file => {
+      if (multiple && filesToUpload.length > 1) {
+        filesToUpload.forEach(file => {
           formData.append('files', file);
         });
         formData.append('documentType', documentType);
@@ -67,7 +59,6 @@ export default function DocumentUploader({
         });
 
         const json = await res.json();
-
         if (!res.ok) throw new Error(json.error || 'Upload failed');
 
         showToast({
@@ -76,13 +67,12 @@ export default function DocumentUploader({
           type: 'success'
         });
 
-        setSelectedFiles([]);
         if (onUploadComplete) onUploadComplete(json.data.uploaded);
-
         await loadDocuments();
       } else {
-        formData.append('file', selectedFiles[0]);
-        formData.append('title', selectedFiles[0].name);
+        const file = filesToUpload[0];
+        formData.append('file', file);
+        formData.append('title', file.name);
         formData.append('documentType', documentType);
         formData.append('documentableType', documentableType);
         formData.append('documentableId', documentableId);
@@ -93,7 +83,6 @@ export default function DocumentUploader({
         });
 
         const json = await res.json();
-
         if (!res.ok) throw new Error(json.error || 'Upload failed');
 
         showToast({
@@ -102,9 +91,7 @@ export default function DocumentUploader({
           type: 'success'
         });
 
-        setSelectedFiles([]);
         if (onUploadComplete) onUploadComplete([json.data]);
-
         await loadDocuments();
       }
     } catch (error) {
@@ -114,13 +101,29 @@ export default function DocumentUploader({
     }
   };
 
+  const handleFileSelect = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length) {
+      await performUpload(files);
+    }
+    e.target.value = '';
+  };
+
   const loadDocuments = async () => {
     try {
       const res = await apiFetch(`/api/documents?documentableType=${documentableType}&documentableId=${documentableId}`);
       const json = await res.json();
-      const apiDocs = json.success && Array.isArray(json.data) ? json.data : [];
+      let apiDocs = json.success && Array.isArray(json.data) ? json.data : [];
       
-      const combined = [...(existingDocuments || []), ...apiDocs];
+      if (filterDocumentType) {
+        apiDocs = apiDocs.filter(d => d.documentType === filterDocumentType);
+      }
+
+      let combined = [...(existingDocuments || []), ...apiDocs];
+      if (filterDocumentType) {
+        combined = combined.filter(d => d.documentType === filterDocumentType || !d.documentType);
+      }
+
       const seen = new Set();
       const uniqueDocs = [];
       for (const d of combined) {
@@ -218,56 +221,28 @@ export default function DocumentUploader({
               </p>
             </div>
 
+            {uploading ? (
+              <div className="flex items-center justify-center gap-2 px-4 py-2 bg-teal-50 border border-teal-200 rounded-lg text-teal-700 font-bold text-xs">
+                <Loader2 className="h-4 w-4 animate-spin text-[#0d7676]" />
+                <span>Uploading document...</span>
+              </div>
+            ) : (
+              <label
+                htmlFor={`file-upload-${documentableId || 'picker'}`}
+                className="cursor-pointer rounded-lg border border-[#0d7676] bg-white px-4 py-2 text-xs font-bold text-[#0d7676] transition hover:bg-[#0d7676] hover:text-white"
+              >
+                Choose {multiple ? 'Files' : 'File'}
+              </label>
+            )}
+
             <input
               type="file"
-              id="file-upload"
+              id={`file-upload-${documentableId || 'picker'}`}
               multiple={multiple}
               accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.csv,.zip"
               onChange={handleFileSelect}
               className="hidden"
             />
-
-            <label
-              htmlFor="file-upload"
-              className="cursor-pointer rounded-lg border border-[#0d7676] bg-white px-4 py-2 text-xs font-bold text-[#0d7676] transition hover:bg-[#0d7676] hover:text-white"
-            >
-              Choose {multiple ? 'Files' : 'File'}
-            </label>
-
-            {selectedFiles.length > 0 && (
-              <div className="w-full space-y-2">
-                {selectedFiles.map((file, idx) => (
-                  <div key={idx} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <FileText className="h-4 w-4 text-slate-400" />
-                      <span className="text-xs font-medium text-slate-700">{file.name}</span>
-                      <span className="text-xs text-slate-400">({formatFileSize(file.size)})</span>
-                    </div>
-                    <button
-                      onClick={() => setSelectedFiles(files => files.filter((_, i) => i !== idx))}
-                      className="text-slate-400 hover:text-rose-600"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                ))}
-
-                <button
-                  onClick={handleUpload}
-                  disabled={uploading}
-                  className="w-full rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#0f766e] disabled:opacity-50"
-                >
-                  {uploading ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Uploading...
-                    </span>
-                  ) : (
-                    `Upload ${selectedFiles.length} File${selectedFiles.length > 1 ? 's' : ''}`
-                  )}
-                </button>
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -277,8 +252,8 @@ export default function DocumentUploader({
         <div className="space-y-2">
           <h4 className="text-xs font-bold uppercase tracking-wide text-slate-500">Uploaded Documents</h4>
           <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
-            {documents.map((doc) => (
-              <div key={doc.documentId} className="flex items-center justify-between p-3">
+            {documents.map((doc, idx) => (
+              <div key={doc.documentId || doc.id || doc._id || `doc-${idx}`} className="flex items-center justify-between p-3">
                 <div className="flex items-center gap-3">
                   <FileText className="h-5 w-5 text-[#0d7676]" />
                   <div>

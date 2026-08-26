@@ -8,6 +8,7 @@ import { CustomInput } from '../../components/ui/custom-input';
 import { useToast } from '../../components/ui/toast';
 import { userHasPermission } from '../../lib/permissions';
 import { exportCsv } from '../../utils/exportCsv';
+import MarkAsPaidModal from '../../components/common/MarkAsPaidModal';
 import { 
   FileCheck2, 
   Plus, 
@@ -358,7 +359,6 @@ const getInitials = (name) => {
                 <th className="py-3.5 px-2.5 text-center whitespace-nowrap">TDS</th>
                 <th className="py-3.5 px-3.5 text-right">NET PAYABLE</th>
                 {/* <th className="py-3.5 px-3.5 text-center">3-WAY MATCH</th> */}
-                <th className="py-3.5 px-3.5 text-center">STATUS</th>
                 <th className="py-3.5 px-3.5 whitespace-nowrap">SUBMITTED</th>
                 <th className="py-3.5 px-3.5 whitespace-nowrap">DUE DATE</th>
                 <th className="py-3.5 px-3.5 whitespace-nowrap">APPROVAL STAGE</th>
@@ -480,13 +480,6 @@ const getInitials = (name) => {
                         </span>
                       </td> */}
 
-                      {/* STATUS */}
-                      <td className="py-3 px-3.5 text-center">
-                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${statusPills[inv.status] || statusPills.draft}`}>
-                          {inv.status}
-                        </span>
-                      </td>
-
                       {/* SUBMITTED */}
                       <td className="py-3 px-3.5 whitespace-nowrap text-slate-500">
                         {inv.createdAt
@@ -500,16 +493,51 @@ const getInitials = (name) => {
                       </td>
 
                       {/* APPROVAL STAGE */}
-                      <td className="py-3 px-3.5 whitespace-nowrap">
-                        {inv.assignedApproverRole || inv.assignedApproverName ? (
-                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">
-                            {formatRoleName(inv.assignedApproverRole || 'Purchase Manager')}
-                          </span>
-                        ) : inv.status === 'pending' ? (
-                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">
-                            Purchase Manager
-                          </span>
-                        ) : '—'}
+                      <td className="py-3 px-3.5 whitespace-nowrap text-center">
+                        {(() => {
+                          const status = String(inv.status || '').toLowerCase().trim();
+                          if (status === 'approved') {
+                            return (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-extrabold text-emerald-700">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Fully Approved
+                              </span>
+                            );
+                          }
+                          if (status === 'paid') {
+                            return (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-[10px] font-extrabold text-sky-700">
+                                <CheckCircle2 className="w-3 h-3 text-sky-600" /> Paid & Cleared
+                              </span>
+                            );
+                          }
+                          if (status === 'rejected') {
+                            return (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-[10px] font-extrabold text-rose-700">
+                                Rejected
+                              </span>
+                            );
+                          }
+                          if (status === 'returned') {
+                            return (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-orange-200 bg-orange-50 px-2.5 py-0.5 text-[10px] font-extrabold text-orange-700">
+                                Returned
+                              </span>
+                            );
+                          }
+                          if (status === 'draft') {
+                            return (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[10px] font-bold text-slate-500">
+                                Draft
+                              </span>
+                            );
+                          }
+                          const activeRole = formatRoleName(inv.assignedApproverRole || inv.assignedApproverName || 'Purchase Manager');
+                          return (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">
+                              <Clock className="w-3 h-3 text-amber-600 shrink-0" /> Pending: {activeRole}
+                            </span>
+                          );
+                        })()}
                       </td>
 
                       {/* ACTIONS */}
@@ -719,50 +747,16 @@ const getInitials = (name) => {
       )}
 
       {/* Payout Modal */}
-      {showPayoutModal && selectedInvoice && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 text-left">
-            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <CreditCard className="w-5 h-5 text-emerald-600" /> Invoice Treasury Bank Payout
-            </h3>
-            <p className="text-xs text-slate-500">
-              Record bank UTR details for Invoice <span className="font-bold text-slate-900">{selectedInvoice.invoiceNumber}</span>. Net Payable: <span className="font-bold text-teal-700">₹{(selectedInvoice.netPayable || 0).toLocaleString('en-IN')}</span>.
-            </p>
-
-            <form onSubmit={handlePayoutSubmit} className="space-y-3 text-xs">
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Bank UTR / Reference Number</label>
-                <input
-                  type="text"
-                  placeholder="e.g. UTRIBK90281745"
-                  value={utrInput}
-                  onChange={(e) => setUtrInput(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-mono font-bold"
-                  required
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setShowPayoutModal(false)}
-                  className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-4 py-2 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold shadow-xs disabled:opacity-50 flex items-center gap-1.5"
-                >
-                  {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  Execute Invoice Payment
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <MarkAsPaidModal
+        open={showPayoutModal}
+        onClose={() => {
+          setShowPayoutModal(false);
+          setSelectedInvoice(null);
+        }}
+        item={selectedInvoice}
+        type="InvoicePayment"
+        onSuccess={fetchInvoices}
+      />
     </div>
   );
 }

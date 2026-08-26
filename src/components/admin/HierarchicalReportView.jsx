@@ -171,8 +171,15 @@ export default function HierarchicalReportView() {
   });
 
   const filteredUpcomingPayments = upcomingFinancePayments.filter((item) => {
-    const matchSearch = !search.trim() || [item.id, item.vendorName, item.poNumber, item.requestedBy, item.status]
-      .some((val) => String(val || '').toLowerCase().includes(search.toLowerCase().trim()));
+    const cleanSearch = search.toLowerCase().trim().replace(/[,₹$\s]/g, '');
+    const matchSearch = !search.trim() || [
+      item.id, item.referenceId, item.invoicePaymentId, item.invoiceNumber, item.advanceId,
+      item.vendorName, item.poNumber, item.requestedBy, item.status, item.assignedApproverRole,
+      item.utrNumber, item.amount, item.amountINR, item.netPayable,
+      item.amount ? String(item.amount) : '',
+      item.amountINR ? String(item.amountINR) : '',
+      item.amountINR ? Number(item.amountINR).toLocaleString('en-IN') : ''
+    ].some((val) => String(val || '').toLowerCase().replace(/[,₹$\s]/g, '').includes(cleanSearch));
     const matchType = selectedTypeFilter === 'All' || item.type === selectedTypeFilter;
     const matchUrgency = selectedUrgencyFilter === 'All' || item.urgency === selectedUrgencyFilter;
     return matchSearch && matchType && matchUrgency;
@@ -219,8 +226,12 @@ export default function HierarchicalReportView() {
             <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Total Requests</span>
             <UsersIcon className="h-4 w-4 text-teal-600" />
           </div>
-          <p className="mt-1 text-xl font-black text-slate-900">{rows.reduce((sum, row) => sum + row.totalRecords, 0)}</p>
-          <p className="text-[10px] font-semibold text-slate-400 mt-0.5">{data?.summary?.totalUsers || 0} users in {data?.currentUser?.reportScope || 'self'} scope</p>
+          {loading ? (
+            <div className="mt-2 h-6 w-16 bg-slate-200 rounded animate-pulse" />
+          ) : (
+            <p className="mt-1 text-xl font-black text-slate-900">{rows.reduce((sum, row) => sum + row.totalRecords, 0)}</p>
+          )}
+          <p className="text-[10px] font-semibold text-slate-400 mt-0.5">{loading ? 'Loading...' : `${data?.summary?.totalUsers || 0} users in ${data?.currentUser?.reportScope || 'self'} scope`}</p>
         </div>
 
         {/* Metric 2 */}
@@ -229,7 +240,11 @@ export default function HierarchicalReportView() {
             <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Linked PO Value</span>
             <ShieldCheck className="h-4 w-4 text-emerald-600" />
           </div>
-          <p className="mt-1 text-lg font-black text-emerald-800">{formatCurrency(data?.summary?.totalPoValue)}</p>
+          {loading ? (
+            <div className="mt-2 h-6 w-24 bg-slate-200 rounded animate-pulse" />
+          ) : (
+            <p className="mt-1 text-lg font-black text-emerald-800">{formatCurrency(data?.summary?.totalPoValue)}</p>
+          )}
           <p className="text-[10px] font-semibold text-emerald-600 mt-0.5">Total PO commitments</p>
         </div>
 
@@ -239,7 +254,11 @@ export default function HierarchicalReportView() {
             <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Disbursed / Paid</span>
             <CheckCircle2 className="h-4 w-4 text-blue-600" />
           </div>
-          <p className="mt-1 text-lg font-black text-blue-900">{formatCurrency(data?.summary?.totalPaidAmount)}</p>
+          {loading ? (
+            <div className="mt-2 h-6 w-24 bg-slate-200 rounded animate-pulse" />
+          ) : (
+            <p className="mt-1 text-lg font-black text-blue-900">{formatCurrency(data?.summary?.totalPaidAmount)}</p>
+          )}
           <p className="text-[10px] font-semibold text-blue-600 mt-0.5">Bank disbursements completed</p>
         </div>
 
@@ -249,7 +268,11 @@ export default function HierarchicalReportView() {
             <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Approved / Payable</span>
             <Receipt className="h-4 w-4 text-indigo-600" />
           </div>
-          <p className="mt-1 text-lg font-black text-indigo-900">{formatCurrency(data?.summary?.totalApprovedAmount)}</p>
+          {loading ? (
+            <div className="mt-2 h-6 w-24 bg-slate-200 rounded animate-pulse" />
+          ) : (
+            <p className="mt-1 text-lg font-black text-indigo-900">{formatCurrency(data?.summary?.totalApprovedAmount)}</p>
+          )}
           <p className="text-[10px] font-semibold text-indigo-600 mt-0.5">Ready for release</p>
         </div>
 
@@ -264,9 +287,13 @@ export default function HierarchicalReportView() {
             </span>
             <ArrowUpRight className="h-4 w-4 text-amber-700 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
           </div>
-          <p className="mt-1 text-lg font-black text-amber-950">{formatCurrency(data?.summary?.upcoming7dFinanceTotalINR || 0)}</p>
+          {loading ? (
+            <div className="mt-2 h-6 w-24 bg-slate-200 rounded animate-pulse" />
+          ) : (
+            <p className="mt-1 text-lg font-black text-amber-950">{formatCurrency(data?.summary?.upcoming7dFinanceTotalINR || 0)}</p>
+          )}
           <p className="text-[10px] font-extrabold text-amber-700 mt-0.5">
-            {data?.summary?.upcoming7dFinanceCount || upcomingFinancePayments.length} upcoming 7d payments
+            {loading ? 'Loading...' : `${data?.summary?.upcoming7dFinanceCount || upcomingFinancePayments.length} upcoming 7d payments`}
           </p>
         </div>
 
@@ -276,7 +303,11 @@ export default function HierarchicalReportView() {
             <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-800">Uncommitted Balance</span>
             <Wallet className="h-4 w-4 text-cyan-600" />
           </div>
-          <p className="mt-1 text-lg font-black text-cyan-950">{formatCurrency(totalAvailableBalance)}</p>
+          {loading ? (
+            <div className="mt-2 h-6 w-24 bg-slate-200 rounded animate-pulse" />
+          ) : (
+            <p className="mt-1 text-lg font-black text-cyan-950">{formatCurrency(totalAvailableBalance)}</p>
+          )}
           <p className="text-[10px] font-semibold text-cyan-600 mt-0.5">PO budget remaining</p>
         </div>
       </div>
@@ -285,59 +316,15 @@ export default function HierarchicalReportView() {
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xs shrink-0">
         <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto">
           <div className="inline-flex rounded-xl bg-slate-100/80 p-1 border border-slate-200/60">
-            {/* Tab 1: 7-Day Finance Payments (PRIMARY / NEW) */}
             <button
               type="button"
-              onClick={() => setViewMode('upcoming7d')}
-              className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-extrabold transition ${
-                viewMode === 'upcoming7d'
-                  ? 'bg-gradient-to-r from-[#0d7676] to-teal-700 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-              }`}
+              className="flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-extrabold bg-gradient-to-r from-[#0d7676] to-teal-700 text-white shadow-sm"
             >
-              <Clock className={`h-3.5 w-3.5 ${viewMode === 'upcoming7d' ? 'text-white' : 'text-amber-600'}`} />
-              <span>7-Day Finance Payments</span>
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                viewMode === 'upcoming7d' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800'
-              }`}>
+              <Clock className="h-3.5 w-3.5 text-white" />
+              <span>7-Day Finance Payments Forecast</span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-white/20 text-white">
                 {upcomingFinancePayments.length}
               </span>
-            </button>
-
-            {/* Tab 2: Report Grid */}
-            <button
-              type="button"
-              onClick={() => setViewMode('grid')}
-              className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-extrabold transition ${
-                viewMode === 'grid' ? 'bg-white text-[#0d7676] shadow-2xs border border-slate-200/80' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <List className="h-3.5 w-3.5" />
-              <span>User Spend Grid</span>
-            </button>
-
-            {/* Tab 3: Hierarchy Tree */}
-            <button
-              type="button"
-              onClick={() => setViewMode('tree')}
-              className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-extrabold transition ${
-                viewMode === 'tree' ? 'bg-white text-[#0d7676] shadow-2xs border border-slate-200/80' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Network className="h-3.5 w-3.5" />
-              <span>Hierarchy Tree</span>
-            </button>
-
-            {/* Tab 4: Vendor Report */}
-            <button
-              type="button"
-              onClick={() => setViewMode('vendors')}
-              className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-extrabold transition ${
-                viewMode === 'vendors' ? 'bg-white text-[#0d7676] shadow-2xs border border-slate-200/80' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Building2 className="h-3.5 w-3.5" />
-              <span>Vendor Summary ({data?.summary?.totalVendors || 0})</span>
             </button>
           </div>
         </div>
@@ -478,17 +465,7 @@ export default function HierarchicalReportView() {
 
                           {/* Reference ID & Type */}
                           <td className="px-4 py-3.5">
-                            {(() => {
-                              const isFinanceUser = isFinanceRole(userRole);
-                              if (isFinanceUser && !item.dueDate) {
-                                return (
-                                  <span className="font-mono text-xs font-extrabold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 block" title="Request number is hidden for Finance until a due date is specified">
-                                    [Pending Due Date]
-                                  </span>
-                                );
-                              }
-                              return <span className="font-mono font-extrabold text-slate-900 text-xs block">{item.id}</span>;
-                            })()}
+                            <span className="font-mono font-extrabold text-slate-900 text-xs block">{item.id}</span>
                             <span className={`inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-bold border ${typeBadgeCls}`}>
                               {item.type}
                             </span>

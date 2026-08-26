@@ -218,7 +218,11 @@ function buildAdvanceFilter(idParam) {
 const activePaymentStatuses = ['pending', 'approved', 'paid', 'adjusted'];
 
 function sameValue(left, right) {
-  return String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+  if (left === null || left === undefined || right === null || right === undefined) return false;
+  const l = String(left).trim().toLowerCase();
+  const r = String(right).trim().toLowerCase();
+  if (!l || !r) return false;
+  return l === r;
 }
 
 function normalizedRole(value = '') {
@@ -542,8 +546,8 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
     rawSteps = fallbackWf.steps || [];
   }
 
-  // Hydrate steps with approvers - use the improved attachApprovers
-  const stepsForWorkflow = await attachApprovers(rawSteps, requester);
+  // Hydrate steps with approvers - pass vendor context to attachApprovers
+  const stepsForWorkflow = await attachApprovers(rawSteps, { ...requester, vendorName, supplierId: transactionSnapshot?.vendorId, vendorId: transactionSnapshot?.vendorId });
 
   // Override first step assignedApprover if vendor has linked purchase manager
   if (vendorLinkedManager && stepsForWorkflow.length > 0) {
@@ -602,14 +606,19 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
 
   const safeWf = wf || { totalSteps: finalSteps.length, steps: finalSteps };
 
+  const targetCurrency = transactionSnapshot?.currency || 'INR';
+  const rawOriginalAmount = transactionSnapshot?.amount || transactionSnapshot?.grossAmount || numAmount;
+  const rawInrAmount = transactionSnapshot?.amountINR || (targetCurrency === 'INR' ? rawOriginalAmount : numAmount);
+
   // Create approval record
   const newApproval = await Approval.create({
     id: referenceId,
     type,
     vendorName,
-    amountOriginal: amountFormatted,
-    amountINR: amountFormatted,
-    currency: 'INR',
+    amountOriginal: String(rawOriginalAmount),
+    amountINR: String(rawInrAmount),
+    currency: targetCurrency,
+    amountFormatted: amountFormatted,
     requestedBy: requestedBy || 'Finance Team',
     currentSlab: safeWf?.slab || safeWf?.name || 'Standard',
     workflowId: safeWf?.workflowId || safeWf?.id || 'WF-STD',
@@ -896,6 +905,12 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
       const invoicedQuantity = matchingInvoices.reduce((sum, item) => sum + (Number(item.threeWayMatch?.invoiceQuantity) || 0), 0);
       const advanceCommitted = matchingAdvances.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
       const approvedStatuses = new Set(['approved', 'paid', 'adjusted']);
+      const paidAdvanceAmount = matchingAdvances
+        .filter((item) => String(item.status).toLowerCase() === 'paid')
+        .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+      const inApprovalAdvanceAmount = matchingAdvances
+        .filter((item) => ['pending', 'approved'].includes(String(item.status).toLowerCase()))
+        .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
       const approvedInvoiceAmount = matchingInvoices
         .filter((item) => approvedStatuses.has(String(item.status).toLowerCase()))
         .reduce((sum, item) => sum + (Number(item.grossAmount) || 0), 0);
@@ -924,6 +939,9 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
         approvedAdvanceAmount,
         approvedInvoiceAmount,
         approvedTotal,
+        paidAdvanceAmount,
+        inApprovalAdvanceAmount,
+        advancePaid: paidAdvanceAmount,
         status: shouldClose ? 'closed' : po.status,
         remainingAdvanceAmount: Math.max(0, Number(po.totalAmount) - advanceCommitted),
         totalQuantity,
@@ -1314,15 +1332,54 @@ const getAdvancesHandler = async (req, res) => {
     // 11. RESPONSE
     // ==================================================
 
+    const advanceIds = advances.map(a => a.advanceId || a.id).filter(Boolean);
+    const approvals = await Approval.find({ $or: [{ referenceId: { $in: advanceIds } }, { id: { $in: advanceIds } }] })
+      .select('id referenceId currentStep assignedApproverRole assignedApproverName status workflowSteps')
+      .lean()
+      .catch(() => []);
+    const approvalMap = new Map();
+    approvals.forEach(app => {
+      if (app.referenceId) approvalMap.set(app.referenceId, app);
+      if (app.id) approvalMap.set(app.id, app);
+    });
+
     const userNameById = new Map(users.map((user) => [String(user.id), user.name]));
-    const enrichedAdvances = advances.map((advance) => ({
-      ...advance,
-      requestedByName:
-        userNameById.get(String(advance.requestedById || advance.userId || advance.createdBy)) ||
-        advance.requestedBy ||
-        advance.createdBy ||
-        'Finance Team'
-    }));
+    const enrichedAdvances = advances.map((advance) => {
+      const app = approvalMap.get(advance.advanceId) || approvalMap.get(advance.id);
+      const step = app?.currentStep || advance.currentStep || 1;
+      let derivedRole = app?.assignedApproverRole || advance.assignedApproverRole;
+      if (!derivedRole || derivedRole === '—') {
+        if (app?.workflowSteps) {
+          try {
+            const steps = typeof app.workflowSteps === 'string' ? JSON.parse(app.workflowSteps) : app.workflowSteps;
+            const active = steps.find(s => Number(s.step || s.stepNumber) === Number(step));
+            if (active) derivedRole = active.roleKey || active.assignedApproverRole || active.roleName || active.title;
+          } catch (_) {}
+        }
+      }
+
+      let derivedStatus = advance.status;
+      if (app?.status === 'Approved & Dispatched' && derivedStatus !== 'paid') {
+        derivedStatus = 'approved';
+      } else if (app?.status === 'Rejected') {
+        derivedStatus = 'rejected';
+      } else if (app?.status === 'Returned for changes') {
+        derivedStatus = 'returned';
+      }
+
+      return {
+        ...advance,
+        status: derivedStatus,
+        assignedApproverRole: derivedRole,
+        assignedApproverName: app?.assignedApproverName || advance.assignedApproverName,
+        currentStep: step,
+        requestedByName:
+          userNameById.get(String(advance.requestedById || advance.userId || advance.createdBy)) ||
+          advance.requestedBy ||
+          advance.createdBy ||
+          'Finance Team'
+      };
+    });
 
     return res.json({
       success: true,
@@ -1366,6 +1423,16 @@ const getAdvancesHandler = async (req, res) => {
 };
 router.get('/advances', authenticateToken, getAdvancesHandler);
 router.get('/advance-payments', authenticateToken, getAdvancesHandler);
+
+router.get('/admin/repair-records', authenticateToken, async (req, res) => {
+  try {
+    const { repairAllOldPaymentRecords } = await import('../../services/approvalRouting.service.js');
+    await repairAllOldPaymentRecords();
+    return res.json({ success: true, message: 'All old payment records across MongoDB have been successfully repaired and synchronized.' });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HIERARCHICAL REPORT GRID ENDPOINT
@@ -1731,7 +1798,8 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
 
     const processUpcomingItem = (payment, type, idKey, amtKey, vendorKey, poKey) => {
       const status = String(payment.status || '').toLowerCase();
-      if (['rejected', 'paid', 'adjusted'].includes(status)) return;
+      // Exclude drafts, rejected, paid, and adjusted items from upcoming finance queue
+      if (['draft', 'rejected', 'paid', 'adjusted'].includes(status)) return;
 
       const created = payment.createdAt ? new Date(payment.createdAt) : now;
       const dueDate = payment.dueDate
@@ -1748,13 +1816,28 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
       const currency = payment.currency || 'INR';
       const amountINR = currency === 'INR' ? amount : (payment.amountINR || (amount * fxRate));
 
-      let urgency = '4-7 Days';
-      if (daysRemaining < 0) urgency = 'Overdue';
-      else if (daysRemaining === 0) urgency = 'Due Today';
-      else if (daysRemaining <= 3) urgency = '1-3 Days';
+      let urgency = 'upcoming';
+      if (daysRemaining < 0) urgency = 'overdue';
+      else if (daysRemaining === 0) urgency = 'today';
+      else if (daysRemaining <= 3) urgency = 'urgent';
+
+      let assignedRole = payment.assignedApproverRole;
+      if (!assignedRole) {
+        if (status.includes('manager')) assignedRole = 'Purchase Manager';
+        else if (status.includes('head') || status.includes('hod')) assignedRole = 'Purchase Head';
+        else if (status.includes('cfo')) assignedRole = 'CFO';
+        else if (status.includes('md') || status.includes('director')) assignedRole = 'Managing Director';
+        else assignedRole = 'Finance Lead';
+      }
+
+      const itemId = payment[idKey] || payment.invoicePaymentId || payment.advanceId || payment.logisticsPaymentId || payment.dutyId || payment.id || payment.invoiceNumber || payment._id;
 
       upcomingFinancePayments.push({
-        id: payment[idKey] || payment.id || payment._id,
+        id: itemId,
+        referenceId: itemId,
+        invoicePaymentId: payment.invoicePaymentId || itemId,
+        invoiceNumber: payment.invoiceNumber || '',
+        advanceId: payment.advanceId || '',
         type,
         vendorName: payment[vendorKey] || payment.vendorName || payment.customAgentName || 'Vendor',
         poNumber: payment[poKey] || payment.sapPoNumber || payment.poId || '—',
@@ -1762,7 +1845,7 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
         amountINR,
         currency,
         status: payment.status || 'Pending Finance Approval',
-        assignedApproverRole: payment.assignedApproverRole || 'Finance Lead',
+        assignedApproverRole: assignedRole,
         requestedBy: payment.requestedByName || payment.requestedBy || payment.createdBy || 'Finance Team',
         department: payment.department || 'Procurement',
         createdAt: payment.createdAt,
@@ -1777,47 +1860,26 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
     logisticsPayments.forEach(log => processUpcomingItem(log, 'Logistics Payment', 'logisticsPaymentId', 'totalAmount', 'vendorName', 'sapPoNumber'));
     customDuties.forEach(duty => processUpcomingItem(duty, 'Custom Duty', 'dutyId', 'dutyAmount', 'customAgentName', 'sapPoNumber'));
 
+    const reportRefIds = upcomingFinancePayments.map(item => item.id).filter(Boolean);
+    if (reportRefIds.length > 0) {
+      const reportApprovals = await Approval.find({ $or: [{ referenceId: { $in: reportRefIds } }, { id: { $in: reportRefIds } }] })
+        .select('id referenceId assignedApproverRole')
+        .lean()
+        .catch(() => []);
+      const reportAppMap = new Map();
+      reportApprovals.forEach(app => {
+        if (app.referenceId) reportAppMap.set(app.referenceId, app);
+        if (app.id) reportAppMap.set(app.id, app);
+      });
+      upcomingFinancePayments.forEach(item => {
+        const app = reportAppMap.get(item.id);
+        if (app?.assignedApproverRole) {
+          item.assignedApproverRole = app.assignedApproverRole;
+        }
+      });
+    }
+
     upcomingFinancePayments.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-
-    // ── Build Past 7-Day Payments List (Last 7 Days Approved/Paid/Processed) ──
-    const last7dFinancePayments = [];
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-    const processPastItem = (payment, type, idKey, amtKey, vendorKey, poKey) => {
-      const status = String(payment.status || '').toLowerCase();
-      // Include approved, paid, or processed payments
-      if (!['approved', 'paid', 'adjusted', 'approved & dispatched'].some((s) => status.includes(s))) return;
-
-      const actionDate = payment.updatedAt || payment.paidAt || payment.approvedAt || payment.createdAt;
-      const dateObj = actionDate ? new Date(actionDate) : now;
-      if (dateObj >= sevenDaysAgo) {
-        const amount = Number(payment[amtKey] ?? payment.amount ?? payment.totalAmount) || 0;
-        const fxRate = Number(payment.fxRate) || 83.5;
-        const currency = payment.currency || 'INR';
-        const amountINR = currency === 'INR' ? amount : (payment.amountINR || (amount * fxRate));
-
-        last7dFinancePayments.push({
-          id: payment[idKey] || payment.id || payment._id,
-          type,
-          vendorName: payment[vendorKey] || payment.vendorName || payment.customAgentName || 'Vendor',
-          poNumber: payment[poKey] || payment.sapPoNumber || payment.poId || '—',
-          amount,
-          amountINR,
-          currency,
-          status: payment.status || 'Approved',
-          actionDate: dateObj.toISOString(),
-          requestedBy: payment.requestedByName || payment.requestedBy || payment.createdBy || 'Finance Team',
-          department: payment.department || 'Procurement'
-        });
-      }
-    };
-
-    advances.forEach(adv => processPastItem(adv, 'Advance Payment', 'advanceId', 'amount', 'vendorName', 'sapPoNumber'));
-    invoices.forEach(inv => processPastItem(inv, 'Invoice Payment', 'invoicePaymentId', 'netPayable', 'vendorName', 'sapPoNumber'));
-    logisticsPayments.forEach(log => processPastItem(log, 'Logistics Payment', 'logisticsPaymentId', 'totalAmount', 'vendorName', 'sapPoNumber'));
-    customDuties.forEach(duty => processPastItem(duty, 'Custom Duty', 'dutyId', 'dutyAmount', 'customAgentName', 'sapPoNumber'));
-
-    last7dFinancePayments.sort((a, b) => new Date(b.actionDate) - new Date(a.actionDate));
 
     // Build Hierarchy Tree
     const rowMap = new Map(rows.map((r) => [r.userId, { ...r, reports: [] }]));
@@ -2270,14 +2332,18 @@ async function recalculatePoMetrics(poRef) {
 
 router.post('/advances/:id/payout', authenticateToken, authorizePermission('advance-payments', 'mark-paid'), async (req, res) => {
   try {
-    const utrNumber = String(req.body.utrNumber || '').trim();
-    if (!utrNumber) return res.status(400).json({ success: false, error: 'UTR number is required.' });
+    const { utrNumber, paymentMode, remarks, paymentRemarks, disbursementDate } = req.body;
+    const cleanUtr = String(utrNumber || '').trim();
+    if (!cleanUtr) return res.status(400).json({ success: false, error: 'UTR number is required.' });
+
     const advance = await AdvancePayment.findOne(buildAdvanceFilter(req.params.id));
     if (!advance) return res.status(404).json({ success: false, error: 'Advance payment not found.' });
 
     advance.status = 'paid';
-    advance.utrNumber = utrNumber;
-    advance.paidAt = new Date();
+    advance.utrNumber = cleanUtr;
+    advance.paidAt = disbursementDate ? new Date(disbursementDate) : new Date();
+    if (paymentMode) advance.paymentMode = paymentMode;
+    if (remarks || paymentRemarks) advance.remarks = remarks || paymentRemarks;
     await advance.save();
 
     const approval = await Approval.findOne({
@@ -2290,8 +2356,129 @@ router.post('/advances/:id/payout', authenticateToken, authorizePermission('adva
 
     await recalculatePoMetrics(advance.sapPoNumber || advance.poNumber || advance.poId);
 
+    await PaymentLedger.create({
+      ledgerId: 'LEDGER-' + Date.now().toString().slice(-6),
+      moduleType: 'AdvancePayment',
+      referenceId: advance.advanceId,
+      poReference: advance.sapPoNumber || advance.poId,
+      vendorName: advance.vendorName,
+      amount: advance.amount || 0,
+      currency: advance.currency || 'INR',
+      paymentMode: paymentMode || advance.paymentMode || 'NEFT',
+      utrNumber: cleanUtr,
+      remarks: remarks || paymentRemarks || '',
+      status: 'completed',
+      processedAt: advance.paidAt
+    }).catch(e => console.error('[Ledger error]', e.message));
+
     return res.json({ success: true, message: 'Advance payment marked as paid.', data: advance });
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.get('/settlement-ledger', authenticateToken, async (req, res) => {
+  try {
+    const dedicatedLedger = await PaymentLedger.find({}).sort({ createdAt: -1 }).lean().catch(() => []);
+
+    const [paidInvoices, paidAdvances, paidDuties, paidLogistics] = await Promise.all([
+      InvoicePayment.find({ status: 'paid' }).sort({ paidAt: -1, updatedAt: -1 }).lean().catch(() => []),
+      AdvancePayment.find({ status: 'paid' }).sort({ paidAt: -1, updatedAt: -1 }).lean().catch(() => []),
+      CustomDutyPayment.find({ status: 'paid' }).sort({ paidAt: -1, updatedAt: -1 }).lean().catch(() => []),
+      LogisticsPayment.find({ status: 'paid' }).sort({ paidAt: -1, updatedAt: -1 }).lean().catch(() => [])
+    ]);
+
+    const mappedInvoices = paidInvoices.map((inv) => ({
+      paymentId: inv.invoicePaymentId || inv._id.toString(),
+      payableType: 'InvoicePayment',
+      payableId: inv._id.toString(),
+      referenceNumber: inv.invoiceNumber || inv.sapPoNumber || inv.poId || 'N/A',
+      vendorId: inv.vendorId || inv.supplierId || '100001',
+      vendorName: inv.vendorName || 'Vendor',
+      grossAmount: Number(inv.grossAmount) || Number(inv.netPayable) || 0,
+      tdsAmount: Number(inv.tdsAmount) || 0,
+      netAmount: Number(inv.netPayable) || Number(inv.grossAmount) || 0,
+      paymentMode: inv.paymentMode || 'NEFT',
+      bankName: inv.bankName || 'HDFC Bank - Main Corporate',
+      bankAccountNumber: inv.bankAccountNumber || '50200049281745',
+      utrNumber: inv.utrNumber || 'N/A',
+      status: 'processed',
+      disbursedAt: inv.paidAt || inv.updatedAt || inv.createdAt,
+      paidAt: inv.paidAt || inv.updatedAt || inv.createdAt,
+      remarks: inv.paymentRemarks || inv.remarks || ''
+    }));
+
+    const mappedAdvances = paidAdvances.map((adv) => ({
+      paymentId: adv.advanceId || adv._id.toString(),
+      payableType: 'AdvancePayment',
+      payableId: adv._id.toString(),
+      referenceNumber: adv.sapPoNumber || adv.poId || 'N/A',
+      vendorId: adv.vendorId || adv.supplierId || '100001',
+      vendorName: adv.vendorName || 'Vendor',
+      grossAmount: Number(adv.amount) || 0,
+      tdsAmount: 0,
+      netAmount: Number(adv.amount) || 0,
+      paymentMode: adv.paymentMode || 'NEFT',
+      bankName: adv.bankName || 'HDFC Bank - Main Corporate',
+      bankAccountNumber: adv.bankAccountNumber || '50200049281745',
+      utrNumber: adv.utrNumber || 'N/A',
+      status: 'processed',
+      disbursedAt: adv.paidAt || adv.updatedAt || adv.createdAt,
+      paidAt: adv.paidAt || adv.updatedAt || adv.createdAt,
+      remarks: adv.paymentRemarks || adv.remarks || ''
+    }));
+
+    const mappedDuties = paidDuties.map((duty) => ({
+      paymentId: duty.dutyId || duty._id.toString(),
+      payableType: 'CustomDutyPayment',
+      payableId: duty._id.toString(),
+      referenceNumber: duty.blNumber || duty.boeNumber || 'N/A',
+      vendorId: duty.customsAgentId || 'CUSTOMS',
+      vendorName: duty.customsAgentName || 'ICEGATE Customs',
+      grossAmount: Number(duty.dutyAmount) || 0,
+      tdsAmount: 0,
+      netAmount: Number(duty.dutyAmount) || 0,
+      paymentMode: 'ICEGATE',
+      bankName: 'SBI - ICEGATE E-Payment',
+      bankAccountNumber: duty.challanNumber || 'N/A',
+      utrNumber: duty.icegateRef || duty.utrNumber || 'N/A',
+      status: 'processed',
+      disbursedAt: duty.paidAt || duty.updatedAt || duty.createdAt,
+      paidAt: duty.paidAt || duty.updatedAt || duty.createdAt,
+      remarks: duty.remarks || ''
+    }));
+
+    const mappedLogistics = paidLogistics.map((log) => ({
+      paymentId: log.logisticsPaymentId || log._id.toString(),
+      payableType: 'LogisticsPayment',
+      payableId: log._id.toString(),
+      referenceNumber: log.invoiceNumber || log.blNumber || 'N/A',
+      vendorId: log.logisticsProviderId || 'LOGISTICS',
+      vendorName: log.logisticsProviderName || 'Logistics Provider',
+      grossAmount: Number(log.totalAmount || log.amount) || 0,
+      tdsAmount: 0,
+      netAmount: Number(log.totalAmount || log.amount) || 0,
+      paymentMode: log.paymentMode || 'NEFT',
+      bankName: 'HDFC Bank - Main Corporate',
+      bankAccountNumber: '50200049281745',
+      utrNumber: log.utrNumber || 'N/A',
+      status: 'processed',
+      disbursedAt: log.paidAt || log.updatedAt || log.createdAt,
+      paidAt: log.paidAt || log.updatedAt || log.createdAt,
+      remarks: log.remarks || ''
+    }));
+
+    const existingIds = new Set(dedicatedLedger.map(item => item.paymentId || item.payableId));
+    const combined = [
+      ...dedicatedLedger,
+      ...mappedInvoices.filter(i => !existingIds.has(i.paymentId)),
+      ...mappedAdvances.filter(a => !existingIds.has(a.paymentId)),
+      ...mappedDuties.filter(d => !existingIds.has(d.paymentId)),
+      ...mappedLogistics.filter(l => !existingIds.has(l.paymentId))
+    ].sort((a, b) => new Date(b.disbursedAt || b.paidAt || b.createdAt) - new Date(a.disbursedAt || a.paidAt || a.createdAt));
+
+    return res.json({ success: true, data: combined, count: combined.length });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 async function getPaymentOwnerFilter(req, visibility) {
   if (visibility.seesAll) {
@@ -2387,8 +2574,6 @@ router.get('/invoices', authenticateToken, async (req, res) => {
     ).trim();
 
     const visibility = await getPaymentVisibility(req);
-
-    console.log('PAYMENT VISIBILITY:', visibility);
 
     if (!visibility) {
       return res.status(403).json({
@@ -2510,11 +2695,38 @@ router.get('/invoices', authenticateToken, async (req, res) => {
       if (v.supplierId) vendorMap.set(v.supplierId, name);
     });
 
+    const invIds = invoices.map(i => i.invoicePaymentId || i.id).filter(Boolean);
+    const approvals = await Approval.find({ $or: [{ referenceId: { $in: invIds } }, { id: { $in: invIds } }] })
+      .select('id referenceId currentStep assignedApproverRole assignedApproverName status')
+      .lean()
+      .catch(() => []);
+    const approvalMap = new Map();
+    approvals.forEach(app => {
+      if (app.referenceId) approvalMap.set(app.referenceId, app);
+      if (app.id) approvalMap.set(app.id, app);
+    });
+
     const enrichedInvoices = invoices.map(inv => {
       const pKey = inv.poId || inv.sapPoNumber || inv.poNumber;
       const vKey = inv.vendorId || inv.sapVendorCode || inv.supplierId;
       const connectionName = inv.purchaseConnectionName || poMap.get(pKey) || vendorMap.get(vKey) || inv.requestedBy || inv.createdBy || 'Procurement Team';
-      return { ...inv, purchaseConnectionName: connectionName };
+
+      const app = approvalMap.get(inv.invoicePaymentId) || approvalMap.get(inv.id);
+      const step = app?.currentStep || inv.currentStep || 1;
+      let derivedRole = app?.assignedApproverRole || inv.assignedApproverRole;
+      if (!derivedRole || derivedRole === '—') {
+        if (step === 2) derivedRole = 'md';
+        else if (step >= 3) derivedRole = 'finance';
+        else derivedRole = 'procurement_head';
+      }
+
+      return {
+        ...inv,
+        assignedApproverRole: derivedRole,
+        assignedApproverName: app?.assignedApproverName || inv.assignedApproverName,
+        currentStep: step,
+        purchaseConnectionName: connectionName
+      };
     });
 
     return res.json({
@@ -3077,20 +3289,22 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
 
   router.post('/invoices/:id/payout', authenticateToken, authorizePermission('invoice-payments', 'mark-paid'), async (req, res) => {
     try {
-      const { utrNumber, paymentMode } = req.body;
+      const { utrNumber, paymentMode, remarks, paymentRemarks, disbursementDate } = req.body;
       if (!utrNumber?.trim()) {
         return res.status(400).json({ success: false, error: 'UTR number is required.' });
       }
 
       const invoice = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
       if (!invoice) return res.status(404).json({ success: false, error: 'Invoice payment not found' });
-      if (!['draft', 'returned'].includes(invoice.status)) return res.status(409).json({ success: false, error: 'Only a draft or returned invoice can be edited.' });
-      if (!(await canMutateOwnPayment(req, invoice))) return res.status(403).json({ success: false, error: 'Only the requester can edit this invoice.' });
-      if (invoice.status !== 'approved') return res.status(409).json({ success: false, error: 'Only an approved invoice can be marked paid.' });
+      if (String(invoice.status || '').toLowerCase() !== 'approved') {
+        return res.status(409).json({ success: false, error: `Only an approved invoice can be marked paid (current status: ${invoice.status}).` });
+      }
 
       invoice.utrNumber = utrNumber.trim();
       invoice.status = 'paid';
-      invoice.paidAt = new Date();
+      invoice.paidAt = disbursementDate ? new Date(disbursementDate) : new Date();
+      if (paymentMode) invoice.paymentMode = paymentMode;
+      if (remarks || paymentRemarks) invoice.remarks = remarks || paymentRemarks;
       await invoice.save();
 
       const approval = await Approval.findOne({
@@ -3107,15 +3321,16 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         referenceId: invoice.invoicePaymentId,
         poReference: invoice.sapPoNumber || invoice.poId,
         vendorName: invoice.vendorName,
-        amount: invoice.netPayable,
-        currency: 'INR',
-        paymentMode: paymentMode || 'NEFT',
+        amount: invoice.netPayable || invoice.totalAmount || 0,
+        currency: invoice.currency || 'INR',
+        paymentMode: paymentMode || invoice.paymentMode || 'NEFT',
         utrNumber: utrNumber.trim(),
+        remarks: remarks || paymentRemarks || '',
         status: 'completed',
-        processedAt: new Date()
+        processedAt: invoice.paidAt
       }).catch(e => console.error('[Ledger error]', e.message));
 
-      return res.json({ success: true, message: 'Payout recorded successfully', data: invoice });
+      return res.json({ success: true, message: 'Invoice payment marked as paid.', data: invoice });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -5805,13 +6020,14 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         (doc.actionHistory || []).map((act, idx) => ({
           _id: `act-${doc.id}-${idx}`,
           eventId: `act-${doc.id}-${idx}`,
-          eventType: (act.action || 'APPROVAL_STEP').toUpperCase(),
+          eventType: `APPROVAL_${String(act.action || 'STEP').toUpperCase()}`,
           action: act.action || 'Approval Action',
-          actorName: act.performedBy || act.actorName || 'Approver',
+          step: Number(act.step || idx + 1),
+          actorName: act.actionedBy || act.performedBy || act.actorName || 'Approver',
           actorRole: act.role || act.actorRole || 'Approver',
           remarks: act.remarks || act.reason || `Action "${act.action}" taken on step ${act.step || idx + 1}`,
-          createdAt: act.timestamp || act.occurredAt || doc.updatedAt || Date.now(),
-          occurredAt: act.timestamp || act.occurredAt || doc.updatedAt || Date.now()
+          createdAt: act.actionedAt || act.timestamp || act.occurredAt || doc.updatedAt || Date.now(),
+          occurredAt: act.actionedAt || act.timestamp || act.occurredAt || doc.updatedAt || Date.now()
         }))
       );
 
@@ -5852,17 +6068,44 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         });
       }
 
-      const seen = new Set();
+      // Smart Deduplication for Audit Logs
+      const combinedRaw = [...rawAudits, ...approvalActionLogs, ...fallbackEvents];
+      
+      // Sort chronologically descending first
+      combinedRaw.sort((a, b) => new Date(b.createdAt || b.occurredAt || b.timestamp || 0).getTime() - new Date(a.createdAt || a.occurredAt || a.timestamp || 0).getTime());
+
       const combined = [];
-      for (const log of [...rawAudits, ...approvalActionLogs, ...fallbackEvents]) {
-        const key = `${log.action || log.eventType}-${log.createdAt || log.occurredAt}-${log.actorName}`;
-        if (!seen.has(key)) {
-          seen.add(key);
+      for (const log of combinedRaw) {
+        const logAction = String(log.action || log.eventType || '').toLowerCase().replace(/^(approval_|invoice_|advance_|rfq_)/, '').trim();
+        const logTime = new Date(log.createdAt || log.occurredAt || log.timestamp || 0).getTime();
+        const logActor = String(log.actorName || log.performedBy || log.actionedBy || log.actorId || '').trim();
+        const logRemarks = String(log.remarks || log.reason || '').trim();
+
+        // Check if we already have a log with the same action within a 10-second window
+        const existingIdx = combined.findIndex((item) => {
+          const itemAction = String(item.action || item.eventType || '').toLowerCase().replace(/^(approval_|invoice_|advance_|rfq_)/, '').trim();
+          const itemTime = new Date(item.createdAt || item.occurredAt || item.timestamp || 0).getTime();
+          const sameAction = (logAction === itemAction || (logAction.includes('approve') && itemAction.includes('approve')) || (logAction.includes('submit') && itemAction.includes('submit')) || (logAction.includes('create') && itemAction.includes('create')));
+          const timeDiff = Math.abs(logTime - itemTime);
+          return sameAction && timeDiff < 10000;
+        });
+
+        if (existingIdx === -1) {
           combined.push(log);
+        } else {
+          // Compare and keep the one with better actorName or remarks
+          const existing = combined[existingIdx];
+          const existingActor = String(existing.actorName || existing.performedBy || existing.actionedBy || existing.actorId || '').trim();
+          const existingRemarks = String(existing.remarks || existing.reason || '').trim();
+
+          const logScore = (logActor && !logActor.includes('@') && !logActor.toLowerCase().includes('system admin') ? 2 : 1) + (logRemarks.length > 5 ? 1 : 0);
+          const existingScore = (existingActor && !existingActor.includes('@') && !existingActor.toLowerCase().includes('system admin') ? 2 : 1) + (existingRemarks.length > 5 ? 1 : 0);
+
+          if (logScore > existingScore) {
+            combined[existingIdx] = log;
+          }
         }
       }
-
-      combined.sort((a, b) => new Date(b.createdAt || b.occurredAt || 0).getTime() - new Date(a.createdAt || a.occurredAt || 0).getTime());
 
       return res.json({
         success: true,

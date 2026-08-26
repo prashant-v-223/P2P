@@ -13,7 +13,9 @@ import {
   Loader2,
   FileText,
   Plus,
-  Download
+  Download,
+  CheckCircle2,
+  Clock
 } from 'lucide-react';
 
 const getInitials = (name) => {
@@ -82,8 +84,8 @@ export default function PurchaseOrdersView() {
               : '—',
             type: (item.poNumber || '').startsWith('PO-43') || (item.poNumber || '').startsWith('60') ? 'Import' : 'Domestic',
             poValue: item.totalAmount || 0,
-            currency: item.currency || 'INR',
-            advancePaid: item.advancePaid || null,
+            paidAmount: Number(item.paidAdvanceAmount) || 0,
+            inApprovalAmount: Number(item.inApprovalAdvanceAmount || item.advanceCommitted || item.approvedAdvanceAmount) || 0,
             status: item.status === 'open' ? 'Open' : item.status || 'Open'
           }));
           setPos(mapped);
@@ -284,13 +286,19 @@ export default function PurchaseOrdersView() {
                         {formatCurrency(po.poValue, po.currency)}
                       </td>
 
-                      <td className="py-3.5 px-4 text-center font-mono text-slate-500">
-                        {po.advancePaid ? (
-                          <span className="text-emerald-700 font-bold whitespace-nowrap">
-                            {formatCurrency(po.advancePaid, po.currency)}
+                      <td className="py-3.5 px-4 text-center font-mono">
+                        {po.paidAmount > 0 ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200 whitespace-nowrap shadow-2xs">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                            {formatCurrency(po.paidAmount, po.currency)} (Paid)
+                          </span>
+                        ) : po.inApprovalAmount > 0 ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap shadow-2xs">
+                            <Clock className="w-3 h-3 text-amber-600 shrink-0" />
+                            {formatCurrency(po.inApprovalAmount, po.currency)} (In Approval)
                           </span>
                         ) : (
-                          <span className="text-slate-300">—</span>
+                          <span className="text-slate-300 font-mono">—</span>
                         )}
                       </td>
 

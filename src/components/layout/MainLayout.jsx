@@ -5,7 +5,7 @@ import Header from './Header';
 
 export default function MainLayout() {
   const [collapsed, setCollapsed] = useState(() => (
-    typeof window !== 'undefined' && window.innerWidth < 1600
+    typeof window !== 'undefined' && window.innerWidth < 1280
   ));
   const [mobileOpen, setMobileOpen] = useState(false);
 

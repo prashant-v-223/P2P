@@ -11,10 +11,12 @@ import {
   DollarSign,
   Loader2,
   XCircle,
-  RotateCcw
+  RotateCcw,
+  Download
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
+import { downloadDocumentFile } from '../../utils/downloadHelper';
 import DocumentUploader from '../../components/shared/DocumentUploader';
 import RecordDbInfoDrawer from '../../components/common/RecordDbInfoDrawer';
 import UniversalApprovalWorkflowCard from '../../components/common/UniversalApprovalWorkflowCard';
@@ -60,6 +62,7 @@ export default function InvoicePaymentDetailView() {
 
   const [invoice, setInvoice] = useState(null);
   const [approval, setApproval] = useState(null);
+  const [allDocs, setAllDocs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
@@ -70,9 +73,22 @@ export default function InvoicePaymentDetailView() {
       const data = await res.json();
       if (res.ok && data.data) {
         setInvoice(data.data);
+        const invId = data.data.invoicePaymentId || id;
+        
+        // Fetch attached documents
+        try {
+          const docRes = await apiFetch(`/api/documents?documentableType=InvoicePayment&documentableId=${invId}`);
+          if (docRes.ok) {
+            const docJson = await docRes.json();
+            if (docJson.success && Array.isArray(docJson.data)) {
+              setAllDocs(docJson.data);
+            }
+          }
+        } catch (_) {}
+
         // Fetch approval data if invoice is not draft
         if (data.data.status !== 'draft') {
-          fetchApprovalData(data.data.invoicePaymentId || id);
+          fetchApprovalData(invId);
         }
       } else {
         showToast({ title: 'Not Found', description: data.error || 'Invoice not found.', type: 'error' });
@@ -172,6 +188,58 @@ export default function InvoicePaymentDetailView() {
   const isApproved = invoice.status === 'approved';
   const isPaid = invoice.status === 'paid';
   const isMatched = invoice.threeWayMatch?.status === 'matched';
+  const invCurrency = invoice.currency || invoice.poCurrency || ((String(invoice.sapPoNumber || invoice.poId || '').startsWith('43') || String(invoice.sapPoNumber || invoice.poId || '').startsWith('60')) ? 'USD' : 'INR');
+
+  const bankAdviceDocs = (() => {
+    const raw = [
+      ...(invoice?.proofDocuments || []),
+      ...(invoice?.bankAdviceDocuments || []),
+      ...allDocs.filter(d => d.documentType === 'bank_advice' || d.type === 'bank_advice')
+    ];
+    const seen = new Set();
+    const result = [];
+    for (const d of raw) {
+      const k = d.documentId || d.fileUrl || d.fileName;
+      if (k && !seen.has(k)) {
+        seen.add(k);
+        result.push(d);
+      }
+    }
+    return result;
+  })();
+
+  const handleDownloadDoc = async (doc) => {
+    try {
+      if (doc.documentId) {
+        const res = await apiFetch(`/api/documents/${doc.documentId}/download`);
+        const json = await res.json();
+        if (res.ok && json.success && json.data?.downloadUrl) {
+          window.open(json.data.downloadUrl, '_blank');
+          return;
+        }
+      }
+
+      const fileTarget = doc.fileUrl || doc.url || doc.fileName || doc;
+      if (fileTarget && typeof fileTarget === 'string') {
+        if (fileTarget.startsWith('http://') || fileTarget.startsWith('https://') || fileTarget.startsWith('/uploads/')) {
+          window.open(fileTarget, '_blank');
+          return;
+        }
+
+        const res = await apiFetch(`/api/documents/resolve-url?fileUrl=${encodeURIComponent(fileTarget)}`);
+        const json = await res.json();
+        if (res.ok && json.success && json.downloadUrl) {
+          window.open(json.downloadUrl, '_blank');
+          return;
+        }
+      }
+
+      downloadDocumentFile(fileTarget, doc.fileName || doc.title || 'Document.pdf');
+    } catch (error) {
+      console.error('Download error:', error);
+      downloadDocumentFile(doc?.fileName || doc?.title || 'Document.pdf');
+    }
+  };
 
   const statusPills = {
     draft:    'bg-amber-50 text-amber-700 border-amber-200',
@@ -279,6 +347,79 @@ export default function InvoicePaymentDetailView() {
             <p className="text-sm text-rose-900 leading-relaxed">
               This invoice payment request has been rejected and cannot be processed further.
             </p>
+          </div>
+        </div>
+      )}
+
+      {String(invoice.status || '').toLowerCase() === 'paid' && (
+        <div className="p-5 rounded-2xl border-2 border-emerald-400 bg-white shadow-sm space-y-4 text-left">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
+                <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+              </div>
+              <div>
+                <p className="font-extrabold text-slate-900 text-base">Central Treasury Payout Cleared</p>
+                <p className="text-xs text-slate-500 font-medium font-mono">Bank disbursement completed and logged to Settlement Ledger</p>
+              </div>
+            </div>
+            <span className="px-3.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300">
+              PAID & DISPATCHED
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs bg-slate-50 p-4 rounded-xl border border-slate-200">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">BANK UTR / REF NUMBER</p>
+              <p className="font-mono font-black text-slate-900 text-sm mt-0.5">{invoice?.utrNumber || '—'}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">DISBURSEMENT DATE</p>
+              <p className="font-bold text-slate-800 text-xs mt-0.5">
+                {invoice?.paidAt
+                  ? new Date(invoice.paidAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                  : '—'}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">PAYMENT MODE</p>
+              <p className="font-bold text-slate-800 text-xs mt-0.5">{invoice?.paymentMode || 'NEFT'}</p>
+            </div>
+          </div>
+
+          {(invoice?.paymentRemarks || invoice?.remarks) && (
+            <div className="bg-emerald-50/70 p-3.5 rounded-xl border border-emerald-200/80">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 mb-1">TREASURY REMARKS / PAYMENT NOTE</p>
+              <p className="text-xs text-slate-800 font-semibold">{invoice?.paymentRemarks || invoice?.remarks}</p>
+            </div>
+          )}
+
+          <div className="pt-3 border-t border-slate-100 space-y-2">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">ATTACHED BANK ADVICE / PAYMENT PROOF</p>
+            {bankAdviceDocs.length > 0 ? (
+              <div className="space-y-1.5">
+                {bankAdviceDocs.map((doc, idx) => (
+                  <div key={doc.documentId || idx} className="flex items-center justify-between p-2.5 rounded-xl border border-emerald-200 bg-emerald-50/50 text-xs">
+                    <div className="flex items-center gap-2.5">
+                      <FileCheck2 className="w-4.5 h-4.5 text-[#0d7676] shrink-0" />
+                      <div>
+                        <span className="font-bold text-slate-900 block">{doc.fileName || doc.title || 'Bank_Advice_Proof.pdf'}</span>
+                        <span className="text-[10px] text-slate-500 font-medium">Bank Payment Receipt / Treasury Proof</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadDoc(doc)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#0d7676] bg-white hover:bg-[#0d7676] hover:text-white text-[#0d7676] font-bold text-xs transition-colors cursor-pointer shadow-2xs"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Download Proof
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400 italic">No bank advice attachment uploaded for this disbursement.</p>
+            )}
           </div>
         </div>
       )}
@@ -393,44 +534,44 @@ export default function InvoicePaymentDetailView() {
             <div className="divide-y divide-slate-100 text-sm font-medium text-slate-700">
               <div className="py-3 flex items-center justify-between">
                 <span className="text-slate-600">Invoice Amount</span>
-                <span className="font-mono font-bold text-slate-900 text-base">{formatCurrency(invoice.grossAmount || 0, invoice.currency)}</span>
+                <span className="font-mono font-bold text-slate-900 text-base">{formatCurrency(invoice.grossAmount || 0, invCurrency)}</span>
               </div>
 
               <div className="py-3 flex items-center justify-between">
                 <span className="text-slate-600">CGST</span>
-                <span className="font-mono text-slate-600">{formatCurrency(invoice.cgstAmount || 0, invoice.currency)}</span>
+                <span className="font-mono text-slate-600">{formatCurrency(invoice.cgstAmount || 0, invCurrency)}</span>
               </div>
 
               <div className="py-3 flex items-center justify-between">
                 <span className="text-slate-600">SGST</span>
-                <span className="font-mono text-slate-600">{formatCurrency(invoice.sgstAmount || 0, invoice.currency)}</span>
+                <span className="font-mono text-slate-600">{formatCurrency(invoice.sgstAmount || 0, invCurrency)}</span>
               </div>
 
               <div className="py-3 flex items-center justify-between">
                 <span className="text-slate-600">IGST</span>
-                <span className="font-mono text-slate-600">{formatCurrency(invoice.igstAmount || 0, invoice.currency)}</span>
+                <span className="font-mono text-slate-600">{formatCurrency(invoice.igstAmount || 0, invCurrency)}</span>
               </div>
 
               <div className="py-3 flex items-center justify-between">
                 <span className="text-slate-600">TDS ({invoice.tdsPercentage || 0.00}%)</span>
-                <span className="font-mono text-rose-600 font-semibold">- {formatCurrency(invoice.tdsAmount || 0, invoice.currency)}</span>
+                <span className="font-mono text-rose-600 font-semibold">- {formatCurrency(invoice.tdsAmount || 0, invCurrency)}</span>
               </div>
 
               <div className="py-3 flex items-center justify-between">
                 <span className="text-slate-600">Advance Adjusted</span>
-                <span className="font-mono text-amber-700 font-semibold">- {formatCurrency(invoice.advanceAdjusted || 0, invoice.currency)}</span>
+                <span className="font-mono text-amber-700 font-semibold">- {formatCurrency(invoice.advanceAdjusted || 0, invCurrency)}</span>
               </div>
 
               <div className="py-4 flex items-center justify-between bg-gradient-to-r from-teal-50 to-teal-100/50 px-4 rounded-xl mt-2 border-2 border-teal-200">
                 <div>
                   <span className="font-extrabold text-slate-900 text-base block">Net Payable</span>
-                  {invoice.currency && invoice.currency !== 'INR' && (
+                  {invCurrency !== 'INR' && (
                     <span className="text-[11px] font-semibold text-teal-700 block font-mono">
                       (INR Equiv: ₹{(invoice.amountINR || ((invoice.netPayable || 0) * (invoice.fxRate || 83.5))).toLocaleString('en-IN')})
                     </span>
                   )}
                 </div>
-                <span className="font-mono font-extrabold text-teal-800 text-xl">{formatCurrency(invoice.netPayable || 0, invoice.currency)}</span>
+                <span className="font-mono font-extrabold text-teal-800 text-xl">{formatCurrency(invoice.netPayable || 0, invCurrency)}</span>
               </div>
             </div>
           </div>
@@ -447,7 +588,6 @@ export default function InvoicePaymentDetailView() {
             <DocumentUploader
               documentableType="InvoicePayment"
               documentableId={invoice.invoicePaymentId}
-              documentType="vendor_invoice"
               existingDocuments={invoice.supportingDocuments || []}
               multiple={true}
               readOnly={true}
@@ -463,7 +603,7 @@ export default function InvoicePaymentDetailView() {
             referenceId={invoice.invoicePaymentId}
             recordType="Invoice Payment"
             vendorName={invoice.vendorName}
-            amountFormatted={formatCurrency(invoice.netPayable || 0, invoice.currency)}
+            amountFormatted={formatCurrency(invoice.netPayable || 0, invCurrency)}
             poRef={invoice.sapPoNumber || invoice.poId}
             onStatusChange={fetchInvoice}
           />
@@ -471,7 +611,7 @@ export default function InvoicePaymentDetailView() {
           {/* Card 2: Net Payable Highlight Box */}
           <div className="bg-gradient-to-br from-[#0f4c4c] to-[#0d7676] text-white p-6 rounded-2xl shadow-lg space-y-2 border border-teal-900/20">
             <span className="text-xs font-bold uppercase tracking-wider text-teal-200 block">Net Payable Amount</span>
-            <p className="font-mono text-3xl font-extrabold text-white tracking-tight">{formatCurrency(invoice.netPayable || 2467980)}</p>
+            <p className="font-mono text-3xl font-extrabold text-white tracking-tight">{formatCurrency(invoice.netPayable || 0, invCurrency)}</p>
             <div className="flex items-center gap-2 pt-1">
               <span className="px-2.5 py-1 rounded-lg bg-teal-900/30 text-xs font-bold text-teal-100 border border-teal-700/30">NEFT</span>
             </div>

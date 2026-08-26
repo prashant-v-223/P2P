@@ -10,13 +10,20 @@ import { ShieldCheck, CheckCircle2, Plus, FileCheck2, Loader2, X, Search, Trash2
 import DocumentUploader from '../../components/shared/DocumentUploader';
 import { userHasPermission } from '../../lib/permissions';
 
+import MarkAsPaidModal from '../../components/common/MarkAsPaidModal';
+
 export default function CustomDutyView() {
   const navigate = useNavigate();
+  const { user } = useSelector((s) => s.auth);
   const { showToast } = useToast();
-  const { user } = useSelector((state) => state.auth);
-
   const [duties, setDuties] = useState([]);
   const [loadingDuties, setLoadingDuties] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  const [paidModalItem, setPaidModalItem] = useState(null);
+
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
 
@@ -27,17 +34,8 @@ export default function CustomDutyView() {
   );
   const canMarkPaid = userHasPermission(user?.role, 'custom-duty.mark-paid', user?.permissions || user?.customPermissions);
 
-  const handleDutyPayout = async (item) => {
-    const utrNumber = window.prompt('Enter ICEGATE UTR / payment reference number:');
-    if (!utrNumber?.trim()) return;
-    const res = await apiFetch(`/api/p2p/custom-duties/${item.dutyId}/payout`, {
-      method: 'POST',
-      body: JSON.stringify({ utrNumber: utrNumber.trim() })
-    });
-    const data = await res.json();
-    if (!res.ok) return showToast({ title: 'Payout Failed', description: data.error || 'Unable to record payout.', type: 'error' });
-    showToast({ title: 'Payment Recorded', description: data.message, type: 'success' });
-    fetchDuties();
+  const handleDutyPayout = (item) => {
+    setPaidModalItem(item);
   };
 
   const fetchDuties = async () => {
@@ -63,8 +61,6 @@ export default function CustomDutyView() {
   const [portCode, setPortCode] = useState('INNHAV (Nhava Sheva)');
   const [customAgentName, setCustomAgentName] = useState('');
 
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
   const [selectedDutyId, setSelectedDutyId] = useState('');
 
   useEffect(() => {
@@ -149,29 +145,51 @@ export default function CustomDutyView() {
   const totalPages = Math.ceil(filteredDuties.length / pageSize) || 1;
   const paginatedDuties = filteredDuties.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
-  return (
-    <div className="w-full space-y-4 font-sans text-slate-800 text-left pb-16 antialiased">
-      {/* Clean Toolbar Header */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-teal-50 text-[#0d7676] border border-teal-100 flex items-center justify-center font-semibold">
-            <ShieldCheck className="w-5 h-5" />
-          </div>
-          <div>
-            <h2 className="text-lg font-bold text-slate-900 tracking-tight">Customs Duty & ICEGATE Settlement</h2>
-            <p className="text-xs text-slate-500">Direct ICEGATE customs duty payment execution for imported cargo BL entries</p>
-          </div>
-        </div>
+  const totalDutyAmount = duties.reduce((acc, d) => acc + (Number(d.dutyAmount) || 0), 0);
+  const paidDutyAmount = duties.filter(d => d.status === 'paid').reduce((acc, d) => acc + (Number(d.dutyAmount) || 0), 0);
+  const pendingCount = duties.filter(d => d.status !== 'paid').length;
+  const paidCount = duties.filter(d => d.status === 'paid').length;
 
+  return (
+    <div className="w-full space-y-5 font-sans text-slate-800 pb-10 text-left">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs">
+        <div>
+          <h1 className="text-xl font-black text-slate-900 tracking-tight">Customs Duty Payouts</h1>
+          <p className="text-xs text-slate-500 font-medium mt-0.5">
+            Manage Custom Broker BOE Duty Statements & ICEGATE Bank Disbursements
+          </p>
+        </div>
         {canCreate && (
           <button
-            onClick={() => navigate('/p2p/custom-duty/create')}
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
+            onClick={() => setShowCreateModal(true)}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0d7676] hover:bg-[#0f766e] text-white font-extrabold text-xs rounded-xl shadow-2xs transition-all cursor-pointer"
           >
-            <Plus className="w-4 h-4" />
-            <span>New Custom Duty Payout</span>
+            <Plus className="w-4 h-4" /> Record Customs Duty Bill
           </button>
         )}
+      </div>
+
+      {/* KPI Metrics Header */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-1">
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Total Duty Bills</span>
+          <p className="font-mono text-2xl font-black text-slate-900">{duties.length}</p>
+        </div>
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-1">
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Total Duty Payable</span>
+          <p className="font-mono text-2xl font-black text-[#0d7676]">₹{totalDutyAmount.toLocaleString('en-IN')}</p>
+        </div>
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-1">
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600">Cleared via ICEGATE</span>
+          <p className="font-mono text-2xl font-black text-emerald-700">₹{paidDutyAmount.toLocaleString('en-IN')}</p>
+          <span className="text-[10px] text-slate-400 font-medium">{paidCount} Paid Records</span>
+        </div>
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-1">
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600">Pending Clearance</span>
+          <p className="font-mono text-2xl font-black text-amber-700">{pendingCount}</p>
+          <span className="text-[10px] text-slate-400 font-medium">Awaiting Payout Execution</span>
+        </div>
       </div>
 
       {/* Filter Bar */}
@@ -226,7 +244,7 @@ export default function CustomDutyView() {
                 <th className="py-3 px-4">Port Location</th>
                 <th className="py-3 px-4 text-right">Duty Amount</th>
                 <th className="py-3 px-4 font-mono">ICEGATE Ref</th>
-                <th className="py-3 px-4 text-center">Status</th>
+                <th className="py-3 px-4 text-center">Approval Stage</th>
                 <th className="py-3 px-4 text-right">Action</th>
               </tr>
             </thead>
@@ -243,11 +261,28 @@ export default function CustomDutyView() {
                   <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-900 text-sm">₹{item.dutyAmount.toLocaleString('en-IN')}</td>
                   <td className="py-3.5 px-4 font-mono text-slate-700">{item.icegateRef}</td>
                   <td className="py-3.5 px-4 text-center">
-                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${
-                      item.status === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'
-                    }`}>
-                      {item.status}
-                    </span>
+                    {(() => {
+                      const st = String(item.status || '').toLowerCase();
+                      if (st === 'paid') {
+                        return (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-sky-50 text-sky-700 border border-sky-200">
+                            Paid & Cleared
+                          </span>
+                        );
+                      }
+                      if (st === 'approved' || st.includes('approved')) {
+                        return (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Fully Approved
+                          </span>
+                        );
+                      }
+                      return (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
+                          Pending: Customs Agent
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="py-3.5 px-4 text-right">
                     {canMarkPaid && ['approved', 'Approved & Dispatched'].includes(item.status) ? (
@@ -374,6 +409,15 @@ export default function CustomDutyView() {
           </div>
         </div>
       )}
+
+      {/* Mark As Paid Modal */}
+      <MarkAsPaidModal
+        open={Boolean(paidModalItem)}
+        onClose={() => setPaidModalItem(null)}
+        item={paidModalItem}
+        type="CustomDuty"
+        onSuccess={fetchDuties}
+      />
     </div>
   );
 }

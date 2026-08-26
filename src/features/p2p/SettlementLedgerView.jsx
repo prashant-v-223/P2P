@@ -1,11 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../../services/api';
+import { exportCsv } from '../../utils/exportCsv';
 import { ServerPagination } from '../../components/ui/server-pagination';
 import { 
   CreditCard, 
   Search, 
   Download
 } from 'lucide-react';
+
+const formatCurrency = (val, currency = 'INR') => {
+  const num = Number(val) || 0;
+  const curr = String(currency || 'INR').toUpperCase();
+  if (curr === 'USD') return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (curr === 'EUR') return `€${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
 
 export default function SettlementLedgerView() {
   const [ledger, setLedger] = useState([]);
@@ -44,6 +53,21 @@ export default function SettlementLedgerView() {
   const totalPages = Math.ceil(filtered.length / pageSize) || 1;
   const paginatedLedger = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
+  const handleExportCsv = () => {
+    const formattedData = filtered.map(item => ({
+      'Payment Reference ID': item.paymentId || 'N/A',
+      'Entity Type': item.entityType || 'Payment',
+      'Beneficiary Vendor': item.vendorName || 'N/A',
+      'Disbursement Date': item.disbursedAt ? new Date(item.disbursedAt).toLocaleDateString('en-GB') : 'N/A',
+      'Payment Mode': item.paymentMode || 'NEFT',
+      'Bank UTR Number': `="${item.utrNumber || ''}"`,
+      'Gross Amount': item.grossAmount || item.netAmount || 0,
+      'Net Amount Disbursed': item.netAmount || 0,
+      'Treasury Remarks': item.paymentRemarks || item.remarks || ''
+    }));
+    exportCsv('settlement_ledger.csv', formattedData);
+  };
+
   return (
     <div className="w-full space-y-4 font-sans text-slate-800">
       {/* Clean Toolbar Header */}
@@ -78,8 +102,8 @@ export default function SettlementLedgerView() {
             />
           </div>
           <button
-            onClick={() => alert('Exporting Settlement Ledger CSV...')}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs border border-slate-300 transition-colors"
+            onClick={handleExportCsv}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs border border-slate-300 transition-colors cursor-pointer"
           >
             <Download className="w-4 h-4" /> Export Ledger CSV
           </button>
@@ -124,13 +148,13 @@ export default function SettlementLedgerView() {
                     {item.utrNumber}
                   </td>
                   <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-900">
-                    ₹{(item.grossAmount || 0).toLocaleString('en-IN')}
+                    {formatCurrency(item.grossAmount, item.currency)}
                   </td>
                   <td className="py-3.5 px-4 text-right font-mono text-rose-600 font-bold">
-                    -₹{(item.tdsAmount || 0).toLocaleString('en-IN')}
+                    -{formatCurrency(item.tdsAmount, item.currency)}
                   </td>
                   <td className="py-3.5 px-4 text-right font-mono font-extrabold text-emerald-700 text-sm">
-                    ₹{(item.netAmount || 0).toLocaleString('en-IN')}
+                    {formatCurrency(item.netAmount, item.currency)}
                   </td>
                 </tr>
               ))}

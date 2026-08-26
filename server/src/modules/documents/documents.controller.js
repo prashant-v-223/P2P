@@ -25,7 +25,7 @@ export const uploadDocument = async (req, res) => {
     }
 
     // Validate documentType
-    const validTypes = ['vendor_invoice', 'advance_request', 'custom_duty_receipt', 'bill_of_lading', 'po_copy', 'rfq_document', 'other'];
+    const validTypes = ['vendor_invoice', 'advance_request', 'custom_duty', 'custom_duty_receipt', 'bill_of_lading', 'po_copy', 'rfq_document', 'bank_advice', 'receipt', 'payment_proof', 'logistics_bill', 'other'];
     if (!validTypes.includes(documentType)) {
       return res.status(400).json({
         success: false,
@@ -34,7 +34,7 @@ export const uploadDocument = async (req, res) => {
     }
 
     // Validate documentableType
-    const validEntities = ['AdvancePayment', 'InvoicePayment', 'CustomDutyPayment', 'LogisticsPayment', 'RfqHeader', 'PurchaseOrder'];
+    const validEntities = ['AdvancePayment', 'InvoicePayment', 'CustomDuty', 'CustomDutyPayment', 'LogisticsPayment', 'RfqHeader', 'PurchaseOrder'];
     if (!validEntities.includes(documentableType)) {
       return res.status(400).json({
         success: false,

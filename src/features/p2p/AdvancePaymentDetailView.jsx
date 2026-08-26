@@ -2,12 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
+import { downloadDocumentFile } from '../../utils/downloadHelper';
 import DocumentUploader from '../../components/shared/DocumentUploader';
 import RecordDbInfoDrawer from '../../components/common/RecordDbInfoDrawer';
 import UniversalApprovalWorkflowCard from '../../components/common/UniversalApprovalWorkflowCard';
 import {
   ChevronLeft, Trash2, Edit3, Send, CheckCircle2, XCircle,
-  Clock, Plus, Loader2, AlertTriangle, RotateCcw, Lock
+  Clock, Plus, Loader2, AlertTriangle, RotateCcw, Lock, Download
 } from 'lucide-react';
 
 // ── Derive steps dynamically from the Approval document (DB-stored workflow) ─
@@ -77,6 +78,7 @@ export default function AdvancePaymentDetailView() {
   const [approval, setApproval]       = useState(null);
   const [steps, setSteps]             = useState([]);
   const [docs, setDocs]               = useState([]);
+  const [allDocs, setAllDocs]         = useState([]);
   const [remarksText, setRemarksText] = useState(''); // Added for approval actions
 
   useEffect(() => { fetchData(); }, [id]);
@@ -94,6 +96,18 @@ export default function AdvancePaymentDetailView() {
           setApproval(approvalDoc);
           setSteps(deriveSteps(approvalDoc));
           if (Array.isArray(d.documents)) setDocs(d.documents);
+
+          // Fetch attached documents
+          try {
+            const docRes = await apiFetch(`/api/documents?documentableType=AdvancePayment&documentableId=${d.advanceId || id}`);
+            if (docRes.ok) {
+              const docJson = await docRes.json();
+              if (docJson.success && Array.isArray(docJson.data)) {
+                setAllDocs(docJson.data);
+              }
+            }
+          } catch (_) {}
+
           return;
         }
       }
@@ -230,9 +244,59 @@ export default function AdvancePaymentDetailView() {
   const isRejected = status === 'rejected';
   const isReturned = status === 'returned';
   const isPaid     = status === 'paid';
+  const isLocked   = !isDraft;
 
   // Once submitted (pending/approved/rejected/paid), lock Edit & Delete
-  const isLocked = !isDraft && !isReturned;
+  const bankAdviceDocs = (() => {
+    const raw = [
+      ...(advance?.proofDocuments || []),
+      ...(advance?.bankAdviceDocuments || []),
+      ...allDocs.filter(d => d.documentType === 'bank_advice' || d.type === 'bank_advice')
+    ];
+    const seen = new Set();
+    const result = [];
+    for (const d of raw) {
+      const k = d.documentId || d.fileUrl || d.fileName;
+      if (k && !seen.has(k)) {
+        seen.add(k);
+        result.push(d);
+      }
+    }
+    return result;
+  })();
+
+  const handleDownloadDoc = async (doc) => {
+    try {
+      if (doc.documentId) {
+        const res = await apiFetch(`/api/documents/${doc.documentId}/download`);
+        const json = await res.json();
+        if (res.ok && json.success && json.data?.downloadUrl) {
+          window.open(json.data.downloadUrl, '_blank');
+          return;
+        }
+      }
+
+      const fileTarget = doc.fileUrl || doc.url || doc.fileName || doc;
+      if (fileTarget && typeof fileTarget === 'string') {
+        if (fileTarget.startsWith('http://') || fileTarget.startsWith('https://') || fileTarget.startsWith('/uploads/')) {
+          window.open(fileTarget, '_blank');
+          return;
+        }
+
+        const res = await apiFetch(`/api/documents/resolve-url?fileUrl=${encodeURIComponent(fileTarget)}`);
+        const json = await res.json();
+        if (res.ok && json.success && json.downloadUrl) {
+          window.open(json.downloadUrl, '_blank');
+          return;
+        }
+      }
+
+      downloadDocumentFile(fileTarget, doc.fileName || doc.title || 'Document.pdf');
+    } catch (error) {
+      console.error('Download error:', error);
+      downloadDocumentFile(doc?.fileName || doc?.title || 'Document.pdf');
+    }
+  };
 
   const sc = STATUS_CONFIG[status] || STATUS_CONFIG.draft;
 
@@ -342,12 +406,85 @@ export default function AdvancePaymentDetailView() {
         </div>
       )}
 
-      {isApproved && (
+      {isApproved && !isPaid && (
         <div className="p-4 rounded-2xl border-2 border-emerald-300 bg-emerald-50 flex items-center gap-3">
           <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
           <div>
             <p className="font-extrabold text-emerald-800 text-sm">Fully Approved</p>
             <p className="text-xs text-emerald-700 mt-0.5">This advance payment has been approved and is ready for disbursement.</p>
+          </div>
+        </div>
+      )}
+
+      {isPaid && (
+        <div className="p-5 rounded-2xl border-2 border-emerald-400 bg-white shadow-sm space-y-4 text-left">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
+                <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+              </div>
+              <div>
+                <p className="font-extrabold text-slate-900 text-base">Central Treasury Payout Cleared</p>
+                <p className="text-xs text-slate-500 font-medium">Bank disbursement completed and logged to Settlement Ledger</p>
+              </div>
+            </div>
+            <span className="px-3.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300">
+              PAID & DISPATCHED
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs bg-slate-50 p-4 rounded-xl border border-slate-200">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">BANK UTR / REF NUMBER</p>
+              <p className="font-mono font-black text-slate-900 text-sm mt-0.5">{advance?.utrNumber || approval?.utrNumber || '—'}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">DISBURSEMENT DATE</p>
+              <p className="font-bold text-slate-800 text-xs mt-0.5">
+                {advance?.paidAt || approval?.paidAt
+                  ? new Date(advance?.paidAt || approval?.paidAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                  : '—'}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">PAYMENT MODE</p>
+              <p className="font-bold text-slate-800 text-xs mt-0.5">{advance?.paymentMode || 'NEFT'}</p>
+            </div>
+          </div>
+
+          {(advance?.paymentRemarks || advance?.remarks || approval?.remarks) && (
+            <div className="bg-emerald-50/70 p-3.5 rounded-xl border border-emerald-200/80">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 mb-1">TREASURY REMARKS / PAYMENT NOTE</p>
+              <p className="text-xs text-slate-800 font-semibold">{advance?.paymentRemarks || advance?.remarks || approval?.remarks}</p>
+            </div>
+          )}
+
+          <div className="pt-3 border-t border-slate-100 space-y-2">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">ATTACHED BANK ADVICE / PAYMENT PROOF</p>
+            {bankAdviceDocs.length > 0 ? (
+              <div className="space-y-1.5">
+                {bankAdviceDocs.map((doc, idx) => (
+                  <div key={doc.documentId || idx} className="flex items-center justify-between p-2.5 rounded-xl border border-emerald-200 bg-emerald-50/50 text-xs">
+                    <div className="flex items-center gap-2.5">
+                      <CheckCircle2 className="w-4.5 h-4.5 text-emerald-600 shrink-0" />
+                      <div>
+                        <span className="font-bold text-slate-900 block">{doc.fileName || doc.title || 'Bank_Advice_Proof.pdf'}</span>
+                        <span className="text-[10px] text-slate-500 font-medium">Bank Payment Receipt / Treasury Proof</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadDoc(doc)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-300 bg-white hover:bg-emerald-50 text-emerald-700 font-bold text-xs transition-colors cursor-pointer shadow-2xs"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Download Proof
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400 italic">No bank advice attachment uploaded for this disbursement.</p>
+            )}
           </div>
         </div>
       )}
@@ -401,14 +538,13 @@ export default function AdvancePaymentDetailView() {
           {/* Documents Card */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-3">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-bold text-slate-900 text-sm">Documents</h3>
+              <h3 className="font-bold text-slate-900 text-sm">Supporting Documents & Bank Advice</h3>
             </div>
             
             <DocumentUploader
               documentableType="AdvancePayment"
               documentableId={id}
-              documentType="advance_request"
-              existingDocuments={advance.supportingDocuments || advance.documents || []}
+              existingDocuments={advance?.supportingDocuments || advance?.documents || []}
               multiple={true}
               readOnly={true}
             />
