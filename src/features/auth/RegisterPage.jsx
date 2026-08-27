@@ -16,7 +16,24 @@ export default function RegisterPage() {
   const { loading, error } = useSelector((state) => state.auth);
   const { showToast } = useToast();
   const [form, setForm] = useState({ name: '', email: '', password: '', department: 'Procurement' });
+  const [departments, setDepartments] = useState(['Procurement', 'Finance & Accounts', 'EXIM & Logistics', 'Supply Chain', 'IT Operations', 'Executive Management']);
   const [errors, setErrors] = useState({});
+
+  React.useEffect(() => {
+    fetch('/api/departments')
+      .then((res) => res.json())
+      .then((data) => {
+        const depts = data.departmentNames || (data.departments || []).map((d) => d.name);
+        if (depts && depts.length > 0) {
+          setDepartments(depts);
+          if (!form.department || !depts.includes(form.department)) {
+            setForm((prev) => ({ ...prev, department: depts[0] }));
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const set = (key) => (event) => setForm({ ...form, [key]: event.target.value });
   const submit = (event) => {
     event.preventDefault();
@@ -50,7 +67,7 @@ export default function RegisterPage() {
           </label>
         ))}
         <label className="block text-sm font-semibold text-slate-700">Department <span className="text-rose-500" aria-hidden="true">*</span>
-          <div className="relative mt-2"><Building2 className="pointer-events-none absolute left-3.5 top-3.5 z-10 h-4 w-4 text-slate-400" /><div className="[&_button:first-child]:pl-10"><SearchableSelect value={form.department} onChange={(value) => { setForm({ ...form, department: value }); setErrors({ ...errors, department: '' }); }} error={errors.department} options={['Procurement', 'Finance & Accounts', 'Supply Chain & Logistics', 'IT Operations', 'Executive Management']} searchPlaceholder="Search departments..." /></div></div>
+          <div className="relative mt-2"><Building2 className="pointer-events-none absolute left-3.5 top-3.5 z-10 h-4 w-4 text-slate-400" /><div className="[&_button:first-child]:pl-10"><SearchableSelect value={form.department} onChange={(value) => { setForm({ ...form, department: value }); setErrors({ ...errors, department: '' }); }} error={errors.department} options={departments} searchPlaceholder="Search departments..." /></div></div>
         </label>
         <Button size="lg" className="mt-2 w-full" loading={loading}>Create account</Button>
       </form>

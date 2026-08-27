@@ -111,13 +111,13 @@ const NavItem = React.memo(({ item, collapsed, onNavigate, badgeValue }) => {
     >
       {({ isActive }) => (
         <>
-          <div className={cn("flex items-center min-w-0", collapsed ? "justify-center" : "gap-3 flex-1 mr-2")}>
+          <div className={cn("flex items-center min-w-0", collapsed ? "justify-center" : "gap-2.5 flex-1")}>
             <Icon className={cn(
               "flex-shrink-0 transition-colors",
               collapsed ? "w-5 h-5" : "w-[18px] h-[18px]",
               isActive ? "text-white" : "text-slate-400 group-hover:text-slate-600"
             )} />
-            {!collapsed && <span className="truncate text-[13.5px] leading-tight">{item.label}</span>}
+            {!collapsed && <span className="text-[13px] font-semibold whitespace-nowrap">{item.label}</span>}
           </div>
 
           {displayBadge !== null && !collapsed && (

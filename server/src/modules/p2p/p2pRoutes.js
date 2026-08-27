@@ -392,10 +392,8 @@ async function resolveWorkflowFromDB(moduleType, amount, facts = {}) {
       return name.includes(mod) || cat.includes(mod);
     });
 
-    // Seed RFQ workflows if missing
-    if (!categoryWfs.length && String(moduleType).toLowerCase().includes('rfq')) {
-      await ensureRfqAwardWorkflows();
-      categoryWfs = await Workflow.find({ category: 'RFQ Vendor Award', status: { $in: ['active', 'Active'] } }).lean();
+    if (!categoryWfs.length) {
+      throw new Error(`No active workflow is configured for "${moduleType}".`);
     }
 
     // Find matching workflow by amount and conditions
@@ -413,71 +411,17 @@ async function resolveWorkflowFromDB(moduleType, amount, facts = {}) {
       return numAmount >= min && numAmount <= max && conditionsMatch;
     });
 
-    if (matchedWf && Array.isArray(matchedWf.steps) && matchedWf.steps.length > 0) {
-      return buildWorkflowResult(matchedWf, matchedWf.steps);
+    if (!matchedWf) {
+      throw new Error(`No active "${moduleType}" workflow matches amount ${numAmount} and the supplied conditions.`);
     }
-
-    return getDefaultWorkflow(moduleType, numAmount);
+    if (!Array.isArray(matchedWf.steps) || matchedWf.steps.length === 0) {
+      throw new Error(`Workflow "${matchedWf.name}" has no approval steps.`);
+    }
+    return buildWorkflowResult(matchedWf, matchedWf.steps);
   } catch (err) {
     console.error('[Workflow Resolution Error]', err.message);
-    return getDefaultWorkflow(moduleType, amount);
+    throw err;
   }
-}
-
-
-function getDefaultWorkflow(moduleType, amount) {
-  const numAmount = Number(amount) || 0;
-  const moduleName = String(moduleType || 'Payment');
-  const isRfq = moduleName.toLowerCase().includes('rfq');
-  const isBl = moduleName.toLowerCase().includes('bl');
-  const isInvoice = moduleName.toLowerCase().includes('invoice');
-  const isLogistics = moduleName.toLowerCase().includes('logistics');
-
-  if (isLogistics) {
-    return buildWorkflowResult({ id: 'WF-BOOTSTRAP-LOGISTICS', name: 'Logistics Payment Approval', version: 1 }, [
-      { step: 1, title: 'Logistics Manager Approval', roleName: 'Logistics Manager', roleKey: 'logistics-manager' },
-      { step: 2, title: 'Finance Approval', roleName: 'Finance Lead', roleKey: 'finance' }
-    ]);
-  }
-
-  if (isRfq) {
-    return buildWorkflowResult({ id: 'WF-BOOTSTRAP-RFQ', name: 'RFQ Award Standard Approval', version: 1 }, [
-      { step: 1, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance_lead' }
-    ]);
-  }
-
-  if (isBl) {
-    return buildWorkflowResult({ id: 'WF-BOOTSTRAP-BL', name: 'BL Freight Invoice Standard Approval', version: 1 }, [
-      { step: 1, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance' }
-    ]);
-  }
-
-  // Invoice Payment → direct to Purchase Manager (no Procurement Head gate)
-  if (isInvoice) {
-    return buildWorkflowResult({ id: 'WF-BOOTSTRAP-INVOICE', name: 'Invoice Payment Standard Approval', version: 1 }, [
-      { step: 1, title: 'Purchase Manager Approval', roleName: 'Purchase Manager', roleKey: 'purchase_manager' }
-    ]);
-  }
-
-  if (moduleName.toLowerCase().includes('custom')) {
-    return buildWorkflowResult({ id: 'WF-BOOTSTRAP-CUSTOM', name: 'Custom Duty Standard Approval', version: 1 }, [
-      { step: 1, title: 'Finance Lead Approval', roleName: 'Finance Lead', roleKey: 'finance' }
-    ]);
-  }
-
-  // Advance Payment above ₹1 Cr → purchase_manager → MD → Finance
-  if (numAmount >= 10000000) {
-    return buildWorkflowResult({ id: 'WF-DEFAULT-HIGH', name: 'Advance Payment (Above ₹1 Cr)' }, [
-      { step: 1, title: 'Purchase Manager Approval', roleName: 'Purchase Manager', roleKey: 'purchase_manager' },
-      { step: 2, title: 'MD Approval', roleName: 'MD Approval', roleKey: 'md' },
-      { step: 3, title: 'Finance Approval', roleName: 'Finance Approval', roleKey: 'finance_lead' }
-    ]);
-  }
-
-  // Standard Advance Payment → direct to Purchase Manager (streamlined, no first approval)
-  return buildWorkflowResult({ id: 'WF-DEFAULT-STD', name: 'Advance Payment (Standard)' }, [
-    { step: 1, title: 'Purchase Manager Approval', roleName: 'Purchase Manager', roleKey: 'purchase_manager' }
-  ]);
 }
 
 
@@ -534,23 +478,22 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
   const numAmount = Number(transactionSnapshot?.amount || 0) || Number(String(amountFormatted).replace(/[^0-9.-]+/g, '')) || 0;
 
   // ── Vendor-specific manager routing ──────────────────────────────────────────
-  // If the request comes from a vendor, find their linked purchase manager
-  const isVendorRequest = transactionSnapshot?.createdByType === 'vendor' ||
-    String(requester?.role || '').toLowerCase().includes('vendor');
+  // The vendor directory link is authoritative for the first purchase-team
+  // approval, regardless of whether Finance, Procurement, or the vendor
+  // submitted the request.
   let vendorLinkedManager = null;
-  if (isVendorRequest) {
-    const vendorId = transactionSnapshot?.vendorId || transactionSnapshot?.createdByVendorId;
+  const vendorId = transactionSnapshot?.vendorId || transactionSnapshot?.createdByVendorId;
+  if (vendorId) {
     vendorLinkedManager = await resolveVendorPurchaseManager(vendorId, poRef, transactionSnapshot);
     if (vendorLinkedManager) {
-      console.log(`[Approval Routing] Vendor request linked to senior/manager: ${vendorLinkedManager.name} (${vendorLinkedManager.role})`);
+      console.log(`[Approval Routing] Vendor-linked purchase manager: ${vendorLinkedManager.name} (${vendorLinkedManager.role})`);
     }
   }
 
   // Get workflow steps
-  let rawSteps = (wf && Array.isArray(wf.steps) && wf.steps.length > 0) ? wf.steps : null;
-  if (!rawSteps || rawSteps.length === 0) {
-    const fallbackWf = getDefaultWorkflow(type, numAmount);
-    rawSteps = fallbackWf.steps || [];
+  const rawSteps = (wf && Array.isArray(wf.steps) && wf.steps.length > 0) ? wf.steps : null;
+  if (!rawSteps) {
+    throw new Error(`Cannot create ${type} approval without a resolved database workflow.`);
   }
 
   // Hydrate steps with approvers - pass vendor context to attachApprovers
@@ -2373,13 +2316,12 @@ router.post('/advances/:id/payout', authenticateToken, authorizePermission('adva
   try {
     const { utrNumber, paymentMode, remarks, paymentRemarks, disbursementDate } = req.body;
     const cleanUtr = String(utrNumber || '').trim();
-    if (!cleanUtr) return res.status(400).json({ success: false, error: 'UTR number is required.' });
 
     const advance = await AdvancePayment.findOne(buildAdvanceFilter(req.params.id));
     if (!advance) return res.status(404).json({ success: false, error: 'Advance payment not found.' });
 
     advance.status = 'paid';
-    advance.utrNumber = cleanUtr;
+    if (cleanUtr) advance.utrNumber = cleanUtr;
     advance.paidAt = disbursementDate ? new Date(disbursementDate) : new Date();
     if (paymentMode) advance.paymentMode = paymentMode;
     if (remarks || paymentRemarks) advance.remarks = remarks || paymentRemarks;
@@ -2404,7 +2346,7 @@ router.post('/advances/:id/payout', authenticateToken, authorizePermission('adva
       amount: advance.amount || 0,
       currency: advance.currency || 'INR',
       paymentMode: paymentMode || advance.paymentMode || 'NEFT',
-      utrNumber: cleanUtr,
+      utrNumber: cleanUtr || null,
       remarks: remarks || paymentRemarks || '',
       status: 'completed',
       processedAt: advance.paidAt
@@ -3357,9 +3299,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
   router.post('/invoices/:id/payout', authenticateToken, authorizePermission('invoice-payments', 'mark-paid'), async (req, res) => {
     try {
       const { utrNumber, paymentMode, remarks, paymentRemarks, disbursementDate } = req.body;
-      if (!utrNumber?.trim()) {
-        return res.status(400).json({ success: false, error: 'UTR number is required.' });
-      }
+      const cleanUtr = String(utrNumber || '').trim();
 
       const invoice = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
       if (!invoice) return res.status(404).json({ success: false, error: 'Invoice payment not found' });
@@ -3367,7 +3307,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         return res.status(409).json({ success: false, error: `Only an approved invoice can be marked paid (current status: ${invoice.status}).` });
       }
 
-      invoice.utrNumber = utrNumber.trim();
+      if (cleanUtr) invoice.utrNumber = cleanUtr;
       invoice.status = 'paid';
       invoice.paidAt = disbursementDate ? new Date(disbursementDate) : new Date();
       if (paymentMode) invoice.paymentMode = paymentMode;
@@ -3391,7 +3331,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         amount: invoice.netPayable || invoice.totalAmount || 0,
         currency: invoice.currency || 'INR',
         paymentMode: paymentMode || invoice.paymentMode || 'NEFT',
-        utrNumber: utrNumber.trim(),
+        utrNumber: cleanUtr || null,
         remarks: remarks || paymentRemarks || '',
         status: 'completed',
         processedAt: invoice.paidAt
@@ -5821,14 +5761,13 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
   router.post('/logistics-payments/:id/payout', authenticateToken, authorizePermission('logistics-payments', 'mark-paid'), async (req, res) => {
     try {
       const utrNumber = String(req.body.utrNumber || '').trim();
-      if (!utrNumber) return res.status(400).json({ success: false, error: 'UTR number is required.' });
       const payment = await LogisticsPayment.findOne({
         $or: [{ logisticsPaymentId: req.params.id }, { referenceNumber: req.params.id }, ...(mongoose.Types.ObjectId.isValid(req.params.id) ? [{ _id: req.params.id }] : [])]
       });
       if (!payment) return res.status(404).json({ success: false, error: 'Logistics payment not found.' });
 
       payment.status = 'paid';
-      payment.utrNumber = utrNumber;
+      if (utrNumber) payment.utrNumber = utrNumber;
       payment.paidAt = new Date();
       await payment.save();
 
@@ -5849,12 +5788,11 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
   router.post('/custom-duties/:id/payout', authenticateToken, authorizePermission('custom-duty', 'mark-paid'), async (req, res) => {
     try {
       const utrNumber = String(req.body.utrNumber || '').trim();
-      if (!utrNumber) return res.status(400).json({ success: false, error: 'ICEGATE UTR/reference number is required.' });
       const duty = await CustomDutyPayment.findOne({ $or: [{ dutyId: req.params.id }, ...(mongoose.Types.ObjectId.isValid(req.params.id) ? [{ _id: req.params.id }] : [])] });
       if (!duty) return res.status(404).json({ success: false, error: 'Custom Duty record not found.' });
 
       duty.status = 'paid';
-      duty.utrNumber = utrNumber;
+      if (utrNumber) duty.utrNumber = utrNumber;
       duty.paidAt = new Date();
       await duty.save();
 

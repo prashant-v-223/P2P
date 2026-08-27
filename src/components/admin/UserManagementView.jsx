@@ -9,6 +9,7 @@ import { FieldError } from '../ui/field-error';
 import { useToast } from '../ui/toast';
 import { ServerPagination } from '../ui/server-pagination';
 import { userHasPermission } from '../../lib/permissions';
+import { TableActionButton } from '../ui/table-action-button';
 
 // ── Hierarchy Node Component ──────────────────────────────────────────────────
 function HierarchyNode({ user, canEditUser, onEdit, level = 0 }) {
@@ -98,7 +99,7 @@ function HierarchyNode({ user, canEditUser, onEdit, level = 0 }) {
 }
 
 // ── Edit User Modal ──────────────────────────────────────────────────────────
-function EditUserModal({ user, roleOptions, allUsers, onClose, onSaved }) {
+function EditUserModal({ user, roleOptions, departmentOptions = [], allUsers, onClose, onSaved }) {
   const [name, setName] = useState(user.name || '');
   const [email, setEmail] = useState(user.email || '');
   const [role, setRole] = useState(user.role || 'procurement');
@@ -210,7 +211,7 @@ function EditUserModal({ user, roleOptions, allUsers, onClose, onSaved }) {
                 value={department}
                 onChange={(value) => { setDepartment(value); setErrors({ ...errors, department: '' }); }}
                 error={errors.department}
-                options={['Procurement', 'Finance & Accounts', 'EXIM & Logistics', 'Supply Chain', 'IT Operations', 'Executive Management', 'Accounts & Finance']}
+                options={departmentOptions.length > 0 ? departmentOptions : ['Procurement', 'Finance & Accounts', 'EXIM & Logistics', 'Supply Chain', 'IT Operations', 'Executive Management']}
                 searchPlaceholder="Search departments..."
               />
             </div>
@@ -345,6 +346,7 @@ export default function UserManagementView() {
   const [hierarchyTree, setHierarchyTree] = useState([]);
   const [viewMode, setViewMode] = useState('table');
   const [roleOptions, setRoleOptions] = useState([]);
+  const [departmentOptions, setDepartmentOptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -408,10 +410,11 @@ export default function UserManagementView() {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const [usersRes, rolesRes, hierarchyRes] = await Promise.all([
+      const [usersRes, rolesRes, hierarchyRes, deptsRes] = await Promise.all([
         apiFetch(`/api/users?${searchParams.toString()}`),
         apiFetch('/api/roles?size=100'),
-        apiFetch('/api/users/hierarchy')
+        apiFetch('/api/users/hierarchy'),
+        apiFetch('/api/departments')
       ]);
       if (!usersRes.ok) throw new Error('Unable to load users.');
       const usersData = await usersRes.json();
@@ -433,6 +436,14 @@ export default function UserManagementView() {
         const activeRoles = (rolesData.roles || []).filter((item) => item.status !== 'Inactive').map((item) => item.roleName);
         setRoleOptions(activeRoles);
         if (activeRoles.length && !activeRoles.includes(role)) setRole(activeRoles[0]);
+      }
+      if (deptsRes.ok) {
+        const deptsData = await deptsRes.json();
+        const depts = deptsData.departmentNames || (deptsData.departments || []).map(d => d.name);
+        if (depts && depts.length > 0) {
+          setDepartmentOptions(depts);
+          if (!department || !depts.includes(department)) setDepartment(depts[0]);
+        }
       }
     } catch (err) {
       console.error('Error fetching users:', err);
@@ -818,27 +829,23 @@ export default function UserManagementView() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
+                      <div className="flex items-center justify-end gap-1">
                         {canEditUser && (
-                          <button
+                          <TableActionButton
                             onClick={() => setEditUserModal(usr)}
                             title="Edit user details"
-                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:text-teal-700 hover:bg-teal-50 rounded-lg border border-slate-200 transition"
-                          >
-                            <Pencil className="w-3 h-3 text-teal-600" />
-                            Edit
-                          </button>
+                            icon={Pencil}
+                            variant="edit"
+                          />
                         )}
 
                         {canDeleteUser && (
-                          <button
+                          <TableActionButton
                             onClick={() => setDeleteUserModal(usr)}
                             title="Delete user account"
-                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-lg border border-slate-200 transition"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                            Delete
-                          </button>
+                            icon={Trash2}
+                            variant="delete"
+                          />
                         )}
 
                         {!canEditUser && !canDeleteUser && (
@@ -871,6 +878,7 @@ export default function UserManagementView() {
         <EditUserModal
           user={editUserModal}
           roleOptions={roleOptions}
+          departmentOptions={departmentOptions}
           allUsers={hierarchyUsers}
           onClose={() => setEditUserModal(null)}
           onSaved={() => { setEditUserModal(null); fetchUsers(); }}
@@ -978,7 +986,7 @@ export default function UserManagementView() {
                   value={department}
                   onChange={(value) => { setDepartment(value); setErrors({ ...errors, department: '' }); }}
                   error={errors.department}
-                  options={['Procurement', 'Finance & Accounts', 'EXIM & Logistics', 'Supply Chain', 'IT Operations', 'Executive Management', 'Accounts & Finance']}
+                  options={departmentOptions.length > 0 ? departmentOptions : ['Procurement', 'Finance & Accounts', 'EXIM & Logistics', 'Supply Chain', 'IT Operations', 'Executive Management']}
                   searchPlaceholder="Search departments..."
                 />
               </div>

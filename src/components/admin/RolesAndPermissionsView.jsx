@@ -229,7 +229,7 @@ export default function RolesAndPermissionsView() {
   const selectedRole = roles.find((role) => role.id === selectedRoleId) || roles[0];
   
   const effectivePermissions = useMemo(() => {
-    return (permissions && permissions.length > 0) ? permissions : FALLBACK_PERMISSIONS;
+    return permissions || [];
   }, [permissions]);
 
   const modules = useMemo(() => {
@@ -253,7 +253,7 @@ export default function RolesAndPermissionsView() {
 
   const filteredPermissions = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return (permissions.length > 0 ? permissions : FALLBACK_PERMISSIONS).filter((permission) => 
+    return (permissions || []).filter((permission) => 
       !query || [permission.key, permission.name, permission.module].some((value) => value?.toLowerCase().includes(query))
     );
   }, [permissions, search]);

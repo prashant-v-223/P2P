@@ -22,7 +22,7 @@ const paymentLedgerSchema = new mongoose.Schema({
   },
   bankName: { type: String, default: 'HDFC Bank - Main Corporate' },
   bankAccountNumber: { type: String, default: '50200049281745' },
-  utrNumber: { type: String, required: true },
+  utrNumber: { type: String, default: null },
   status: { 
     type: String, 
     enum: ['draft', 'processed', 'failed'], 

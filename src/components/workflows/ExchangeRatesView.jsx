@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
+import { useSelector } from 'react-redux';
 import { useConfirm } from '../ui/confirm-dialog';
 import { ArrowLeft, DollarSign, Plus, Trash2, Save, Info, CheckCircle2, Search } from 'lucide-react';
 import { ServerPagination } from '../ui/server-pagination';
 import { CustomInput } from '../ui/custom-input';
 
 export default function ExchangeRatesView({ onBackToWorkflows }) {
+  const { user } = useSelector((state) => state.auth || {});
+  const activeUserName = user?.name || user?.email || 'System Admin';
   const confirm = useConfirm();
   const [rates, setRates] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -55,7 +58,7 @@ export default function ExchangeRatesView({ onBackToWorkflows }) {
       const res = await fetch('/api/exchange-rates', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rates, updatedBy: 'Nikunj Bhagat' })
+        body: JSON.stringify({ rates, updatedBy: activeUserName })
       });
       if (res.ok) {
         setToastMessage('Exchange rates updated successfully!');
@@ -91,7 +94,7 @@ export default function ExchangeRatesView({ onBackToWorkflows }) {
           currency: newCurrency,
           name: newName,
           rate: newRate,
-          lastUpdatedBy: 'Nikunj Bhagat'
+          lastUpdatedBy: activeUserName
         })
       });
       if (res.ok) {

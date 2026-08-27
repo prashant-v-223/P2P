@@ -127,7 +127,7 @@ export default function OverviewDashboard() {
   const recentActivity = data?.recentActivity || [];
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-800 font-sans space-y-6">
+    <div className="dashboard-page min-h-full bg-[#f8fafc] text-slate-800 font-sans space-y-4 xl:space-y-6">
       
       {/* ── HEADER ROW (ALIGNED) ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200/60 pb-4">

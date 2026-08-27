@@ -38,8 +38,8 @@ export default function MainLayout() {
         />
 
         {/* Full-width scrollable viewport */}
-        <main className="flex-1 overflow-y-auto p-3 sm:p-4 xl:p-5 2xl:p-6 scroll-smooth">
-          <div className="w-full space-y-6">
+        <main className="app-main flex-1 overflow-x-hidden overflow-y-auto p-3 sm:p-4 xl:p-5 2xl:p-6 scroll-smooth">
+          <div className="app-content mx-auto w-full max-w-[1800px] space-y-4 xl:space-y-5 2xl:space-y-6">
             <Outlet />
           </div>
         </main>

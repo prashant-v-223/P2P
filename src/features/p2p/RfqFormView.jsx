@@ -489,7 +489,7 @@ export default function RfqFormView() {
                 required
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. DUMMY ENTRY FROM IT TEAM — FREIGHT SOURCING"
+                placeholder="e.g. Ocean Freight Sourcing — Container Logistics"
                 className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-[#0d7676] focus:bg-white outline-none transition"
               />
             </div>
@@ -567,12 +567,23 @@ export default function RfqFormView() {
               <input
                 type="text"
                 required
+                list="major-loading-ports"
                 value={portOfLoading}
                 onChange={(e) => setPortOfLoading(e.target.value)}
                 aria-invalid={portsAreSame}
-                placeholder="e.g. SHANGHAI (CHINA)"
+                placeholder="e.g. SHANGHAI (CNSHA)"
                 className={`w-full px-4 py-2.5 bg-slate-50 border rounded-xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-[#0d7676] outline-none transition ${portsAreSame ? 'border-rose-400 bg-rose-50/50' : 'border-slate-200'}`}
               />
+              <datalist id="major-loading-ports">
+                <option value="SHANGHAI (CNSHA)" />
+                <option value="NINGBO (CNNGB)" />
+                <option value="QINGDAO (CNTAO)" />
+                <option value="SHENZHEN (CNSZX)" />
+                <option value="SINGAPORE (SGSIN)" />
+                <option value="PORT KLANG (MYPKG)" />
+                <option value="BUSAN (KRPUS)" />
+                <option value="HAMBURG (DEHAM)" />
+              </datalist>
               {portsAreSame && <p className="flex items-center gap-1 text-[10px] font-semibold text-rose-600 mt-1"><AlertCircle className="h-3 w-3" />Choose a different loading port.</p>}
             </div>
 
@@ -583,12 +594,21 @@ export default function RfqFormView() {
               <input
                 type="text"
                 required
+                list="major-discharge-ports"
                 value={portOfDischarge}
                 onChange={(e) => setPortOfDischarge(e.target.value)}
                 aria-invalid={portsAreSame}
-                placeholder="e.g. NHAVA SHEVA (INDIA)"
+                placeholder="e.g. NHAVA SHEVA (INNSA)"
                 className={`w-full px-4 py-2.5 bg-slate-50 border rounded-xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-[#0d7676] outline-none transition ${portsAreSame ? 'border-rose-400 bg-rose-50/50' : 'border-slate-200'}`}
               />
+              <datalist id="major-discharge-ports">
+                <option value="NHAVA SHEVA (INNSA)" />
+                <option value="MUNDRA (INMUN)" />
+                <option value="HAZIRA (INHZA)" />
+                <option value="CHENNAI (INMAA)" />
+                <option value="KOLKATA (INKOL)" />
+                <option value="PIPAVAV (INPAV)" />
+              </datalist>
               {portsAreSame && <p className="flex items-center gap-1 text-[10px] font-semibold text-rose-600 mt-1"><AlertCircle className="h-3 w-3" />Destination must differ from loading port.</p>}
             </div>
 

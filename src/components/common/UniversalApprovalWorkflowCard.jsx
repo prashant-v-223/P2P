@@ -116,41 +116,8 @@ export default function UniversalApprovalWorkflowCard({
         }
       }
 
-      // If no approval found and explicit submission is required
-      if (requireExplicitSubmission) {
-        setApproval(null);
-        setUserPermissions({ canView: false, canAct: false, isRequester: false, isApprover: false });
-        return;
-      }
-
-      // Fallback synthesis only if explicit submission is not required
-      const defaultSteps = [
-        { step: 1, title: 'Purchase Manager Review', roleKey: 'purchase-manager', roleName: 'Purchase Manager', statusKey: 'Pending Purchase Manager Review' },
-        { step: 2, title: 'Purchase Head Approval', roleKey: 'purchase-head', roleName: 'Purchase Head', statusKey: 'Pending Purchase Head Approval' },
-        { step: 3, title: 'CFO Approval', roleKey: 'cfo', roleName: 'CFO', statusKey: 'Pending CFO Approval' }
-      ];
-
-      const fallbackApproval = {
-        id: referenceId,
-        type: recordType,
-        vendorName: vendorName || 'Vendor',
-        amountOriginal: amountFormatted || '₹0.00',
-        amountINR: amountFormatted || '₹0.00',
-        poReference: poRef,
-        currentSlab: `${recordType} Slab`,
-        currentStep: 1,
-        totalSteps: 3,
-        workflowSteps: JSON.stringify(defaultSteps),
-        status: 'Pending Purchase Manager Review',
-        submittedAt: new Date(),
-        actionHistory: [],
-        requestedById: null,
-        assignedApprover: null,
-        assignedApproverName: null
-      };
-      
-      setApproval(fallbackApproval);
-      checkUserPermissions(fallbackApproval);
+      setApproval(null);
+      setUserPermissions({ canView: false, canAct: false, isRequester: false, isApprover: false });
     } catch (e) {
       console.error('[Approval Card] Error loading approval workflow:', e);
       setApproval(null);

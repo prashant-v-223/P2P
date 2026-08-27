@@ -6,7 +6,6 @@ import DocumentUploader from '../shared/DocumentUploader';
 
 export default function MarkAsPaidModal({ open, onClose, item, type = 'AdvancePayment', onSuccess }) {
   const { showToast } = useToast();
-  const [utrNumber, setUtrNumber] = useState('');
   const [paymentMode, setPaymentMode] = useState('NEFT');
   const [disbursementDate, setDisbursementDate] = useState(new Date().toISOString().split('T')[0]);
   const [remarks, setRemarks] = useState('');
@@ -16,7 +15,6 @@ export default function MarkAsPaidModal({ open, onClose, item, type = 'AdvancePa
 
   useEffect(() => {
     if (open) {
-      setUtrNumber('');
       setPaymentMode(item?.mode || item?.paymentMode || 'NEFT');
       setDisbursementDate(new Date().toISOString().split('T')[0]);
       setRemarks('');
@@ -55,10 +53,6 @@ export default function MarkAsPaidModal({ open, onClose, item, type = 'AdvancePa
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!utrNumber.trim()) {
-      setErrorMsg('Bank UTR / Payment Reference Number is required.');
-      return;
-    }
     if (!remarks.trim()) {
       setErrorMsg('Payment remarks / treasury notes are required.');
       return;
@@ -69,7 +63,6 @@ export default function MarkAsPaidModal({ open, onClose, item, type = 'AdvancePa
       setErrorMsg('');
 
       const body = {
-        utrNumber: utrNumber.trim(),
         paymentMode,
         disbursementDate,
         remarks: remarks.trim(),
@@ -153,21 +146,6 @@ export default function MarkAsPaidModal({ open, onClose, item, type = 'AdvancePa
 
           {/* Form Fields */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* Bank UTR */}
-            <div className="space-y-1 sm:col-span-2">
-              <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
-                Bank UTR / Transaction Ref No. <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={utrNumber}
-                onChange={(e) => setUtrNumber(e.target.value)}
-                placeholder="e.g. UTR992810482910"
-                required
-                className="w-full px-3 py-2 text-xs font-mono font-bold border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 outline-none text-slate-900"
-              />
-            </div>
-
             {/* Payment Mode */}
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-700">

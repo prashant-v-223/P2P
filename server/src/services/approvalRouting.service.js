@@ -29,7 +29,7 @@ export function isRoleMatchingStep(userRole = '', targetStepRole = '', allowAdmi
       (u.includes('procurement_head') || u.includes('procurement_lead') || u.includes('purchase_head') || u.includes('purchase_hod') || u.includes('procurement_hod'))) return true;
 
   if ((t.includes('procurement_manager') || t.includes('purchase_manager') || t === 'manager' || t.includes('team_manager')) &&
-      (u.includes('procurement_manager') || u.includes('purchase_manager') || u.includes('manager') || u.includes('team_manager') || u.includes('procurement_head'))) return true;
+      (u.includes('procurement_manager') || u.includes('purchase_manager') || u === 'manager' || u.includes('team_manager') || u.includes('procurement_head'))) return true;
 
   if ((t.includes('procurement') || t.includes('purchase')) &&
       (u.includes('procurement') || u.includes('purchase'))) return true;
@@ -424,8 +424,8 @@ export async function resolveApprovalChain(moduleType, amount, requester) {
   }
 
   // Determine if financial review is needed
-  const needsFinancialReview = amount >= FINANCIAL_REVIEW_THRESHOLD;
-  const needsStrategicReview = amount >= STRATEGIC_REVIEW_THRESHOLD;
+  const needsCfoReview = amount > 1000000;
+  const needsMdReview = amount > FINANCIAL_REVIEW_THRESHOLD;
 
   // Build the approval chain — starts directly with Purchase Manager (no Procurement Head)
   let chain = [];
@@ -439,24 +439,30 @@ export async function resolveApprovalChain(moduleType, amount, requester) {
     required: true
   });
 
-  // Step 2: Financial review for large amounts
-  if (needsFinancialReview) {
+  chain.push({
+    step: 2,
+    title: 'Purchase Head Approval',
+    roleKey: 'procurement_head',
+    statusKey: 'Pending Purchase Head Approval',
+    required: true
+  });
+
+  if (needsCfoReview) {
     chain.push({
-      step: 2,
-      title: 'Finance Lead Approval',
-      roleKey: 'finance_lead',
-      statusKey: 'Pending Finance Lead Approval',
+      step: 3,
+      title: 'CFO Approval',
+      roleKey: 'cfo',
+      statusKey: 'Pending CFO Approval',
       required: true
     });
   }
 
-  // Step 3: Strategic review for very large amounts
-  if (needsStrategicReview) {
+  if (needsMdReview) {
     chain.push({
-      step: needsFinancialReview ? 3 : 2,
-      title: 'MD/Director Approval',
+      step: needsCfoReview ? 4 : 3,
+      title: 'Managing Director Approval',
       roleKey: 'md',
-      statusKey: 'Pending MD Approval',
+      statusKey: 'Pending Managing Director Approval',
       required: true
     });
   }

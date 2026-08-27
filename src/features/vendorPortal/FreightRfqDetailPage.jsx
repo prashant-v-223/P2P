@@ -397,6 +397,7 @@ export default function FreightRfqDetailPage() {
                 <CustomDatePicker
                   label="Vessel ETA (Estimated Arrival)"
                   value={form.vesselEta}
+                  min={form.vesselEtd}
                   onChange={(val) => setForm((c) => ({ ...c, vesselEta: val }))}
                 />
                 {renderInputField({ label: 'Transit Time (Port to Port in Days)', name: 'transitDays', type: 'number', min: '1', required: true, placeholder: 'e.g. 18' })}

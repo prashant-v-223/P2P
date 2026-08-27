@@ -41,8 +41,8 @@ export default function Header({ collapsed, setCollapsed, onOpenMobile }) {
   const PageIcon = meta.icon;
 
   return (
-    <header className="sticky top-0 z-20 flex min-h-[60px] items-center justify-between border-b border-slate-200 bg-white/95 px-3 backdrop-blur-xl sm:px-4 lg:px-5">
-      <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+    <header className="sticky top-0 z-20 flex min-h-[60px] items-center justify-between gap-2 border-b border-slate-200 bg-white/95 px-3 backdrop-blur-xl sm:px-4 lg:px-5">
+      <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-4">
         <button onClick={onOpenMobile} className="rounded-xl border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50 lg:hidden" aria-label="Open navigation">
           <Menu className="h-5 w-5" />
         </button>
@@ -52,16 +52,16 @@ export default function Header({ collapsed, setCollapsed, onOpenMobile }) {
             <PageIcon className="h-[18px] w-[18px]" />
           </span>
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 items-center gap-2">
               <h1 className="truncate text-base font-bold tracking-tight text-slate-950">{meta.title}</h1>
-              <span className="hidden rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 md:inline">{meta.eyebrow}</span>
+              <span className="hidden shrink-0 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 xl:inline">{meta.eyebrow}</span>
             </div>
             <p className="hidden truncate text-xs text-slate-500 xl:block">{meta.description}</p>
           </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-2 sm:gap-3">
+      <div className="flex shrink-0 items-center gap-1 sm:gap-2 lg:gap-3">
         <NotificationPanel />
 
         {/* User Profile */}
@@ -73,15 +73,15 @@ export default function Header({ collapsed, setCollapsed, onOpenMobile }) {
             <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-teal-200 bg-teal-50 text-sm font-bold text-teal-800">
               {user?.avatar || 'SA'}
             </div>
-            <div className="text-left hidden sm:block">
-              <p className="text-sm font-semibold text-slate-800 leading-tight">{user?.name || 'System Admin'}</p>
-              <p className="mt-0.5 text-xs text-slate-500">{user?.role || 'System Admin'}</p>
+            <div className="hidden max-w-40 min-w-0 text-left xl:block">
+              <p className="truncate text-sm font-semibold leading-tight text-slate-800">{user?.name || 'System Admin'}</p>
+              <p className="mt-0.5 truncate text-xs text-slate-500">{user?.role || 'System Admin'}</p>
             </div>
-            <ChevronDown className={`h-3.5 w-3.5 text-slate-400 transition ${dropdownOpen ? 'rotate-180' : ''}`} />
+            <ChevronDown className={`hidden h-3.5 w-3.5 text-slate-400 transition sm:block ${dropdownOpen ? 'rotate-180' : ''}`} />
           </button>
 
           {dropdownOpen && (
-            <div className="absolute right-0 z-50 mt-2 w-72 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 text-sm shadow-2xl shadow-slate-900/10">
+            <div className="absolute right-0 z-50 mt-2 w-[min(18rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 text-sm shadow-2xl shadow-slate-900/10">
               <div className="mb-1 rounded-xl bg-slate-50 px-3 py-3">
                 <p className="font-semibold text-slate-900">{user?.name || 'System Admin'}</p>
                 <p className="mt-0.5 truncate text-xs text-slate-500">{user?.email || 'admin@rayzon.one'}</p>

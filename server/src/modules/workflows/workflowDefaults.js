@@ -1,8 +1,8 @@
 import { Workflow } from '../../models/Workflow.js';
 
 const baseSteps = [
-  { step: 1, title: 'Purchase Manager Review', roleName: 'Purchase Manager', roleKey: 'purchase-manager', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
-  { step: 2, title: 'Purchase Head Approval', roleName: 'Purchase Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 }
+  { step: 1, title: 'Procurement Head Review', roleName: 'Procurement Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
+  { step: 2, title: 'Procurement Head Approval', roleName: 'Procurement Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 }
 ];
 
 const common = {
@@ -57,7 +57,7 @@ const advancePaymentDefaults = [
     minAmount: 0,
     maxAmount: 1000000,
     formattedRange: '₹0 - ₹10,00,000',
-    description: 'Standard advance payment approval — Purchase Manager → Purchase Head.',
+    description: 'Standard advance payment approval — Procurement Manager → Procurement Head.',
     status: 'Active',
     priority: 100,
     conditions: {},
@@ -65,8 +65,8 @@ const advancePaymentDefaults = [
     createdBy: 'system-bootstrap',
     activatedBy: 'system-bootstrap',
     steps: [
-      { step: 1, title: 'Purchase Manager Review', roleName: 'Purchase Manager', roleKey: 'purchase-manager', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
-      { step: 2, title: 'Purchase Head Approval', roleName: 'Purchase Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 }
+      { step: 1, title: 'Procurement Head Review', roleName: 'Procurement Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
+      { step: 2, title: 'Procurement Head Approval', roleName: 'Procurement Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 }
     ]
   },
   {
@@ -77,7 +77,7 @@ const advancePaymentDefaults = [
     minAmount: 1000000.01,
     maxAmount: 5000000,
     formattedRange: '₹10,00,001 - ₹50,00,000',
-    description: 'Medium-value advance payment — Purchase Manager → Purchase Head → CFO.',
+    description: 'Medium-value advance payment — Procurement Manager → Procurement Head → CFO.',
     status: 'Active',
     priority: 100,
     conditions: {},
@@ -85,8 +85,8 @@ const advancePaymentDefaults = [
     createdBy: 'system-bootstrap',
     activatedBy: 'system-bootstrap',
     steps: [
-      { step: 1, title: 'Purchase Manager Review', roleName: 'Purchase Manager', roleKey: 'purchase-manager', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
-      { step: 2, title: 'Purchase Head Approval', roleName: 'Purchase Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
+      { step: 1, title: 'Procurement Head Review', roleName: 'Procurement Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
+      { step: 2, title: 'Procurement Head Approval', roleName: 'Procurement Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
       { step: 3, title: 'CFO Approval', roleName: 'CFO', roleKey: 'cfo', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 48 }
     ]
   },
@@ -98,7 +98,7 @@ const advancePaymentDefaults = [
     minAmount: 5000000.01,
     maxAmount: null,
     formattedRange: 'Above ₹50,00,000',
-    description: 'High-value advance payment — Purchase Manager → Purchase Head → CFO → MD.',
+    description: 'High-value advance payment — Procurement Manager → Procurement Head → CFO → MD.',
     status: 'Active',
     priority: 100,
     conditions: {},
@@ -106,8 +106,8 @@ const advancePaymentDefaults = [
     createdBy: 'system-bootstrap',
     activatedBy: 'system-bootstrap',
     steps: [
-      { step: 1, title: 'Purchase Manager Review', roleName: 'Purchase Manager', roleKey: 'purchase-manager', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
-      { step: 2, title: 'Purchase Head Approval', roleName: 'Purchase Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
+      { step: 1, title: 'Procurement Head Review', roleName: 'Procurement Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
+      { step: 2, title: 'Procurement Head Approval', roleName: 'Procurement Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
       { step: 3, title: 'CFO Approval', roleName: 'CFO', roleKey: 'cfo', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 48 },
       { step: 4, title: 'Managing Director Approval', roleName: 'Managing Director', roleKey: 'md', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 48 }
     ]
@@ -124,7 +124,7 @@ const invoicePaymentDefaults = [
     minAmount: 0,
     maxAmount: 2000000,
     formattedRange: '₹0 - ₹20,00,000',
-    description: 'Standard invoice payment — Purchase Head → CFO Inner.',
+    description: 'Standard invoice payment — Procurement Head → Accounts.',
     status: 'Active',
     priority: 100,
     conditions: {},
@@ -132,8 +132,8 @@ const invoicePaymentDefaults = [
     createdBy: 'system-bootstrap',
     activatedBy: 'system-bootstrap',
     steps: [
-      { step: 1, title: 'Purchase Head Review', roleName: 'Purchase Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
-      { step: 2, title: 'CFO Inner Verification', roleName: 'CFO Inner / Account Finance', roleKey: 'cfo-inner', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 }
+      { step: 1, title: 'Procurement Head Review', roleName: 'Procurement Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
+      { step: 2, title: 'Accounts Verification', roleName: 'Accounts', roleKey: 'accounts', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 }
     ]
   },
   {
@@ -144,7 +144,7 @@ const invoicePaymentDefaults = [
     minAmount: 2000000.01,
     maxAmount: 10000000,
     formattedRange: '₹20,00,001 - ₹1,00,00,000',
-    description: 'Medium-value invoice — Purchase Head → CFO Inner → CFO.',
+    description: 'Medium-value invoice — Procurement Head → Accounts → CFO.',
     status: 'Active',
     priority: 100,
     conditions: {},
@@ -152,8 +152,8 @@ const invoicePaymentDefaults = [
     createdBy: 'system-bootstrap',
     activatedBy: 'system-bootstrap',
     steps: [
-      { step: 1, title: 'Purchase Head Review', roleName: 'Purchase Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
-      { step: 2, title: 'CFO Inner Verification', roleName: 'CFO Inner / Account Finance', roleKey: 'cfo-inner', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
+      { step: 1, title: 'Procurement Head Review', roleName: 'Procurement Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
+      { step: 2, title: 'Accounts Verification', roleName: 'Accounts', roleKey: 'accounts', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
       { step: 3, title: 'CFO Approval', roleName: 'CFO', roleKey: 'cfo', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 48 }
     ]
   },
@@ -165,7 +165,7 @@ const invoicePaymentDefaults = [
     minAmount: 10000000.01,
     maxAmount: null,
     formattedRange: 'Above ₹1,00,00,000',
-    description: 'High-value invoice — Purchase Head → CFO Inner → CFO → MD.',
+    description: 'High-value invoice — Procurement Head → Accounts → CFO → MD.',
     status: 'Active',
     priority: 100,
     conditions: {},
@@ -173,8 +173,8 @@ const invoicePaymentDefaults = [
     createdBy: 'system-bootstrap',
     activatedBy: 'system-bootstrap',
     steps: [
-      { step: 1, title: 'Purchase Head Review', roleName: 'Purchase Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
-      { step: 2, title: 'CFO Inner Verification', roleName: 'CFO Inner / Account Finance', roleKey: 'cfo-inner', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
+      { step: 1, title: 'Procurement Head Review', roleName: 'Procurement Head', roleKey: 'procurement_head', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
+      { step: 2, title: 'Accounts Verification', roleName: 'Accounts', roleKey: 'accounts', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 24 },
       { step: 3, title: 'CFO Approval', roleName: 'CFO', roleKey: 'cfo', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 48 },
       { step: 4, title: 'Managing Director Approval', roleName: 'Managing Director', roleKey: 'md', approverType: 'role', requiredApprovals: 1, allowSelfApproval: false, slaHours: 48 }
     ]

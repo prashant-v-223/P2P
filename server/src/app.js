@@ -5,6 +5,8 @@ import path from 'path';
 import authRouter from './modules/auth/auth.router.js';
 import usersRouter from './modules/users/users.router.js';
 import rolesRouter from './modules/roles/roles.router.js';
+import permissionsRouter from './modules/permissions/permissions.router.js';
+import departmentsRouter from './modules/departments/departments.router.js';
 import workflowsRouter from './modules/workflows/workflows.router.js';
 import exchangeRatesRouter from './modules/exchangeRates/exchangeRates.router.js';
 import approvalsRouter from './modules/approvals/approvals.router.js';
@@ -14,7 +16,6 @@ import customAgentsRouter from './modules/customAgents/customAgents.router.js';
 import p2pRouter from './modules/p2p/p2pRoutes.js';
 import eventsRouter from './modules/events/events.router.js';
 import documentsRouter from './modules/documents/documents.router.js';
-import permissionsRouter from './modules/permissions/permissions.router.js';
 import sapRouter from './modules/sap/sap.router.js';
 import { errorHandler } from './middleware/error.middleware.js';
 import { auditMutationMiddleware } from './services/auditLogger.service.js';
@@ -45,6 +46,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/roles', rolesRouter);
 app.use('/api/permissions', permissionsRouter);
+app.use('/api/departments', departmentsRouter);
 app.use('/api/sap', sapRouter);
 app.use('/api/workflows', workflowsRouter);
 app.use('/api/exchange-rates', exchangeRatesRouter);
@@ -55,7 +57,7 @@ app.use('/api/suppliers', suppliersRouter);
 app.use('/api/custom-agents', customAgentsRouter);
 app.use('/api/p2p', p2pRouter);
 app.use('/api/events', eventsRouter);
-app.use('/api/documents', documentsRouter); // Document upload/download routes
+app.use('/api/documents', documentsRouter);
 
 // Fallback 404 Handler for any unhandled /api path
 app.all('/api/*', (req, res) => {
@@ -88,5 +90,3 @@ if (fs.existsSync(distDir)) {
 app.use(errorHandler);
 
 export default app;
-
-

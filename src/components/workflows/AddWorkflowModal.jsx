@@ -37,20 +37,7 @@ export default function AddWorkflowModal({ isOpen, onClose, editingSlab, onSucce
         }
       } catch (err) {
         console.error('Failed to fetch roles:', err);
-        // Fallback to default roles
-        setAvailableRoles([
-          { roleName: 'procurement', description: 'Procurement' },
-          { roleName: 'procurement_head', description: 'Procurement Head' },
-          { roleName: 'finance', description: 'Finance' },
-          { roleName: 'finance_lead', description: 'Finance Lead' },
-          { roleName: 'cfo', description: 'CFO' },
-          { roleName: 'md', description: 'MD' },
-          { roleName: 'exim', description: 'EXIM' },
-          { roleName: 'exim-manager', description: 'EXIM Manager' },
-          { roleName: 'logistics', description: 'Logistics' },
-          { roleName: 'accounts', description: 'Accounts' },
-          { roleName: 'admin', description: 'Admin' }
-        ]);
+        setAvailableRoles([]);
       } finally {
         setLoadingRoles(false);
       }

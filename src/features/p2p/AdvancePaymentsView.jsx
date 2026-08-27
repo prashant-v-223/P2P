@@ -7,8 +7,9 @@ import { SearchableSelect } from '../../components/ui/searchable-select';
 import { CustomInput } from '../../components/ui/custom-input';
 import { useToast } from '../../components/ui/toast';
 import { userHasPermission } from '../../lib/permissions';
-import { exportCsv } from '../../utils/exportCsv';
+import { exportAdvancePaymentsCsv } from '../../utils/exportCsv';
 import { SortableHeader, useUrlSorting } from '../../components/ui/sortable-header';
+import { TableActionButton } from '../../components/ui/table-action-button';
 import { 
   Search, 
   Eye, 
@@ -41,7 +42,6 @@ const getInitials = (name) => {
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[1][0]).toUpperCase();
 };
-
 import MarkAsPaidModal from '../../components/common/MarkAsPaidModal';
 
 export default function AdvancePaymentsView() {
@@ -112,33 +112,41 @@ export default function AdvancePaymentsView() {
       if (res.ok) {
         const json = await res.json();
         if (json.data) {
-          const mapped = json.data.map((item, idx) => ({
-            id: item._id || idx + 1,
-            reference:     item.advanceId || `ADV-${idx + 1}`,
-            poNumber:      item.sapPoNumber || item.poId || '—',
-            vendorName:    item.vendorName || 'Vendor',
-            requestedBy:   item.requestedByName || item.requestedBy || item.createdBy || 'Finance Team',
-            amount:        item.amount || 0,
-            adjustedAmount: item.adjustedAmount || 0,
-            currency:      item.currency || 'INR',
-            pctOfPo:       `${item.percentageOfPo || 0}.00%`,
-            mode:          item.paymentMode || 'NEFT',
-            status: {
-              draft:    'Draft',
-              pending:  'Pending',
-              approved: 'Approved',
-              rejected: 'Rejected',
-              returned: 'Returned',
-              paid:     'Paid'
-            }[item.status?.toLowerCase()] || item.status || 'Draft',
-            submittedDate: item.createdAt
-              ? new Date(item.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-              : '—',
-            dueDate: item.dueDate || item.approvalDueDate
-              ? new Date(item.dueDate || item.approvalDueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-              : '—',
-            approvalStage: item.assignedApproverRole || item.assignedApproverName || item.approvalStage || 'Approval'
-          }));
+          const mapped = [];
+          const seenIds = new Set();
+          json.data.forEach((item, idx) => {
+            const refKey = String(item.advanceId || item._id || idx + 1);
+            if (!seenIds.has(refKey)) {
+              seenIds.add(refKey);
+              mapped.push({
+                id: item._id || idx + 1,
+                reference:     item.advanceId || `ADV-${idx + 1}`,
+                poNumber:      item.sapPoNumber || item.poId || '—',
+                vendorName:    item.vendorName || 'Vendor',
+                requestedBy:   item.requestedByName || item.requestedBy || item.createdBy || 'Finance Team',
+                amount:        item.amount || 0,
+                adjustedAmount: item.adjustedAmount || 0,
+                currency:      item.currency || 'INR',
+                pctOfPo:       `${item.percentageOfPo || 0}.00%`,
+                mode:          item.paymentMode || 'NEFT',
+                status: {
+                  draft:    'Draft',
+                  pending:  'Pending',
+                  approved: 'Approved',
+                  rejected: 'Rejected',
+                  returned: 'Returned',
+                  paid:     'Paid'
+                }[item.status?.toLowerCase()] || item.status || 'Draft',
+                submittedDate: item.createdAt
+                  ? new Date(item.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                  : '—',
+                dueDate: item.dueDate || item.approvalDueDate
+                  ? new Date(item.dueDate || item.approvalDueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                  : '—',
+                approvalStage: item.assignedApproverRole || item.assignedApproverName || item.approvalStage || 'Approval'
+              });
+            }
+          });
 
           setAdvances(mapped);
           setTotalCount(json.total || mapped.length);
@@ -161,11 +169,12 @@ export default function AdvancePaymentsView() {
   };
 
   const handleSearchChange = (e) => {
-    updateUrlParams({ q: e.target.value, page: '1' });
+    updateUrlParams({ q: e.target?.value ?? '', page: '1' });
   };
 
-  const handleStatusFilterChange = (e) => {
-    updateUrlParams({ status: e.target.value, page: '1' });
+  const handleStatusFilterChange = (val) => {
+    const targetValue = typeof val === 'object' && val !== null ? val.target?.value : val;
+    updateUrlParams({ status: targetValue, page: '1' });
   };
 
   const handlePageSizeChange = (e) => {
@@ -209,7 +218,7 @@ export default function AdvancePaymentsView() {
             <Plus className="w-4 h-4" /> New Advance Payment
           </Link>
         )}
-        <button type="button" onClick={() => exportCsv('advance-payments.csv', advances)} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-2xs">
+        <button type="button" onClick={() => exportAdvancePaymentsCsv(advances)} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-2xs">
           <Download className="h-4 w-4 text-slate-500" /> Export CSV
         </button>
       </div>
@@ -466,42 +475,38 @@ export default function AdvancePaymentsView() {
 
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <button
+                          <TableActionButton
                             onClick={() => navigate(`/p2p/advance-payments/${adv.reference}`)}
                             title="View Details"
-                            className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-slate-900 transition-colors"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                          </button>
+                            icon={Eye}
+                            variant="view"
+                          />
 
                           {canMarkPaid && adv.status === 'Approved' && (
-                            <button
+                            <TableActionButton
                               onClick={() => handlePayout(adv)}
                               title="Mark Advance as Paid"
-                              className="p-1.5 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition-colors"
-                            >
-                              <Wallet className="w-3.5 h-3.5" />
-                            </button>
+                              icon={Wallet}
+                              variant="success"
+                            />
                           )}
 
                           {canEdit && !['approved', 'paid', 'completed'].includes(String(adv.status || '').toLowerCase()) && (
-                            <button
+                            <TableActionButton
                               onClick={() => navigate(`/admin/advance-payments/${adv.reference}/edit`)}
                               title="Edit Advance & Resubmit for Approval"
-                              className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-slate-900 transition-colors cursor-pointer"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
+                              icon={Pencil}
+                              variant="edit"
+                            />
                           )}
 
                           {canDelete && !String(adv.status || '').toLowerCase().includes('pending') && !String(adv.status || '').toLowerCase().includes('approval') && !String(adv.status || '').toLowerCase().includes('approved') && !String(adv.status || '').toLowerCase().includes('paid') && (
-                            <button
+                            <TableActionButton
                               onClick={() => handleDeleteAdvance(adv.reference)}
                               title="Delete Advance"
-                              className="p-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                              icon={Trash2}
+                              variant="delete"
+                            />
                           )}
                         </div>
                       </td>

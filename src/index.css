@@ -10,7 +10,7 @@
   --color-primary-light: #f0fdfa;
   --color-accent-orange: #f58220;
   --color-accent-orange-hover: #e07214;
-  --font-family-base: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
+  --font-family-base: 'Inter', 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 @layer base {
@@ -20,11 +20,11 @@
 
   html {
     scroll-behavior: smooth;
-    font-size: 15px;
+    font-size: 14.5px;
   }
 
   body {
-    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: 'Inter', 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     background-color: #f8fafc;
     color: #0f172a;
     min-width: 320px;
@@ -33,28 +33,29 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     line-height: 1.5;
+    overflow-wrap: normal;
   }
 
   h1, h2, h3, h4, h5, h6 {
-    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
-    letter-spacing: -0.02em;
+    font-family: 'Inter', 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    letter-spacing: normal;
     font-weight: 700;
   }
 
   table {
-    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif !important;
+    font-family: 'Inter', 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif !important;
   }
 
   th {
-    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif !important;
+    font-family: 'Inter', 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif !important;
     font-weight: 700;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.02em;
     text-transform: uppercase;
     white-space: nowrap;
   }
 
   td {
-    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif !important;
+    font-family: 'Inter', 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, sans-serif !important;
   }
 
   button, a, input, select, textarea {
@@ -73,21 +74,54 @@
   input, select, textarea {
     font-size: 13.5px;
   }
+
+  img, svg, video, canvas {
+    max-width: 100%;
+  }
+
+  p, h1, h2, h3, h4, h5, h6, dd, dt, li {
+    overflow-wrap: break-word;
+  }
+}
+
+/* Dense business tables should scroll horizontally instead of breaking IDs,
+   dates, badges and action labels into unreadable vertical text. */
+.app-main table:not(.table-fixed) {
+  min-width: 100%;
+  width: max-content;
+}
+
+.app-main table:not(.table-fixed) th,
+.app-main table:not(.table-fixed) td {
+  overflow-wrap: normal;
+  white-space: nowrap;
+  word-break: normal;
+}
+
+.app-main table:not(.table-fixed) button,
+.app-main table:not(.table-fixed) [class*="rounded-full"],
+.app-main table:not(.table-fixed) [class*="rounded-md"] {
+  white-space: nowrap;
+}
+
+.app-main .rfq-table {
+  min-width: 1635px;
+  table-layout: fixed;
+  width: 100% !important;
 }
 
 @media (min-width: 641px) and (max-width: 1599px) {
-  main table:not(.table-fixed) td {
-    white-space: nowrap;
-  }
-
   main table:not(.table-fixed) th,
   main table:not(.table-fixed) td {
-    padding-left: 0.625rem !important;
-    padding-right: 0.625rem !important;
+    padding-left: 0.75rem !important;
+    padding-right: 0.75rem !important;
   }
 
   main table:not(.table-fixed) td {
-    font-size: 11px !important;
+    font-size: 0.75rem !important;
+    line-height: 1.35;
+    overflow-wrap: normal;
+    white-space: nowrap;
   }
 }
 
@@ -227,8 +261,69 @@ table thead th[data-sortable="true"]:focus-visible {
 }
 
 @media (max-width: 640px) {
-  table {
+  main table:not(.table-fixed) {
     min-width: 760px;
+  }
+
+  .page-toolbar {
+    padding: 0.875rem;
+  }
+
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 0.5rem;
+  }
+
+  .modal-panel {
+    max-height: calc(100dvh - 1rem);
+    overflow-y: auto;
+    border-radius: 1rem;
+  }
+
+  .modal-footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .modal-footer > button {
+    width: 100%;
+  }
+}
+
+/* Laptop layouts: preserve readable type and let dense content reflow. */
+@media (min-width: 641px) and (max-width: 1279px) {
+  .app-main .p-6 {
+    padding: 1rem !important;
+  }
+
+  .app-main .gap-6 {
+    gap: 1rem !important;
+  }
+
+  .dashboard-page .lg\:grid-cols-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-page .lg\:grid-cols-3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dashboard-page .lg\:col-span-2 {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 767px) {
+  .app-content .grid-cols-2,
+  .app-content .grid-cols-3,
+  .app-content .grid-cols-4,
+  .app-content .grid-cols-5,
+  .app-content .grid-cols-6 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-content .rounded-3xl {
+    border-radius: 1rem;
   }
 }
 

@@ -196,7 +196,7 @@ function getNextStepStatus(approval) {
     }
   }
 
-  return 'Approved & Dispatched';
+  throw new Error('Approval has no valid workflow snapshot. Action is blocked.');
 }
 
 // ── Helper: determine which role should act on the current step ───────────
@@ -482,7 +482,7 @@ function getPreviousStepInfo(approval) {
   }
 
   const prevStepNum = currentStep - 1;
-  let prevStatusKey = 'Pending Procurement Head Approval';
+  let prevStatusKey = null;
 
   if (approval.workflowSteps) {
     try {
@@ -494,6 +494,7 @@ function getPreviousStepInfo(approval) {
     } catch (_) {}
   }
 
+  if (!prevStatusKey) throw new Error('The previous workflow step is missing from this approval snapshot.');
   return { stepNum: prevStepNum, statusKey: prevStatusKey, toRequester: false };
 }
 
@@ -526,6 +527,22 @@ export const processApprovalAction = async (req, res) => {
       return res.status(404).json({ success: false, error: 'Approval not found.' });
     }
     if (['Approved & Dispatched', 'Rejected', 'Cancelled'].includes(approval.status)) return res.status(409).json({ success: false, error: `This request is already ${approval.status.toLowerCase()}.` });
+
+    let configuredSteps = [];
+    try {
+      configuredSteps = typeof approval.workflowSteps === 'string'
+        ? JSON.parse(approval.workflowSteps)
+        : approval.workflowSteps;
+    } catch (_) {}
+    const activeConfiguredStep = Array.isArray(configuredSteps)
+      ? configuredSteps.find((step) => Number(step.step || step.stepNumber) === Number(approval.currentStep || 1))
+      : null;
+    if (!activeConfiguredStep) {
+      return res.status(409).json({
+        success: false,
+        error: 'This approval has no valid active workflow step. Repair or resubmit it before taking action.'
+      });
+    }
 
     // ── Role Authorization Check with Effective Delegated Roles ───────────
     const actingUserId = req.user?.id || req.user?.userId || req.user?.email;
@@ -859,67 +876,7 @@ export const getApprovalById = async (req, res) => {
       ]
     }).sort({ createdAt: -1 }).lean();
 
-    if (!approval) {
-      const { InvoicePayment } = await import('../../models/InvoicePayment.js');
-      const { AdvancePayment } = await import('../../models/AdvancePayment.js');
-      const { RfqHeader } = await import('../../models/RfqLogistics.js');
-      const { PurchaseOrder } = await import('../../models/PurchaseOrder.js');
-      const { Vendor } = await import('../../models/Vendor.js');
-
-      const [inv, adv, rfq, po, vendor] = await Promise.all([
-        InvoicePayment.findOne({ $or: [{ invoicePaymentId: id }, { invoiceNumber: id }] }).lean().catch(() => null),
-        AdvancePayment.findOne({ $or: [{ advanceId: id }] }).lean().catch(() => null),
-        RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] }).lean().catch(() => null),
-        PurchaseOrder.findOne({ $or: [{ poNumber: id }, { sapPoNumber: id }] }).lean().catch(() => null),
-        Vendor.findOne({ $or: [{ id }, { sapVendorCode: id }] }).lean().catch(() => null)
-      ]);
-
-      if (rfq && rfq.awardApprovalId) {
-        approval = await Approval.findOne({ id: rfq.awardApprovalId }).lean();
-        if (approval) {
-          return res.json({ success: true, approval });
-        }
-      }
-
-      const rawStatus = (inv?.status || adv?.status || rfq?.status || po?.status || '').toLowerCase();
-
-      // If no approval document exists and the underlying record is in published, draft, open, or created status, return null
-      if (!inv && !adv && !rfq && !po && !vendor) {
-        return res.json({ success: true, approval: null });
-      }
-
-      if (['published', 'draft', 'open', 'created'].includes(rawStatus)) {
-        return res.json({ success: true, approval: null });
-      }
-
-      const recordType = inv ? 'Invoice Payment' : adv ? 'Advance Payment' : rfq ? 'Freight RFQ' : po ? 'Purchase Order' : vendor ? 'Vendor Account' : 'Approval Workflow';
-      const vendorName = inv?.vendorName || adv?.vendorName || rfq?.title || po?.vendorName || vendor?.companyName || 'Vendor';
-      const poRef = inv?.sapPoNumber || inv?.poId || adv?.sapPoNumber || adv?.poId || rfq?.linkedPoId || po?.poNumber || '';
-      const amountVal = inv?.netPayable || adv?.amount || po?.poValue || 0;
-      const amountFormatted = amountVal ? `₹${Number(amountVal).toLocaleString('en-IN')}` : '₹0.00';
-
-      const defaultSteps = [
-        { step: 1, title: 'Purchase Manager Approval', roleKey: 'purchase_manager', roleName: 'Purchase Manager', statusKey: 'Pending Purchase Manager Approval' }
-      ];
-
-      const currentStatus = rawStatus === 'approved' || rawStatus === 'paid' ? 'Approved & Dispatched' : rawStatus === 'rejected' ? 'Rejected' : rawStatus === 'returned' ? 'Returned for changes' : 'Pending Purchase Manager Approval';
-
-      approval = {
-        id,
-        type: recordType,
-        vendorName,
-        amountOriginal: amountFormatted,
-        amountINR: amountFormatted,
-        poReference: poRef,
-        currentSlab: `${recordType} Slab`,
-        currentStep: currentStatus === 'Approved & Dispatched' ? 2 : 1,
-        totalSteps: 2,
-        workflowSteps: JSON.stringify(defaultSteps),
-        status: currentStatus,
-        submittedAt: inv?.createdAt || adv?.createdAt || new Date(),
-        actionHistory: []
-      };
-    }
+    if (!approval) return res.json({ success: true, approval: null });
 
     return res.json({ success: true, approval });
   } catch (err) {

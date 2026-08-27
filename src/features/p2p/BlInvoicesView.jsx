@@ -12,6 +12,7 @@ import { userHasPermission } from '../../lib/permissions';
 import UniversalApprovalWorkflowCard from '../../components/common/UniversalApprovalWorkflowCard';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { ServerPagination } from '../../components/ui/server-pagination';
+import { TableActionButton } from '../../components/ui/table-action-button';
 import { downloadDocumentFile } from '../../utils/downloadHelper';
 import { formatCurrencyINR } from '../../utils/currencyHelper';
 
@@ -121,55 +122,67 @@ function DetailModal({ invoice, onClose, onRefresh }) {
     <div className="space-y-2">
       {documents.map((doc, idx) => {
         const targetFile = doc.fileUrl || doc.filePath || doc.fileName || doc.originalFilename;
-        const docLabel = doc.docType || doc.documentType || doc.label || doc.originalFilename || 'Supporting Document';
-        const displayName = doc.originalFilename || doc.fileName || String(targetFile || '').split('/').pop();
+        const docLabel = doc.docType || doc.documentType || doc.label || 'Supporting Document';
+        const rawName = doc.originalFilename || doc.fileName || String(targetFile || '').split('/').pop();
+        const displayName = rawName ? rawName.replace(/^[a-z0-9_-]+_/i, '') : 'document.pdf';
+
         return (
-          <div key={`${targetFile}-${idx}`} className="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 bg-slate-50/70 text-xs">
-            <div className="flex items-center gap-2 truncate max-w-[75%]">
-              <FileText className="w-3.5 h-3.5 text-[#0d7676] shrink-0" />
-              <div className="truncate">
-                <p className="font-bold text-slate-800 truncate">{docLabel}</p>
-                <p className="text-[10px] font-mono text-slate-400 truncate">{displayName}</p>
+          <div key={`${targetFile}-${idx}`} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-200/80 bg-slate-50/70 hover:bg-slate-50 transition text-xs">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <div className="w-8 h-8 rounded-lg bg-teal-100/80 text-[#0d7676] flex items-center justify-center shrink-0 border border-teal-200/60">
+                <FileText className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-bold text-slate-900 truncate" title={docLabel}>{docLabel}</p>
+                <p className="text-[11px] font-mono text-slate-500 truncate mt-0.5" title={displayName}>{displayName}</p>
               </div>
             </div>
-            <button type="button" disabled={!targetFile} onClick={() => downloadDocumentFile(targetFile, displayName || docLabel)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-teal-200 bg-white hover:bg-teal-50 text-[#0d7676] font-bold text-xs transition shadow-2xs cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed">
-              <Download className="w-3.5 h-3.5" /><span>Download</span>
+            <button
+              type="button"
+              disabled={!targetFile}
+              onClick={() => downloadDocumentFile(targetFile, displayName || docLabel)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-teal-200 bg-white hover:bg-teal-50 text-[#0d7676] font-bold text-xs transition shadow-2xs cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download</span>
             </button>
           </div>
         );
       })}
     </div>
-  ) : <p className="text-xs text-slate-400 italic">{emptyMessage}</p>;
+  ) : <p className="text-xs text-slate-400 italic py-2">{emptyMessage}</p>;
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && !submitting && onClose()}>
-      <section className="modal-panel max-w-2xl">
-        <header className="modal-header">
+      <section className="modal-panel max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <header className="modal-header bg-slate-50/80 border-b border-slate-200 px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="section-icon bg-teal-50 text-teal-700"><FileText className="h-4 w-4" /></span>
+            <span className="section-icon bg-teal-100 text-[#0d7676] p-2 rounded-xl border border-teal-200/60">
+              <FileText className="h-4 w-4" />
+            </span>
             <div>
               <h3 className="text-sm font-bold text-slate-950">BL Invoice Details</h3>
-              <p className="mt-0.5 text-xs text-slate-500">{invoice.referenceNumber} — {invoice.typeDisplay}</p>
+              <p className="mt-0.5 text-xs text-slate-500 font-mono">{invoice.referenceNumber} — {invoice.typeDisplay}</p>
             </div>
           </div>
-          <button type="button" disabled={submitting} onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100">
+          <button type="button" disabled={submitting} onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200/60 transition">
             <X className="h-4 w-4" />
           </button>
         </header>
 
-        <div className="modal-body space-y-5 max-h-[calc(100dvh-7rem)] overflow-y-auto">
+        <div className="modal-body p-6 space-y-5 max-h-[calc(100dvh-8rem)] overflow-y-auto">
 
-          {/* Top Status & Summary Banner */}
-          <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-4">
+          {/* Top Status & Summary Banner with Rayzon Brand Teal Gradient */}
+          <div className="flex items-center justify-between rounded-2xl border border-teal-900/20 bg-gradient-to-r from-[#0d7676] via-[#095959] to-slate-900 text-white p-5 shadow-sm">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Invoice Amount (INR Converted)</p>
+              <p className="text-[10px] font-extrabold uppercase tracking-wider text-teal-200">Total Invoice Amount (INR Converted)</p>
               {(() => {
                 const formatted = formatCurrencyINR(invoice.amount, invoice.currency);
                 return (
                   <div>
-                    <p className="text-2xl font-black text-slate-900 mt-0.5">{formatted.primary}</p>
+                    <p className="text-2xl font-black text-white mt-1 tracking-tight">{formatted.primary}</p>
                     {formatted.isConverted && (
-                      <p className="text-xs font-bold text-teal-700 mt-0.5">{formatted.secondary}</p>
+                      <p className="text-xs font-bold text-teal-300 mt-0.5">{formatted.secondary}</p>
                     )}
                   </div>
                 );
@@ -179,33 +192,33 @@ function DetailModal({ invoice, onClose, onRefresh }) {
           </div>
 
           {/* Detailed Specifications Grid */}
-          <div className="grid grid-cols-2 gap-3 text-xs">
-            <div className="rounded-xl border border-slate-200/80 bg-white p-3 space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase">BL Number</span>
-              <p className="font-mono font-bold text-slate-900">{invoice.blNumber}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="rounded-xl border border-slate-200/80 bg-white p-3.5 space-y-1 shadow-2xs">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">BL Number</span>
+              <p className="font-mono font-bold text-slate-900 text-xs">{invoice.blNumber}</p>
             </div>
-            <div className="rounded-xl border border-slate-200/80 bg-white p-3 space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase">Invoice Number</span>
-              <p className="font-mono font-bold text-slate-900">{invoice.invoiceNumber}</p>
+            <div className="rounded-xl border border-slate-200/80 bg-white p-3.5 space-y-1 shadow-2xs">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Invoice Number</span>
+              <p className="font-mono font-bold text-slate-900 text-xs">{invoice.invoiceNumber}</p>
             </div>
-            <div className="rounded-xl border border-slate-200/80 bg-white p-3 space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase">Vendor / Agent Name</span>
-              <p className="font-bold text-slate-900">{invoice.vendorName}</p>
+            <div className="rounded-xl border border-slate-200/80 bg-white p-3.5 space-y-1 shadow-2xs sm:col-span-2">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Vendor / Agent Name</span>
+              <p className="font-bold text-slate-900 leading-snug text-sm">{invoice.vendorName}</p>
             </div>
-            <div className="rounded-xl border border-slate-200/80 bg-white p-3 space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase">Source Type</span>
-              <div><SourceBadge source={invoice.source} /></div>
+            <div className="rounded-xl border border-slate-200/80 bg-white p-3.5 space-y-1 shadow-2xs sm:col-span-2">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Source Type</span>
+              <div className="pt-0.5"><SourceBadge source={invoice.source} /></div>
             </div>
           </div>
 
-          {/* Supporting Documents Section (AWS S3 Streamed) */}
-          <div className="rounded-xl border border-slate-200/80 bg-white p-4 space-y-3">
+          {/* Supporting Documents Section (AWS S3 Storage) */}
+          <div className="rounded-xl border border-slate-200/80 bg-white p-4 space-y-3 shadow-2xs">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
               <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
                 <Paperclip className="w-3.5 h-3.5 text-[#0d7676]" />
                 Supporting Documents (AWS S3 Storage)
               </h4>
-              <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+              <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-200">
                 {(invoice.documents || []).length || (invoice.fileName || invoice.fileUrl ? 1 : 0)} file(s)
               </span>
             </div>
@@ -213,10 +226,16 @@ function DetailModal({ invoice, onClose, onRefresh }) {
             {renderDocuments(invoice.documents || [], 'No document file attached to this invoice.')}
           </div>
 
-          <div className="rounded-xl border border-slate-200/80 bg-white p-4 space-y-3">
+          {/* BL Entry Documents */}
+          <div className="rounded-xl border border-slate-200/80 bg-white p-4 space-y-3 shadow-2xs">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2"><Paperclip className="w-3.5 h-3.5 text-[#0d7676]" />BL Entry Documents</h4>
-              <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{(invoice.blEntryDocuments || []).length} file(s)</span>
+              <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                <Paperclip className="w-3.5 h-3.5 text-[#0d7676]" />
+                BL Entry Documents
+              </h4>
+              <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                {(invoice.blEntryDocuments || []).length} file(s)
+              </span>
             </div>
             {renderDocuments(invoice.blEntryDocuments || [], 'No documents are attached to the linked BL entry.')}
           </div>
@@ -245,7 +264,7 @@ function DetailModal({ invoice, onClose, onRefresh }) {
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Remarks / Note</label>
                 <textarea
                   rows={2}
-                  placeholder="Enter remarks for approval or rejection..."
+                  placeholder="Enter approval or rejection remarks..."
                   value={remarks}
                   onChange={(e) => setRemarks(e.target.value)}
                   className="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-[#0d7676]"
@@ -380,10 +399,10 @@ function SubmitInvoiceModal({ onClose, onCreated }) {
       <section className="modal-panel max-w-lg">
         <header className="modal-header">
           <div className="flex items-center gap-3">
-            <span className="section-icon bg-teal-50 text-teal-700"><Plus className="h-4 w-4" /></span>
+            <span className="section-icon bg-teal-50 text-teal-700"><FileText className="h-4 w-4" /></span>
             <div>
-              <h3 className="text-sm font-bold text-slate-950">Submit BL Invoice / Charge</h3>
-              <p className="mt-0.5 text-xs text-slate-500">Raise freight invoice or destination charge against a Bill of Lading.</p>
+              <h3 className="text-sm font-bold text-slate-950">Submit BL Invoice</h3>
+              <p className="mt-0.5 text-xs text-slate-500">Record a new BL ocean freight or detention invoice</p>
             </div>
           </div>
           <button type="button" disabled={submitting} onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100">
@@ -391,86 +410,113 @@ function SubmitInvoiceModal({ onClose, onCreated }) {
           </button>
         </header>
 
-        <form noValidate onSubmit={handleSubmit} className="modal-body space-y-4 max-h-[calc(100dvh-7rem)] overflow-y-auto">
+        <form onSubmit={handleSubmit} className="modal-body space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">BL Number <span className="text-rose-500">*</span></label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. SHNSA2600305"
+              value={blNumber}
+              onChange={(e) => setBlNumber(e.target.value)}
+              className="w-full text-xs p-2.5 font-mono rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#0d7676] uppercase"
+            />
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">BL Number <span className="text-rose-500">*</span></label>
-              <input type="text" required placeholder="e.g. SHMSA2600305" value={blNumber} onChange={(e) => setBlNumber(e.target.value.toUpperCase())} className="w-full text-xs p-2.5 rounded-lg border border-slate-300 uppercase font-mono focus:border-teal-600 focus:outline-none" />
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Invoice Type</label>
+              <select
+                value={typeDisplay}
+                onChange={(e) => setTypeDisplay(e.target.value)}
+                className="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#0d7676]"
+              >
+                <option value="Freight Invoice">Freight Invoice</option>
+                <option value="Port Storage">Port Storage</option>
+                <option value="Receipted Charges">Receipted Charges</option>
+                <option value="Agency Charges">Agency Charges</option>
+                <option value="Destination Charges">Destination Charges</option>
+              </select>
             </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Source Type</label>
+              <select
+                value={source}
+                onChange={(e) => setSource(e.target.value)}
+                className="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#0d7676]"
+              >
+                <option value="Vendor">Vendor</option>
+                <option value="Agent">Agent</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Invoice Number <span className="text-rose-500">*</span></label>
-              <input type="text" required placeholder="e.g. INV-98471" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} className="w-full text-xs p-2.5 rounded-lg border border-slate-300 font-mono focus:border-teal-600 focus:outline-none" />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Charge Type</label>
-              <SearchableSelect
-                options={[
-                  { label: 'Freight Invoice', value: 'Freight Invoice' },
-                  { label: 'Destination Charges (Shipping Line)', value: 'Destination Charges (Shipping Line)' },
-                  { label: 'Recepted Charges', value: 'Recepted Charges' },
-                  { label: 'Agency Charges', value: 'Agency Charges' },
-                  { label: 'Port Storage', value: 'Port Storage' },
-                  { label: 'Customs Clearance Fee', value: 'Customs Clearance Fee' }
-                ]}
-                value={typeDisplay}
-                onChange={(val) => setTypeDisplay(val)}
-                size="sm"
-                searchable={false}
+              <input
+                type="text"
+                required
+                placeholder="e.g. MUMSIF1262700105"
+                value={invoiceNumber}
+                onChange={(e) => setInvoiceNumber(e.target.value)}
+                className="w-full text-xs p-2.5 font-mono rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#0d7676]"
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Source</label>
-              <SearchableSelect
-                options={[
-                  { label: 'Vendor', value: 'Vendor' },
-                  { label: 'Agent', value: 'Agent' }
-                ]}
-                value={source}
-                onChange={(val) => setSource(val)}
-                size="sm"
-                searchable={false}
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Vendor / Agent Name</label>
+              <input
+                type="text"
+                placeholder="e.g. Fast Forward Logistics"
+                value={vendorName}
+                onChange={(e) => setVendorName(e.target.value)}
+                className="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#0d7676]"
               />
             </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Vendor / Agent Name</label>
-            <input type="text" placeholder="e.g. IDEAL SHIPPING SERVICES" value={vendorName} onChange={(e) => setVendorName(e.target.value)} className="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:border-teal-600 focus:outline-none" />
           </div>
 
           <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">Currency</label>
-              <SearchableSelect
-                options={[
-                  { label: 'INR (₹)', value: 'INR' },
-                  { label: 'USD ($)', value: 'USD' }
-                ]}
-                value={currency}
-                onChange={(val) => setCurrency(val)}
-                size="sm"
-                searchable={false}
-              />
-            </div>
             <div className="col-span-2">
               <label className="block text-xs font-semibold text-slate-700 mb-1">Invoice Amount <span className="text-rose-500">*</span></label>
-              <input type="number" min="0" step="0.01" required placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full text-xs p-2.5 rounded-lg border border-slate-300 font-bold focus:border-teal-600 focus:outline-none" />
+              <input
+                type="number"
+                step="0.01"
+                required
+                placeholder="0.00"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#0d7676]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Currency</label>
+              <select
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+                className="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#0d7676]"
+              >
+                <option value="INR">INR (₹)</option>
+                <option value="USD">USD ($)</option>
+              </select>
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Remarks / Note</label>
-            <input type="text" placeholder="Optional notes for approvers" value={remarks} onChange={(e) => setRemarks(e.target.value)} className="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:border-teal-600 focus:outline-none" />
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Remarks / Note <span className="font-normal text-slate-400">(optional)</span></label>
+            <textarea
+              rows={2}
+              placeholder="Additional notes for EXIM review..."
+              value={remarks}
+              onChange={(e) => setRemarks(e.target.value)}
+              className="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#0d7676]"
+            />
           </div>
 
-          <div className="modal-footer">
-            <button type="button" onClick={onClose} disabled={submitting} className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
-            <button type="submit" disabled={submitting} className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-[#0d7676] hover:bg-[#0a5c5c] rounded-lg disabled:opacity-50">
-              {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-              <span>Submit Request</span>
+          <div className="modal-footer pt-2">
+            <button type="button" disabled={submitting} onClick={onClose} className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
+            <button type="submit" disabled={submitting} className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-[#0d7676] hover:bg-[#0a5c5c] rounded-lg disabled:opacity-50 transition shadow-xs">
+              {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+              <span>Submit Invoice</span>
             </button>
           </div>
         </form>
@@ -493,7 +539,7 @@ export default function BlInvoicesView() {
     try {
       setLoading(true);
       const queryParams = new URLSearchParams();
-      if (search) queryParams.set('q', search);
+      if (search.trim()) queryParams.set('q', search.trim());
       if (statusFilter !== 'All') queryParams.set('status', statusFilter);
       if (sourceFilter !== 'All') queryParams.set('source', sourceFilter);
 
@@ -635,7 +681,7 @@ export default function BlInvoicesView() {
                       </td>
                       <td className="text-slate-600 font-mono px-4 py-3.5">{inv.invoiceNumber}</td>
                       <td className="px-4 py-3.5 font-bold font-mono text-slate-900">{inv.blNumber}</td>
-                      <td className="px-4 py-3.5 text-slate-800 font-semibold max-w-[220px] truncate">{inv.vendorName}</td>
+                      <td className="px-4 py-3.5 text-slate-900 font-bold max-w-[240px] truncate" title={inv.vendorName}>{inv.vendorName}</td>
                       <td className="px-4 py-3.5 text-right font-extrabold text-slate-900 whitespace-nowrap">
                         {(() => {
                           const formatted = formatCurrencyINR(inv.amount, inv.currency);
@@ -654,23 +700,19 @@ export default function BlInvoicesView() {
                       </td>
                       <td className="px-4 py-3.5 text-slate-500 font-medium whitespace-nowrap">{formatDate(inv.submittedAt || inv.createdAt)}</td>
                       <td className="px-4 py-3.5 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
+                        <div className="flex items-center justify-end gap-1">
+                          <TableActionButton
                             onClick={() => downloadDocumentFile(inv.fileName || inv.fileUrl || inv.referenceNumber, inv.typeDisplay || 'BL Invoice')}
-                            title="Download Attached Document"
-                            className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-teal-700 hover:bg-teal-50 border border-teal-200 transition cursor-pointer"
-                          >
-                            <Download className="w-4 h-4" />
-                          </button>
-                          <button
-                            type="button"
+                            title="Download Document"
+                            icon={Download}
+                            variant="copy"
+                          />
+                          <TableActionButton
                             onClick={() => setSelectedInvoice(inv)}
                             title="View Invoice & Approval Details"
-                            className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-slate-500 hover:text-teal-700 hover:bg-teal-50 border border-slate-200 transition cursor-pointer"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
+                            icon={Eye}
+                            variant="view"
+                          />
                         </div>
                       </td>
                     </tr>

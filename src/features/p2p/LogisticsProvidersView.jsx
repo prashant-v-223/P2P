@@ -5,6 +5,7 @@ import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { ServerPagination } from '../../components/ui/server-pagination';
+import { TableActionButton } from '../../components/ui/table-action-button';
 
 export default function LogisticsProvidersView() {
   const navigate = useNavigate();
@@ -219,32 +220,25 @@ export default function LogisticsProvidersView() {
                         </span>
                       </td>
                       <td className="py-3.5 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
+                        <div className="flex items-center justify-end gap-1">
+                          <TableActionButton
                             onClick={() => handleToggleStatus(p)}
                             title="Toggle Status"
-                            className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors"
-                          >
-                            {(p.status || 'Active') === 'Active' ? (
-                              <ToggleRight className="w-3.5 h-3.5 text-emerald-600" />
-                            ) : (
-                              <ToggleLeft className="w-3.5 h-3.5 text-slate-400" />
-                            )}
-                          </button>
-                          <button
+                            icon={(p.status || 'Active') === 'Active' ? ToggleRight : ToggleLeft}
+                            variant="reopen"
+                          />
+                          <TableActionButton
                             onClick={() => navigate(`${p._id || p.providerId}/edit`)}
                             title="Edit Provider"
-                            className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition-colors"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
+                            icon={Edit3}
+                            variant="edit"
+                          />
+                          <TableActionButton
                             onClick={() => handleDelete(p)}
                             title="Delete Provider"
-                            className="p-1.5 rounded-lg border border-slate-200 hover:bg-red-50 text-red-500 hover:text-red-700 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                            icon={Trash2}
+                            variant="delete"
+                          />
                         </div>
                       </td>
                     </tr>

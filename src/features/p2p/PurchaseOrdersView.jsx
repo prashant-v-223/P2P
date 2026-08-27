@@ -5,8 +5,9 @@ import { ServerPagination } from '../../components/ui/server-pagination';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import { CustomInput } from '../../components/ui/custom-input';
 import { formatCurrency } from '../../utils/formatCurrency';
-import { exportCsv } from '../../utils/exportCsv';
 import { SortableHeader, useUrlSorting } from '../../components/ui/sortable-header';
+import { TableActionButton } from '../../components/ui/table-action-button';
+import { exportPurchaseOrdersCsv } from '../../utils/exportCsv';
 import { 
   Search, 
   Eye, 
@@ -193,7 +194,7 @@ export default function PurchaseOrdersView() {
         >
           <Plus className="w-4 h-4" /> Raise Advance Request
         </Link>
-        <button type="button" onClick={() => exportCsv('purchase-orders.csv', pos)} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">
+        <button type="button" onClick={() => exportPurchaseOrdersCsv(pos)} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">
           <Download className="h-4 w-4" /> Export CSV
         </button>
       </div>
@@ -327,13 +328,12 @@ export default function PurchaseOrdersView() {
 
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                          <button
+                          <TableActionButton
                             onClick={() => navigate(`/p2p/purchase-orders/${po.poNumber}`)}
                             title="View PO Details"
-                            className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-slate-900 transition-colors"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                          </button>
+                            icon={Eye}
+                            variant="view"
+                          />
                           <button
                             onClick={() => navigate(`/p2p/advance-payments/create?poId=${po.poNumber}`)}
                             className="px-2.5 py-1 rounded-lg bg-[#0d7676] hover:bg-[#0f766e] text-white text-[11px] font-bold shadow-2xs transition-colors flex items-center gap-1"

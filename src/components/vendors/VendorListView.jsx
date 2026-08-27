@@ -7,6 +7,7 @@ import { ServerPagination } from '../ui/server-pagination';
 import { SearchableSelect } from '../ui/searchable-select';
 import { CustomInput } from '../ui/custom-input';
 import { Button } from '../ui/button';
+import { TableActionButton } from '../ui/table-action-button';
 import { 
   Plus, 
   Search, 
@@ -334,42 +335,30 @@ export default function VendorListView() {
                     </td>
                     <td className="px-3 py-2.5 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-1">
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          onClick={() => navigate(`/admin/vendors/${v.id || v._id}`)} 
+                        <TableActionButton
+                          onClick={() => navigate(`/admin/vendors/${v.id || v._id}`)}
                           title="View Vendor Details"
-                          className="h-7 w-7 hover:bg-teal-50 hover:text-[#0d7676]"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-slate-500 hover:text-[#0d7676]" />
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          onClick={() => navigate(`/admin/vendors/${v.id || v._id}/edit`)} 
+                          icon={Eye}
+                          variant="view"
+                        />
+                        <TableActionButton
+                          onClick={() => navigate(`/admin/vendors/${v.id || v._id}/edit`)}
                           title="Edit Vendor Account"
-                          className="h-7 w-7 hover:bg-slate-100 hover:text-slate-900"
-                        >
-                          <Pencil className="w-3.5 h-3.5 text-slate-500 hover:text-slate-900" />
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          onClick={() => handleOpenPasswordModal(v)} 
+                          icon={Pencil}
+                          variant="edit"
+                        />
+                        <TableActionButton
+                          onClick={() => handleOpenPasswordModal(v)}
                           title="Manage Supplier Password"
-                          className="h-7 w-7 hover:bg-amber-50 hover:text-amber-700 cursor-pointer"
-                        >
-                          <KeyRound className="w-3.5 h-3.5 text-amber-600" />
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          onClick={() => handleDeleteVendor(v.id || v._id, v.companyName || 'Vendor')} 
+                          icon={KeyRound}
+                          variant="close"
+                        />
+                        <TableActionButton
+                          onClick={() => handleDeleteVendor(v.id || v._id, v.companyName || 'Vendor')}
                           title="Delete Vendor Account"
-                          className="h-7 w-7 hover:bg-rose-50 hover:text-rose-600"
-                        >
-                          <Trash2 className="w-3.5 h-3.5 text-rose-500" />
-                        </Button>
+                          icon={Trash2}
+                          variant="delete"
+                        />
                       </div>
                     </td>
                   </tr>

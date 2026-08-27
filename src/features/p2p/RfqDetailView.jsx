@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
+import { useConfirm } from '../../components/ui/confirm-dialog';
 import { SearchableSelect } from '../../components/ui/searchable-select';
 import CustomInput from '../../components/ui/custom-input';
 import DocumentUploader from '../../components/shared/DocumentUploader';
@@ -40,6 +41,7 @@ export default function RfqDetailView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const { user } = useSelector((state) => state.auth || {});
   const userPerms = user?.permissions || user?.customPermissions;
   const canCreate = userHasPermission(user?.role, 'rfq.create', userPerms);
@@ -485,7 +487,13 @@ export default function RfqDetailView() {
           {canEdit && ['published', 'partially_awarded'].includes(rfq.status) && !(rfq.closingDate && new Date(rfq.closingDate) < new Date()) && (
             <button
               onClick={async () => {
-                if (!window.confirm(`Are you sure you want to close RFQ ${rfq.rfqNumber}? Bidding will be locked.`)) return;
+                const ok = await confirm({
+                  title: 'Close RFQ Confirmation',
+                  description: `Are you sure you want to close RFQ ${rfq.rfqNumber}? Bidding will be locked.`,
+                  confirmLabel: 'Close RFQ',
+                  cancelLabel: 'Cancel'
+                });
+                if (!ok) return;
                 try {
                   const res = await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}/close`, { method: 'POST' });
                   const json = await res.json();
@@ -535,7 +543,13 @@ export default function RfqDetailView() {
           {canDelete && !String(rfq?.status || '').toLowerCase().includes('award') && Number(rfq?.allocatedQuantity || 0) === 0 && !['awarded', 'partially_awarded', 'closed'].includes(String(rfq?.status || '').toLowerCase()) && (
             <button
               onClick={async () => {
-                if (window.confirm('Delete this RFQ from MongoDB?')) {
+                const ok = await confirm({
+                  title: 'Delete RFQ Confirmation',
+                  description: `Are you sure you want to delete RFQ ${rfq.rfqNumber}? This action cannot be undone.`,
+                  confirmLabel: 'Delete RFQ',
+                  cancelLabel: 'Cancel'
+                });
+                if (ok) {
                   await apiFetch(`/api/p2p/rfqs/${rfq.rfqId}`, { method: 'DELETE' });
                   navigate('/admin/rfqs');
                 }
@@ -1441,7 +1455,16 @@ export default function RfqDetailView() {
               <button type="button" disabled={awardRows.length >= quotesList.length} onClick={() => setAwardRows((current) => [...current, { quoteId: quotesList.find((quote) => !current.some((row) => row.quoteId === quote.quoteId))?.quoteId || '', containers: 1, remark: '' }])} className="inline-flex items-center gap-1 rounded-lg border border-teal-200 bg-white px-2.5 py-1.5 text-xs font-bold text-[#0d7676] hover:bg-teal-50 transition disabled:opacity-40">
                 <Plus className="h-3.5 w-3.5" />Add vendor allocation
               </button>
-              <p className="text-[10px] text-slate-500">Allocating whole container quantities.</p>
+              <p className="text-[10px] font-semibold text-slate-500">
+                Allocating {awardAllocated} of {targetContainers} container(s)
+                {targetContainers - awardAllocated > 0 ? (
+                  <span className="text-amber-700 font-bold"> ({targetContainers - awardAllocated} remaining unallocated)</span>
+                ) : targetContainers - awardAllocated === 0 ? (
+                  <span className="text-emerald-700 font-bold"> (Full 100% allocation)</span>
+                ) : (
+                  <span className="text-rose-600 font-bold"> ({awardAllocated - targetContainers} container(s) over total limit)</span>
+                )}
+              </p>
             </div>
 
             <div className={`rounded-xl border p-3 ${awardWorkflowError ? 'border-rose-200 bg-rose-50' : 'border-teal-200 bg-teal-50/50'}`}>

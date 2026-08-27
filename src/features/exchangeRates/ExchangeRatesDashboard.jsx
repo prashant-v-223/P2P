@@ -35,7 +35,7 @@ export default function ExchangeRatesDashboard() {
 
   const handleSaveAll = async () => {
     try {
-      const result = await dispatch(saveAllRates({ rates, updatedBy: user?.name || user?.email || 'Nikunj Bhagat' })).unwrap();
+      const result = await dispatch(saveAllRates({ rates, updatedBy: user?.name || user?.email || 'System Admin' })).unwrap();
       showToast({
         title: 'FX Rates Saved',
         description: 'Changes apply immediately to all new approval workflow submissions.',
@@ -219,7 +219,7 @@ export default function ExchangeRatesDashboard() {
                         </div>
                       </td>
                       <td className="py-4 px-6 text-slate-500 font-medium">
-                        {r.lastUpdatedBy || 'Nikunj Bhagat'}
+                        {r.lastUpdatedBy || user?.name || user?.email || 'System Admin'}
                       </td>
                       <td className="py-4 px-6 text-right">
                         {r.currency !== 'INR' && (

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
+import { useConfirm } from '../../components/ui/confirm-dialog';
 import {
   FileSpreadsheet, FileCheck, Plus, Search, Eye, Pencil, Copy, Trash2, Loader2,
   Box, MapPin, X, RefreshCw
@@ -13,28 +14,25 @@ import { getRfqAllocationSummary } from './rfqStatus';
 
 import { useSelector } from 'react-redux';
 import { userHasPermission } from '../../lib/permissions';
+import { TableActionButton } from '../../components/ui/table-action-button';
 
-const ActionButton = ({ onClick, icon: Icon, label, color = "slate", bordered = false }) => {
-  const colorMap = {
-    slate: { text: "text-slate-400", hover: "hover:text-slate-600 hover:bg-slate-50" },
-    blue: { text: "text-slate-400", hover: "hover:text-blue-600 hover:bg-blue-50" },
-    emerald: { text: "text-slate-400", hover: "hover:text-emerald-600 hover:bg-emerald-50" },
-    teal: { text: "text-teal-600", hover: "hover:bg-teal-50" },
-    rose: { text: "text-slate-400", hover: "hover:text-rose-600 hover:bg-rose-50" }
+const ActionButton = ({ onClick, icon: Icon, label, color = "slate" }) => {
+  const variantMap = {
+    slate: 'view',
+    blue: 'edit',
+    emerald: 'copy',
+    teal: 'reopen',
+    rose: 'delete'
   };
-
-  const styles = colorMap[color] || colorMap.slate;
-  const borderClass = bordered ? "border border-teal-200" : "";
+  const variant = variantMap[color] || 'view';
 
   return (
-    <button
+    <TableActionButton
       onClick={onClick}
+      icon={Icon}
       title={label}
-      className={`p-1.5 ${styles.text} ${styles.hover} rounded-lg transition ${borderClass}`}
-      aria-label={label}
-    >
-      <Icon className="w-4 h-4" />
-    </button>
+      variant={variant}
+    />
   );
 };
 
@@ -46,6 +44,7 @@ export default function RfqSourcingView() {
   const urlPage = Number(searchParams.get('page')) || 1;
 
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const { user } = useSelector((state) => state.auth || {});
   const userPerms = user?.permissions || user?.customPermissions;
   const canCreate = userHasPermission(user?.role, 'rfq.create', userPerms);
@@ -139,7 +138,13 @@ export default function RfqSourcingView() {
   // --- Actions ---
   const handleDelete = async (rfq, e) => {
     e.stopPropagation();
-    if (!window.confirm('Are you sure you want to delete this RFQ record?')) return;
+    const ok = await confirm({
+      title: 'Delete RFQ Record',
+      description: `Are you sure you want to delete RFQ ${rfq.rfqNumber}? This action cannot be undone.`,
+      confirmLabel: 'Delete RFQ',
+      cancelLabel: 'Cancel'
+    });
+    if (!ok) return;
     const targetId = rfq?.rfqId || rfq?._id;
     if (!targetId) {
       showToast({ title: 'Delete Blocked', description: 'RFQ id is missing for this record.', type: 'error' });
@@ -178,7 +183,13 @@ export default function RfqSourcingView() {
 
   const handleClose = async (rfq, e) => {
     e.stopPropagation();
-    if (!window.confirm(`Are you sure you want to close RFQ ${rfq.rfqNumber}? Bidding will be locked.`)) return;
+    const ok = await confirm({
+      title: 'Close RFQ Confirmation',
+      description: `Are you sure you want to close RFQ ${rfq.rfqNumber}? Bidding will be locked.`,
+      confirmLabel: 'Close RFQ',
+      cancelLabel: 'Cancel'
+    });
+    if (!ok) return;
     try {
       const targetId = rfq.rfqId || rfq._id;
       const res = await apiFetch(`/api/p2p/rfqs/${targetId}/close`, { method: 'POST' });
@@ -221,12 +232,12 @@ export default function RfqSourcingView() {
   };
 
   return (
-    <div className="w-full space-y-5 font-sans pb-12 antialiased text-left">
+    <div className="w-full space-y-4 pb-8 text-left font-sans antialiased">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">RFQ Management</h1>
-          <p className="text-xs text-slate-500 font-medium mt-0.5">Create and manage Request for Quotations</p>
+          <p className="mt-1 text-sm font-medium text-slate-500">Create and manage requests for quotations</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {canCreate && (
@@ -238,12 +249,12 @@ export default function RfqSourcingView() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs">
-        <div className="relative w-full sm:w-80">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search RFQ number, title..." className="w-full pl-9 pr-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white" />
+      <div className="flex flex-col items-stretch justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-2xs sm:flex-row sm:items-center">
+        <div className="relative w-full sm:max-w-xl sm:flex-1">
+          <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by RFQ number, title or PO number..." className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-3.5 text-sm font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0d7676]" />
         </div>
-        <div className="w-44">
+        <div className="w-full sm:w-56">
           <SearchableSelect
             options={[{ label: 'All Status', value: 'All' }, { label: 'Published', value: 'Published' }, { label: 'Pending Approval', value: 'Pending Approval' }, { label: 'Awarded', value: 'Awarded' }, { label: 'Expired', value: 'Expired' }]}
             value={statusFilter} onChange={(val) => { setCurrentPage(1); setStatusFilter(val); }} size="sm" searchable={false}
@@ -259,13 +270,19 @@ export default function RfqSourcingView() {
           <div className="py-20 px-4 flex flex-col items-center justify-center text-center space-y-2"><FileSpreadsheet className="w-10 h-10 text-slate-300 stroke-[1.5]" /><h3 className="text-xs font-bold text-slate-700">No RFQs found</h3><p className="text-[11px] text-slate-400 font-medium">Adjust filters or create a new RFQ.</p></div>
         ) : (
           <div className="overflow-x-auto table-scrollbar">
-            <table className="w-full text-left text-[11px] border-collapse">
-              <thead className="bg-slate-50 border-b border-slate-200 text-[9.5px] font-extrabold uppercase tracking-tight text-slate-500">
+            <table className="rfq-table border-collapse text-left text-xs">
+              <colgroup>
+                <col className="w-11" /><col className="w-[120px]" /><col className="w-[110px]" />
+                <col className="w-[380px]" /><col className="w-[175px]" /><col className="w-[175px]" />
+                <col className="w-20" /><col className="w-[70px]" /><col className="w-[145px]" />
+                <col className="w-[190px]" /><col className="w-[150px]" />
+              </colgroup>
+              <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold uppercase tracking-wide text-slate-500">
                 <tr>
                   <th className="py-2.5 px-2 w-7 text-center whitespace-nowrap">#</th>
                   <th className="py-2.5 px-2.5 w-28 whitespace-nowrap">RFQ Number</th>
                   <th className="py-2.5 px-2.5 w-24 whitespace-nowrap">Linked PO</th>
-                  <th className="py-2.5 px-2.5 whitespace-nowrap">Shipper name</th>
+                  <th className="px-3 py-3 whitespace-nowrap">Shipper name</th>
                   <th className="py-2.5 px-2.5 w-32 whitespace-nowrap">POL</th>
                   <th className="py-2.5 px-2.5 w-32 whitespace-nowrap">POD</th>
                   <th className="py-2.5 px-2 text-center whitespace-nowrap">Ctr Type</th>
@@ -293,20 +310,20 @@ export default function RfqSourcingView() {
 
                   return (
                     <tr key={rfq._id || rfq.rfqId} onClick={() => navigate(`/admin/rfqs/${targetRfqId}`)} className="hover:bg-slate-50/80 transition cursor-pointer group">
-                      <td className="py-2 px-2 text-center font-mono text-slate-400 font-bold text-[10px] whitespace-nowrap">{rowNum}</td>
-                      <td className="py-2 px-2.5 font-bold text-[#0d7676] font-mono text-[11px] group-hover:underline whitespace-nowrap">{rfq.rfqNumber || '—'}</td>
-                      <td className="py-2 px-2.5 font-mono text-slate-700 font-bold text-[11px] whitespace-nowrap">{rfq.sapPoNumber || rfq.poId || '—'}</td>
+                      <td className="px-2 py-3 text-center font-mono text-[11px] font-bold text-slate-400 whitespace-nowrap">{rowNum}</td>
+                      <td className="px-2.5 py-3 font-mono text-xs font-bold text-[#0d7676] group-hover:underline whitespace-nowrap">{rfq.rfqNumber || '—'}</td>
+                      <td className="px-2.5 py-3 font-mono text-xs font-bold text-slate-700 whitespace-nowrap">{rfq.sapPoNumber || rfq.poId || '—'}</td>
         <td
-  className="py-2 px-2.5 font-bold text-slate-900 text-[11px] whitespace-nowrap max-w-[200px] truncate"
+  className="px-3 py-3 font-bold text-slate-900 whitespace-nowrap truncate"
   title={rfq.title}
 >
   {rfq.title}
 </td>
-                      <td className="py-2 px-2.5 font-medium text-slate-700 text-[11px] whitespace-nowrap">{origin}</td>
-                      <td className="py-2 px-2.5 font-medium text-slate-700 text-[11px] whitespace-nowrap">{dest}</td>
-                      <td className="py-2 px-2 text-center font-medium text-slate-700 text-[11px] whitespace-nowrap">{containerType}</td>
-                      <td className="py-2 px-2 text-center font-bold text-slate-800 text-[11px] whitespace-nowrap">{containerCount}</td>
-                      <td className="py-2 px-2.5 text-[11px] whitespace-nowrap">
+                      <td className="px-2.5 py-3 text-xs font-medium text-slate-700 whitespace-nowrap">{origin}</td>
+                      <td className="px-2.5 py-3 text-xs font-medium text-slate-700 whitespace-nowrap">{dest}</td>
+                      <td className="px-2 py-3 text-center text-xs font-medium text-slate-700 whitespace-nowrap">{containerType}</td>
+                      <td className="px-2 py-3 text-center text-xs font-bold text-slate-800 whitespace-nowrap">{containerCount}</td>
+                      <td className="px-2.5 py-3 text-xs whitespace-nowrap">
                         <span className={`
     ${isRfqClosed(rfq)
                             ? 'text-red-600 font-semibold bg-red-50 px-1.5 py-0.5 rounded text-[10.5px]'
@@ -319,12 +336,12 @@ export default function RfqSourcingView() {
                           )}
                         </span>
                       </td>
-                      <td className="py-2 px-2.5 whitespace-nowrap">
+                      <td className="px-2.5 py-3 whitespace-nowrap">
                         {getStatusBadge(rfq)}
                       </td>
-                      <td className="py-2 px-2.5 text-right sticky right-0 bg-white group-hover:bg-slate-50/90 border-l border-slate-200 shadow-[-6px_0_12px_-2px_rgba(0,0,0,0.08)] z-10 whitespace-nowrap">
+                      <td className="sticky right-0 z-10 border-l border-slate-200 bg-white px-2.5 py-2 text-right shadow-[-6px_0_12px_-2px_rgba(0,0,0,0.08)] group-hover:bg-slate-50 whitespace-nowrap">
                         <div
-                          className="flex items-center justify-end gap-1"
+                          className="flex items-center justify-end gap-0.5"
                           onClick={(e) => e.stopPropagation()}
                         >
                           {/* View Button */}
@@ -374,15 +391,6 @@ export default function RfqSourcingView() {
                               />
                           )}
 
-                          {/* Delete Button */}
-                          {canDeleteRfq && (
-                            <ActionButton
-                              onClick={(e) => handleDelete(rfq, e)}
-                              icon={Trash2}
-                              label="Delete RFQ"
-                              color="rose"
-                            />
-                          )}
                         </div>
                       </td>
                     </tr>

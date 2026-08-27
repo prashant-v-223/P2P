@@ -7,8 +7,9 @@ import { SearchableSelect } from '../../components/ui/searchable-select';
 import { CustomInput } from '../../components/ui/custom-input';
 import { useToast } from '../../components/ui/toast';
 import { userHasPermission } from '../../lib/permissions';
-import { exportCsv } from '../../utils/exportCsv';
 import { SortableHeader, useUrlSorting } from '../../components/ui/sortable-header';
+import { TableActionButton } from '../../components/ui/table-action-button';
+import { exportInvoicePaymentsCsv } from '../../utils/exportCsv';
 import MarkAsPaidModal from '../../components/common/MarkAsPaidModal';
 import { 
   FileCheck2, 
@@ -277,7 +278,7 @@ const getInitials = (name) => {
             <Plus className="w-4 h-4" /> New Invoice Payment
           </button>
         )}
-        <button type="button" onClick={() => exportCsv('invoice-payments.csv', invoices)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-2xs">
+        <button type="button" onClick={() => exportInvoicePaymentsCsv(invoices)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-2xs">
           <Download className="h-4 w-4 text-slate-500" /> Export CSV
         </button>
       </div>
@@ -547,42 +548,38 @@ const getInitials = (name) => {
                       {/* ACTIONS */}
                       <td className="py-3 px-3.5 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <button
+                          <TableActionButton
                             onClick={() => navigate(`/admin/invoice-payments/${inv.invoicePaymentId}`)}
                             title="View Invoice Details"
-                            className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-slate-900 transition-colors"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                          </button>
+                            icon={Eye}
+                            variant="view"
+                          />
 
                           {canMarkPaid && inv.status === 'approved' && (
-                            <button
+                            <TableActionButton
                               onClick={() => { setSelectedInvoice(inv); setShowPayoutModal(true); }}
                               title="Mark Invoice as Paid"
-                              className="p-1.5 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition-colors"
-                            >
-                              <CreditCard className="w-3.5 h-3.5" />
-                            </button>
+                              icon={CreditCard}
+                              variant="success"
+                            />
                           )}
 
                           {canEdit && !['approved', 'paid', 'completed'].includes(String(inv.status || '').toLowerCase()) && (
-                            <button
+                            <TableActionButton
                               onClick={() => navigate(`/admin/invoice-payments/${inv.invoicePaymentId}/edit`)}
                               title="Edit Invoice & Resubmit for Approval"
-                              className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-slate-900 transition-colors cursor-pointer"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                            </button>
+                              icon={Edit3}
+                              variant="edit"
+                            />
                           )}
 
                           {canDelete && !String(inv.status || '').toLowerCase().includes('pending') && !String(inv.status || '').toLowerCase().includes('approval') && !String(inv.status || '').toLowerCase().includes('approved') && !String(inv.status || '').toLowerCase().includes('paid') && (
-                            <button
+                            <TableActionButton
                               onClick={() => handleDeleteInvoice(inv.invoicePaymentId, inv.status)}
                               title="Delete Invoice"
-                              className="p-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-600 transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                              icon={Trash2}
+                              variant="delete"
+                            />
                           )}
                         </div>
                       </td>

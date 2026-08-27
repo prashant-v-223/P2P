@@ -164,27 +164,7 @@ export const ROLE_PERMISSIONS = {
     'logistics-providers.view'
   ],
 
-  'procurement_manager': [
-    'dashboard.view',
-    'purchase-orders.view',
-    'advance-payments.view',
-    'invoice-payments.view',
-    'logistics-payments.view',
-    'custom-duty.view',
-    'blank-invoices.view',
-    'approvals.view',
-    'rfq.view',
-    'exchange-rates.view',
-    'vendors.view',
-    'workflows.view',
-    'users.view',
-    'users.create',
-    'users.edit',
-    'sap.view',
-    'custom-agents.view',
-    'logistics-providers.view'
-  ],
-  'Procurement Manager': [
+  'Procurement Head': [
     'dashboard.view',
     'purchase-orders.view',
     'advance-payments.view',
