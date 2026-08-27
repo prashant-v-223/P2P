@@ -313,12 +313,12 @@ export default function RfqSourcingView() {
                       <td className="px-2 py-3 text-center font-mono text-[11px] font-bold text-slate-400 whitespace-nowrap">{rowNum}</td>
                       <td className="px-2.5 py-3 font-mono text-xs font-bold text-[#0d7676] group-hover:underline whitespace-nowrap">{rfq.rfqNumber || '—'}</td>
                       <td className="px-2.5 py-3 font-mono text-xs font-bold text-slate-700 whitespace-nowrap">{rfq.sapPoNumber || rfq.poId || '—'}</td>
-        <td
-  className="px-3 py-3 font-bold text-slate-900 whitespace-nowrap truncate"
-  title={rfq.title}
->
-  {rfq.title}
-</td>
+                      <td
+                        className="px-3 py-3 font-bold text-slate-900 whitespace-nowrap truncate"
+                        title={rfq.title}
+                      >
+                        {rfq.title}
+                      </td>
                       <td className="px-2.5 py-3 text-xs font-medium text-slate-700 whitespace-nowrap">{origin}</td>
                       <td className="px-2.5 py-3 text-xs font-medium text-slate-700 whitespace-nowrap">{dest}</td>
                       <td className="px-2 py-3 text-center text-xs font-medium text-slate-700 whitespace-nowrap">{containerType}</td>
@@ -374,21 +374,21 @@ export default function RfqSourcingView() {
 
                           {/* Close/Reopen Button */}
                           {canEdit && canReopenRfq && (
-                              <ActionButton
-                                onClick={(e) => handleOpenReopenModal(rfq, e)}
-                                icon={RefreshCw}
-                                label="Reopen Closed RFQ"
-                                color="teal"
-                                bordered
-                              />
+                            <ActionButton
+                              onClick={(e) => handleOpenReopenModal(rfq, e)}
+                              icon={RefreshCw}
+                              label="Reopen Closed RFQ"
+                              color="teal"
+                              bordered
+                            />
                           )}
                           {canEdit && canCloseRfq && (
-                              <ActionButton
-                                onClick={(e) => handleClose(rfq, e)}
-                                icon={X}
-                                label="Close RFQ"
-                                color="rose"
-                              />
+                            <ActionButton
+                              onClick={(e) => handleClose(rfq, e)}
+                              icon={X}
+                              label="Close RFQ"
+                              color="rose"
+                            />
                           )}
 
                         </div>
