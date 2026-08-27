@@ -50,10 +50,7 @@ export default function RecordDbInfoDrawer({ entityId, entityType, recordData })
       const res = await apiFetch(`/api/p2p/audit/${queryId}`);
       if (res.ok) {
         const json = await res.json();
-        const rawLogs = (json.auditLogs || []).filter(log => {
-          const act = String(log.action || log.eventType || '').toLowerCase();
-          return !act.includes('delete');
-        });
+        const rawLogs = json.auditLogs || [];
 
         // Preserve all distinct step approvals and deduplicate only exact identical calls (same step, actor, and action within 3s)
         const dedupped = [];

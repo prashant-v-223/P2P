@@ -26,6 +26,12 @@ const getRefreshToken = () => {
 export const apiFetch = async (url, options = {}) => {
   const token = getAccessToken();
   const headers = { ...(options.headers || {}) };
+  const method = String(options.method || 'GET').toUpperCase();
+  if (method !== 'GET' && !Object.keys(headers).some((key) => key.toLowerCase() === 'x-request-id')) {
+    headers['X-Request-ID'] = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? `web-${crypto.randomUUID()}`
+      : `web-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
   const body = options.body;
   const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
   const hasContentType = Object.keys(headers).some((key) => key.toLowerCase() === 'content-type');

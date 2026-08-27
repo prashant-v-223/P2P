@@ -390,7 +390,7 @@ export const createVendor = async (req, res) => {
     }
 
     try {
-      await WorkflowAudit.create({
+      await WorkflowAudit.record({
         eventId: `wa-${crypto.randomUUID()}`,
         eventType: 'VENDOR_CREATED',
         entityType: 'Vendor',

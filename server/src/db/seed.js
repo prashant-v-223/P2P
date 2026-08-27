@@ -96,6 +96,7 @@ export const DEFAULT_PERMISSIONS = [
   { id: 'perm-052', key: 'permissions.create', name: 'Create Permissions', module: 'Roles & Permissions', action: 'create-perms', description: 'Create new permission keys.', type: 'System', status: 'Active' },
   { id: 'perm-053', key: 'reports.view', name: 'View Hierarchy Reports', module: 'Reports', action: 'view', description: 'View advance, invoice and vendor reports within the organisation hierarchy.', type: 'System', status: 'Active' },
   { id: 'perm-054', key: 'reports.view-all', name: 'View All Hierarchy Reports', module: 'Reports', action: 'view-all', description: 'View reports for every user and vendor across the organisation.', type: 'System', status: 'Active' },
+  { id: 'perm-055', key: 'settlement-ledger.view', name: 'View Settlement Ledger', module: 'Settlement Ledger', action: 'view', description: 'View treasury payouts, bank references and the settlement audit trail.', type: 'System', status: 'Active' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -242,6 +243,7 @@ export const DEFAULT_ROLES = [
     type: 'System',
     status: 'Active',
     permissions: {
+      'settlement-ledger': ['view'],
       'dashboard': ['view'],
       'logistics-payments': ['view', 'mark-paid'],
       'advance-payments': ['view', 'mark-paid'],

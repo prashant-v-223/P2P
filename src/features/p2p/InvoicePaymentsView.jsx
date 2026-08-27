@@ -8,6 +8,7 @@ import { CustomInput } from '../../components/ui/custom-input';
 import { useToast } from '../../components/ui/toast';
 import { userHasPermission } from '../../lib/permissions';
 import { exportCsv } from '../../utils/exportCsv';
+import { SortableHeader, useUrlSorting } from '../../components/ui/sortable-header';
 import MarkAsPaidModal from '../../components/common/MarkAsPaidModal';
 import { 
   FileCheck2, 
@@ -57,6 +58,7 @@ export default function InvoicePaymentsView() {
   const statusFilter = searchParams.get('status') || 'All Status';
   const matchFilter = searchParams.get('threeWayMatch') || 'All Match';
   const scopeFilter = searchParams.get('scope') || 'team';
+  const { sortBy, sortOrder, onSort } = useUrlSorting(searchParams, setSearchParams);
 
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -88,7 +90,7 @@ export default function InvoicePaymentsView() {
 
   useEffect(() => {
     fetchInvoices();
-  }, [currentPage, searchTerm, statusFilter, matchFilter, scopeFilter]);
+  }, [currentPage, searchTerm, statusFilter, matchFilter, scopeFilter, pageSize, sortBy, sortOrder]);
 
   useEffect(() => {
     fetchAvailablePOs();
@@ -127,7 +129,9 @@ export default function InvoicePaymentsView() {
         q: searchTerm,
         status: statusFilter,
         threeWayMatch: matchFilter,
-        scope: scopeFilter
+        scope: scopeFilter,
+        sortBy,
+        sortOrder
       });
 
       const res = await apiFetch(`/api/p2p/invoices?${params.toString()}`);
@@ -349,18 +353,18 @@ const getInitials = (name) => {
             <thead className="bg-slate-50/90 sticky top-0 z-10 text-slate-400 font-extrabold uppercase tracking-wider text-[10px] border-b border-slate-200 backdrop-blur-xs">
               <tr>
                 <th className="py-3.5 px-2 text-center">#</th>
-                <th className="py-3.5 px-3.5 whitespace-nowrap">REFERENCE</th>
+                <SortableHeader sortKey="invoicePaymentId" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-3.5 whitespace-nowrap">REFERENCE</SortableHeader>
                 <th className="py-3.5 px-2.5 whitespace-nowrap">ASN</th>
-                <th className="py-3.5 px-3.5">PO NUMBER</th>
-                <th className="py-3.5 px-3.5">INVOICE NO.</th>
-                <th className="py-3.5 px-3.5">VENDOR</th>
+                <SortableHeader sortKey="sapPoNumber" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-3.5">PO NUMBER</SortableHeader>
+                <SortableHeader sortKey="invoiceNumber" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-3.5">INVOICE NO.</SortableHeader>
+                <SortableHeader sortKey="vendorName" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-3.5">VENDOR</SortableHeader>
                 {/* <th className="py-3.5 px-3.5 whitespace-nowrap">PURCHASE CONNECTION</th> */}
-                <th className="py-3.5 px-3.5 text-right">INVOICE AMT</th>
-                <th className="py-3.5 px-2.5 text-center whitespace-nowrap">TDS</th>
-                <th className="py-3.5 px-3.5 text-right">NET PAYABLE</th>
+                <SortableHeader sortKey="grossAmount" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-3.5 text-right">INVOICE AMT</SortableHeader>
+                <SortableHeader sortKey="tdsAmount" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-2.5 text-center whitespace-nowrap">TDS</SortableHeader>
+                <SortableHeader sortKey="netPayable" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-3.5 text-right">NET PAYABLE</SortableHeader>
                 {/* <th className="py-3.5 px-3.5 text-center">3-WAY MATCH</th> */}
-                <th className="py-3.5 px-3.5 whitespace-nowrap">SUBMITTED</th>
-                <th className="py-3.5 px-3.5 whitespace-nowrap">DUE DATE</th>
+                <SortableHeader sortKey="createdAt" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-3.5 whitespace-nowrap">SUBMITTED</SortableHeader>
+                <SortableHeader sortKey="paymentDueDate" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-3.5 whitespace-nowrap">DUE DATE</SortableHeader>
                 <th className="py-3.5 px-3.5 whitespace-nowrap">APPROVAL STAGE</th>
                 <th className="py-3.5 px-3.5 text-right">ACTIONS</th>
               </tr>

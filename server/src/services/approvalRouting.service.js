@@ -83,10 +83,6 @@ export async function resolveVendorOwnerUser(rawVendorQuery) {
           || internalUsersMap.get(String(v.userId))
           || internalUsers.find(u => u.name === v.assignedPurchaseManager || u.name === v.buyerName || u.name === v.createdBy);
 
-        if (!linkedU && internalUsers.length > 0) {
-          linkedU = internalUsers[uniqueVendors.length % internalUsers.length];
-        }
-
         v.linkedUserDoc = linkedU;
         uniqueVendors.push(v);
       }
@@ -126,7 +122,7 @@ export async function attachApprovers(steps, requester) {
   }
 
   // Get the complete requester object with hierarchy
-  const requesterUser = await User.findOne({
+  let requesterUser = await User.findOne({
     $or: [
       { id: requester.id || requester.userId },
       { email: requester.email },
@@ -134,13 +130,15 @@ export async function attachApprovers(steps, requester) {
     ]
   }).lean();
 
+  // Vendor portal identities are not internal User records. Resolve their
+  // genuine Vendor Directory link before falling back to a role pool.
+  const rawVendorQuery = requester?.vendorName || requester?.supplierId || requester?.vendorId;
+  const vendorOwnerUser = await resolveVendorOwnerUser(rawVendorQuery);
+  if (!requesterUser && vendorOwnerUser) requesterUser = vendorOwnerUser;
+
   if (!requesterUser) {
     return await attachFallbackApprovers(steps);
   }
-
-  // Check if vendor is linked to a specific user (e.g. Drashti Malaviya -> Vaibhav Parekh)
-  const rawVendorQuery = requester?.vendorName || requester?.supplierId || requester?.vendorId;
-  const vendorOwnerUser = await resolveVendorOwnerUser(rawVendorQuery);
 
   // Process each step
   const resolvedSteps = await Promise.all(
@@ -359,17 +357,22 @@ async function attachFallbackApprovers(steps) {
   return Promise.all(
     steps.map(async (step, index) => {
       const roleKey = step.roleKey || step.roleName;
-      const approver = await findAnyUserWithRole(roleKey);
+      const roleUsers = await User.find({ status: 'Active' }).lean();
+      const approverPool = roleUsers
+        .filter((user) => isRoleMatchingStep(user.role, roleKey, false))
+        .map((user) => ({ id: user.id || user.userId, name: user.name, role: user.role, email: user.email }));
       
       return {
         ...step,
         step: step.step || (index + 1),
-        assignedApproverId: approver?.id || null,
-        assignedApproverName: approver?.name || null,
-        assignedApproverRole: approver?.role || roleKey,
-        assignedApproverEmail: approver?.email || null,
+        assignedApproverId: null,
+        assignedApproverName: null,
+        assignedApproverRole: roleKey,
+        assignedApproverEmail: null,
+        isPoolApproval: true,
+        approverPool,
         statusKey: step.statusKey || `Pending ${step.title || 'Approval'}`,
-        resolutionMethod: approver?.resolutionMethod || 'fallback'
+        resolutionMethod: 'role_pool_unlinked_vendor'
       };
     })
   );
@@ -470,100 +473,46 @@ export async function resolveApprovalChain(moduleType, amount, requester) {
 export async function resolveVendorPurchaseManager(vendorId, poNumber = null, transactionSnapshot = {}) {
   try {
     const { Vendor } = await import('../models/Vendor.js');
-    const { PurchaseOrder } = await import('../models/PurchaseOrder.js');
-
     let connectedUser = null;
 
-    // 1. Check PO for connected procurement user
-    const poRef = poNumber || transactionSnapshot?.poNumber;
-    if (poRef) {
-      const po = await PurchaseOrder.findOne({ $or: [{ poNumber: poRef }, { sapPoNumber: poRef }] }).lean();
-      if (po) {
-        const creatorRef = po.createdById || po.createdBy || po.purchaseManagerId || po.buyerEmail;
-        if (creatorRef) {
-          connectedUser = await User.findOne({
-            $or: [{ id: creatorRef }, { userId: creatorRef }, { email: creatorRef }, { name: creatorRef }],
-            status: 'Active'
-          }).lean();
-        }
-      }
-    }
-
-    // 2. Check Vendor record if PO connection not found
-    if (!connectedUser && vendorId) {
+    // 1. Vendor Directory's explicit Linked User is authoritative.
+    if (vendorId) {
       const vendor = await Vendor.findOne({
         $or: [{ id: vendorId }, { sapVendorCode: vendorId }, { supplierId: vendorId }, { vendorId }]
       }).lean();
 
-      const mgrRef = vendor?.purchaseManagerId || vendor?.assignedPurchaseManager || vendor?.userId;
-      if (mgrRef) {
-        const vUser = await User.findOne({
-          $or: [{ id: mgrRef }, { userId: mgrRef }, { email: mgrRef }]
+      const linkRefs = [
+        vendor?.assignedPurchaseManagerId, vendor?.buyerId, vendor?.userId,
+        vendor?.assignedPurchaseManager, vendor?.buyerName
+      ].filter(Boolean);
+      if (linkRefs.length) {
+        connectedUser = await User.findOne({
+          status: 'Active',
+          $or: [
+            { id: { $in: linkRefs } }, { userId: { $in: linkRefs } },
+            { email: { $in: linkRefs } }, { name: { $in: linkRefs } }
+          ]
         }).lean();
-
-        if (vUser) {
-          if (['procurement', 'procurement_head', 'procurement_manager', 'purchase_manager', 'purchase_head'].some(r => (vUser.role || '').toLowerCase().includes(r))) {
-            connectedUser = vUser;
-          } else if (vUser.managerId || vUser.managerName) {
-            connectedUser = await User.findOne({
-              $or: [{ id: vUser.managerId }, { userId: vUser.managerId }, { name: vUser.managerName }],
-              status: 'Active'
-            }).lean();
-          }
-        }
       }
     }
 
-    // CASE A: Connected Procurement user exists! Send to connected user's SENIOR manager!
+    // A genuine linked procurement manager receives the first approval. If
+    // the linked user is an individual contributor, walk up to the matching
+    // Purchase Manager in their reporting line.
     if (connectedUser) {
-      const seniorManager = await findParentManager(connectedUser, 'procurement_head');
-      const targetUser = seniorManager || connectedUser;
+      const isManager = isRoleMatchingStep(connectedUser.role, 'purchase_manager', false);
+      const parentManager = isManager ? null : await findParentManager(connectedUser, 'purchase_manager');
+      const targetUser = parentManager || (isManager ? connectedUser : null);
+      if (!targetUser) return null;
       return {
         id: targetUser.id || targetUser.userId,
         name: targetUser.name,
-        role: targetUser.role || 'Procurement Head',
+        role: targetUser.role || 'Purchase Manager',
         email: targetUser.email,
-        resolutionMethod: seniorManager ? 'vendor_connected_senior_manager' : 'vendor_connected_manager'
+        resolutionMethod: parentManager ? 'vendor_linked_parent_manager' : 'vendor_linked_manager'
       };
     }
-
-    // CASE B: NO connected Procurement user! Route to 2nd Level Senior Procurement Managers (Pooja Bhat, Vaibhav Parekh, Yash Naik)
-    const level2Seniors = await User.find({
-      $or: [
-        { name: { $in: ['Pooja Bhat', 'Vaibhav Parekh', 'Yash Naik'] } },
-        { id: { $in: ['Pooja Bhat', 'Vaibhav Parekh', 'Yash Naik'] } }
-      ],
-      status: 'Active'
-    }).lean();
-
-    if (level2Seniors && level2Seniors.length > 0) {
-      const senior = level2Seniors[0];
-      return {
-        id: senior.id || senior.userId,
-        name: senior.name,
-        role: senior.role || 'Procurement Head',
-        email: senior.email,
-        resolutionMethod: 'level2_senior_procurement'
-      };
-    }
-
-    // Fallback: search by senior procurement role
-    const fallbackSeniors = await User.find({
-      role: { $in: ['procurement_head', 'Procurement Head', 'purchase_head', 'Purchase Head', 'procurement_manager'] },
-      status: 'Active'
-    }).lean();
-
-    if (fallbackSeniors && fallbackSeniors.length > 0) {
-      const senior = fallbackSeniors[0];
-      return {
-        id: senior.id || senior.userId,
-        name: senior.name,
-        role: senior.role || 'Procurement Head',
-        email: senior.email,
-        resolutionMethod: 'level2_senior_procurement_fallback'
-      };
-    }
-
+    // No genuine link: caller keeps the workflow step as a role pool.
     return null;
   } catch (err) {
     console.warn('[resolveVendorPurchaseManager] Error:', err.message);
@@ -896,4 +845,4 @@ export async function repairAllOldPaymentRecords() {
   } catch (err) {
     console.error('[DB REPAIR ERROR] Failed to repair old records:', err.message);
   }
-}
+}

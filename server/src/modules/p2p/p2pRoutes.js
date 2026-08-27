@@ -90,7 +90,10 @@ async function getPaymentVisibility(req) {
   const visibleNames = new Set([loginUser.name].filter(Boolean));
 
   const userRoleLower = String(loginUser.role || req.user?.role || '').toLowerCase().trim();
-  const isTopExecutive = loginUser.canSeeAllRequests ||
+  const isProcurementUser = userRoleLower.includes('procurement') || userRoleLower.includes('purchase');
+  // Reporting-line visibility is a procurement ownership rule. Other teams
+  // retain their existing organisation-wide payment visibility.
+  const isTopExecutive = !isProcurementUser || loginUser.canSeeAllRequests ||
     ['admin', 'super_admin', 'system_admin', 'cfo', 'md', 'procurement_head', 'purchase_head'].includes(userRoleLower) ||
     userRoleLower === 'procurement head' || userRoleLower === 'purchase head';
 
@@ -161,8 +164,12 @@ async function getPaymentVisibility(req) {
   const connectedVendors = await Vendor.find({
     $or: [
       { createdBy: { $in: visibleIdList } },
+      { createdBy: { $in: visibleNameList } },
+      { userId: { $in: visibleIdList } },
+      { assignedPurchaseManagerId: { $in: visibleIdList } },
       { assignedPurchaseManager: { $in: visibleNameList } },
-      { purchaseManagerId: { $in: visibleIdList } }
+      { buyerId: { $in: visibleIdList } },
+      { buyerName: { $in: visibleNameList } }
     ]
   }, { id: 1, sapVendorCode: 1, supplierId: 1, companyName: 1 }).lean().catch(() => []);
 
@@ -661,7 +668,7 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
   });
 
   // Create audit log
-  await WorkflowAudit.create({
+  await WorkflowAudit.record({
     eventId: `wa-${crypto.randomUUID()}`,
     eventType: 'APPROVAL_SUBMITTED',
     actorId: requester?.id || requestedById || 'system',
@@ -806,6 +813,9 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
     const search = String(req.query.q || req.query.search || '').trim();
     const statusFilter = String(req.query.status || '').trim();
     const typeFilter = String(req.query.type || '').trim();
+    const poSortFields = new Set(['createdAt', 'poNumber', 'sapPoNumber', 'supplierName', 'documentDate', 'dueDate', 'totalAmount', 'status']);
+    const sortBy = poSortFields.has(req.query.sortBy) ? req.query.sortBy : 'createdAt';
+    const sortDirection = req.query.sortOrder === 'asc' ? 1 : -1;
 
     const filter = { isDeleted: { $ne: true } };
 
@@ -865,7 +875,7 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
     const totalPages = Math.max(1, Math.ceil(total / size));
     const safePage = Math.min(page, totalPages);
     const pos = await PurchaseOrder.find(filter)
-      .sort({ createdAt: -1 }).skip((safePage - 1) * size).limit(size).lean();
+      .sort({ [sortBy]: sortDirection, _id: sortDirection }).skip((safePage - 1) * size).limit(size).lean();
 
     const poRefs = pos.flatMap((po) => [po.poNumber, po.sapPoNumber]).filter(Boolean);
     const vendorKeys = pos.flatMap((po) => [po.supplierId, po.supplierName]).filter(Boolean);
@@ -1116,6 +1126,9 @@ const getAdvancesHandler = async (req, res) => {
     const statusFilter = String(
       req.query.status || ""
     ).trim();
+    const advanceSortFields = new Set(['createdAt', 'advanceId', 'sapPoNumber', 'poId', 'vendorName', 'createdBy', 'amount', 'adjustedAmount', 'dueDate', 'status']);
+    const sortBy = advanceSortFields.has(req.query.sortBy) ? req.query.sortBy : 'createdAt';
+    const sortDirection = req.query.sortOrder === 'asc' ? 1 : -1;
 
     // ==================================================
     // 1. GET LOGGED-IN USER
@@ -1222,7 +1235,7 @@ const getAdvancesHandler = async (req, res) => {
     };
 
     const userRole = String(loginUser.role || req.user?.role || '').toLowerCase().trim();
-    const isProcurementRole = userRole.includes('procurement') || userRole.includes('purchase') || userRole === 'inner_team';
+    const isProcurementRole = userRole.includes('procurement') || userRole.includes('purchase');
     const canSeeAllAdvances = loginUser.canSeeAllRequests || !isProcurementRole;
     if (canSeeAllAdvances) {
       users.forEach((user) => teamUsers.set(user.id, user));
@@ -1251,6 +1264,26 @@ const getAdvancesHandler = async (req, res) => {
 
     const allowedUserIds = [...new Set(allowedUsers.map((user) => user.id).filter(Boolean))];
 
+    // Vendor Directory's "Linked User" is the ownership source for
+    // procurement visibility. Include vendors linked to the current user or
+    // any descendant in their reporting tree.
+    const linkedVendors = !canSeeAllAdvances
+      ? await Vendor.find({
+          isDeleted: { $ne: true },
+          $or: [
+            { userId: { $in: allowedUserIds } },
+            { assignedPurchaseManagerId: { $in: allowedUserIds } },
+            { assignedPurchaseManager: { $in: allowedUserNames } },
+            { buyerId: { $in: allowedUserIds } },
+            { buyerName: { $in: allowedUserNames } },
+            { createdBy: { $in: [...allowedUserIds, ...allowedUserNames] } }
+          ]
+        }).select('id vendorId supplierId sapVendorCode companyName').lean().catch(() => [])
+      : [];
+    const linkedVendorRefs = [...new Set(linkedVendors
+      .flatMap((vendor) => [vendor.id, vendor.vendorId, vendor.supplierId, vendor.sapVendorCode, vendor.companyName])
+      .filter(Boolean))];
+
     // ==================================================
     // 6. ADVANCE PAYMENT FILTER
     // ==================================================
@@ -1262,7 +1295,13 @@ const getAdvancesHandler = async (req, res) => {
           { requestedById: { $in: allowedUserIds } },
           { userId: { $in: allowedUserIds } },
           { createdBy: { $in: [...allowedUserIds, ...allowedUserNames] } },
-          { requestedBy: { $in: [...allowedUserIds, ...allowedUserNames] } }
+          { requestedBy: { $in: [...allowedUserIds, ...allowedUserNames] } },
+          ...(linkedVendorRefs.length ? [
+            { vendorId: { $in: linkedVendorRefs } },
+            { vendorName: { $in: linkedVendorRefs } },
+            { sapVendorCode: { $in: linkedVendorRefs } },
+            { supplierId: { $in: linkedVendorRefs } }
+          ] : [])
         ]
       } : {})
     };
@@ -1323,7 +1362,7 @@ const getAdvancesHandler = async (req, res) => {
 
     const advances =
       await AdvancePayment.find(filter)
-        .sort({ createdAt: -1 })
+        .sort({ [sortBy]: sortDirection, _id: sortDirection })
         .skip((safePage - 1) * size)
         .limit(size)
         .lean();
@@ -2084,7 +2123,7 @@ const createAdvanceHandler = async (req, res) => {
     await newAdv.save();
 
     try {
-      await WorkflowAudit.create({
+      await WorkflowAudit.record({
         eventId: `wa-${crypto.randomUUID()}`,
         eventType: 'ADVANCE_SUBMITTED',
         entityType: 'AdvancePayment',
@@ -2194,7 +2233,7 @@ const updateAdvanceHandler = async (req, res) => {
     await adv.save();
 
     try {
-      await WorkflowAudit.create({
+      await WorkflowAudit.record({
         eventId: `wa-${crypto.randomUUID()}`,
         eventType: 'ADVANCE_RESUBMITTED',
         entityType: 'AdvancePayment',
@@ -2228,7 +2267,7 @@ const deleteAdvanceHandler = async (req, res) => {
     if (adv) {
       if (!['draft', 'returned'].includes(adv.status)) return res.status(409).json({ success: false, error: 'Only a draft or returned advance can be deleted.' });
       try {
-        await WorkflowAudit.create({
+        await WorkflowAudit.record({
           eventId: `wa-${crypto.randomUUID()}`,
           eventType: 'ADVANCE_DELETED',
           entityType: 'AdvancePayment',
@@ -2375,7 +2414,18 @@ router.post('/advances/:id/payout', authenticateToken, authorizePermission('adva
   } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
 });
 
-router.get('/settlement-ledger', authenticateToken, async (req, res) => {
+const requireFinanceRoleForSettlementLedger = (req, res, next) => {
+  const normalizedRole = String(req.user?.role || '').toLowerCase().replace(/[\s_-]+/g, '');
+  if (normalizedRole !== 'finance') {
+    return res.status(403).json({
+      success: false,
+      error: 'Forbidden: Settlement Ledger is restricted to the Finance role.'
+    });
+  }
+  return next();
+};
+
+router.get('/settlement-ledger', authenticateToken, requireFinanceRoleForSettlementLedger, async (req, res) => {
   try {
     const dedicatedLedger = await PaymentLedger.find({}).sort({ createdAt: -1 }).lean().catch(() => []);
 
@@ -2492,8 +2542,12 @@ async function getPaymentOwnerFilter(req, visibility) {
   const createdVendors = await Vendor.find({
     $or: [
       { createdBy: { $in: [...visibility.ids, loggedInUserId].filter(Boolean) } },
+      { createdBy: { $in: [...visibility.names, loggedInUserName].filter(Boolean) } },
+      { userId: { $in: [...visibility.ids, loggedInUserId].filter(Boolean) } },
+      { assignedPurchaseManagerId: { $in: [...visibility.ids, loggedInUserId].filter(Boolean) } },
       { assignedPurchaseManager: { $in: [...visibility.names, loggedInUserName].filter(Boolean) } },
-      { purchaseManagerId: { $in: [...visibility.ids, loggedInUserId].filter(Boolean) } }
+      { buyerId: { $in: [...visibility.ids, loggedInUserId].filter(Boolean) } },
+      { buyerName: { $in: [...visibility.names, loggedInUserName].filter(Boolean) } }
     ],
     isDeleted: { $ne: true }
   }).select('id supplierId sapVendorCode companyName').lean().catch(() => []);
@@ -2572,6 +2626,9 @@ router.get('/invoices', authenticateToken, async (req, res) => {
     const matchFilter = String(
       req.query.threeWayMatch || req.query.match || ''
     ).trim();
+    const invoiceSortFields = new Set(['createdAt', 'invoicePaymentId', 'sapPoNumber', 'poId', 'invoiceNumber', 'vendorName', 'grossAmount', 'tdsAmount', 'netPayable', 'paymentDueDate', 'status']);
+    const sortBy = invoiceSortFields.has(req.query.sortBy) ? req.query.sortBy : 'createdAt';
+    const sortDirection = req.query.sortOrder === 'asc' ? 1 : -1;
 
     const visibility = await getPaymentVisibility(req);
 
@@ -2666,7 +2723,7 @@ router.get('/invoices', authenticateToken, async (req, res) => {
     );
 
     const invoices = await InvoicePayment.find(filter)
-      .sort({ createdAt: -1 })
+      .sort({ [sortBy]: sortDirection, _id: sortDirection })
       .skip((safePage - 1) * size)
       .limit(size)
       .lean();
@@ -3049,6 +3106,8 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         },
         status: 'pending',
         createdBy: req.user?.name || req.user?.email || 'System User',
+        createdByType: req.user?.role === 'Vendor' ? 'vendor' : 'user',
+        createdByVendorId: req.user?.role === 'Vendor' ? vendorIdFinal : '',
         requestedById: req.user?.id || req.user?.email || 'system',
         userId: req.user?.id || req.user?.email || 'system',
         requestedBy: req.user?.name || requestedBy || 'Finance Team'
@@ -3066,7 +3125,12 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         requestedBy: req.user?.name || requestedBy || 'Finance Team',
         requestedById: req.user?.id || req.user?.email,
         requestId: req.headers['x-request-id'],
-        transactionSnapshot: { netPayable, amountINR, grossAmount: numGross, currency: poCurrency, fxRate, poId: poRef, vendorId: vendorIdFinal, invoiceNumber: finalInvoiceNumber },
+        transactionSnapshot: {
+          netPayable, amountINR, grossAmount: numGross, currency: poCurrency, fxRate,
+          poId: poRef, vendorId: vendorIdFinal, invoiceNumber: finalInvoiceNumber,
+          createdByType: req.user?.role === 'Vendor' ? 'vendor' : 'user',
+          createdByVendorId: req.user?.role === 'Vendor' ? vendorIdFinal : ''
+        },
         wf
       });
 
@@ -3096,7 +3160,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       }
 
       try {
-        await WorkflowAudit.create({
+        await WorkflowAudit.record({
           eventId: `wa-${crypto.randomUUID()}`,
           eventType: 'INVOICE_SUBMITTED',
           entityType: 'InvoicePayment',
@@ -3209,7 +3273,10 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         requestedBy: req.user?.name || invoice.requestedBy || 'Finance Team',
         requestedById: req.user?.id || req.user?.email || invoice.requestedById,
         requestId: req.headers['x-request-id'],
-        transactionSnapshot: { amount: numGross, amountINR, currency: invCurrency, fxRate, poId: poRef, vendorId: invoice.vendorId },
+        transactionSnapshot: {
+          amount: numGross, amountINR, currency: invCurrency, fxRate, poId: poRef, vendorId: invoice.vendorId,
+          createdByType: invoice.createdByType || 'user', createdByVendorId: invoice.createdByVendorId || ''
+        },
         wf
       });
 
@@ -3222,7 +3289,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       await invoice.save();
 
       try {
-        await WorkflowAudit.create({
+        await WorkflowAudit.record({
           eventId: `wa-${crypto.randomUUID()}`,
           eventType: 'INVOICE_RESUBMITTED',
           entityType: 'InvoicePayment',
@@ -5655,7 +5722,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       } catch (_) { }
 
       try {
-        await WorkflowAudit.create({
+        await WorkflowAudit.record({
           entityType: 'LogisticsPayment',
           entityId: invoice.logisticsPaymentId,
           referenceNumber: invoice.referenceNumber,
@@ -6081,13 +6148,18 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         const logActor = String(log.actorName || log.performedBy || log.actionedBy || log.actorId || '').trim();
         const logRemarks = String(log.remarks || log.reason || '').trim();
 
-        // Check if we already have a log with the same action within a 10-second window
+        // Hide only the same persisted/logical event. Distinct actions close in
+        // time (for example CREATE then SUBMIT) must both remain visible.
         const existingIdx = combined.findIndex((item) => {
           const itemAction = String(item.action || item.eventType || '').toLowerCase().replace(/^(approval_|invoice_|advance_|rfq_)/, '').trim();
           const itemTime = new Date(item.createdAt || item.occurredAt || item.timestamp || 0).getTime();
-          const sameAction = (logAction === itemAction || (logAction.includes('approve') && itemAction.includes('approve')) || (logAction.includes('submit') && itemAction.includes('submit')) || (logAction.includes('create') && itemAction.includes('create')));
+          const itemActor = String(item.actorName || item.performedBy || item.actionedBy || item.actorId || '').trim().toLowerCase();
+          const sameAction = logAction === itemAction;
+          const sameActor = String(logActor).toLowerCase() === itemActor;
+          const sameStep = Number(log.step || 0) === Number(item.step || 0);
+          const sameRequest = log.requestId && item.requestId ? log.requestId === item.requestId : true;
           const timeDiff = Math.abs(logTime - itemTime);
-          return sameAction && timeDiff < 10000;
+          return sameAction && sameActor && sameStep && sameRequest && timeDiff < 3000;
         });
 
         if (existingIdx === -1) {

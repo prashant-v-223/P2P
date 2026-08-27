@@ -631,7 +631,7 @@ export const processApprovalAction = async (req, res) => {
     if (!approval) return res.status(409).json({ success: false, error: 'This approval changed while you were reviewing it. Refresh and try again.' });
     
     try {
-      await WorkflowAudit.create({
+      await WorkflowAudit.record({
         eventId: `wa-${crypto.randomUUID()}`,
         eventType: `APPROVAL_${rawAction.toUpperCase()}`,
         actorId: actingUserId,

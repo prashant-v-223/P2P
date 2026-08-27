@@ -6,6 +6,7 @@ import { SearchableSelect } from '../../components/ui/searchable-select';
 import { CustomInput } from '../../components/ui/custom-input';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { exportCsv } from '../../utils/exportCsv';
+import { SortableHeader, useUrlSorting } from '../../components/ui/sortable-header';
 import { 
   Search, 
   Eye, 
@@ -35,6 +36,7 @@ export default function PurchaseOrdersView() {
   const typeFilter = searchParams.get('type') || 'All Types';
   const statusFilter = searchParams.get('status') || 'All Status';
   const pageSizeParam = parseInt(searchParams.get('pageSize') || '10', 10);
+  const { sortBy, sortOrder, onSort } = useUrlSorting(searchParams, setSearchParams);
 
   const [pos, setPos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -44,7 +46,7 @@ export default function PurchaseOrdersView() {
 
   useEffect(() => {
     fetchPOs();
-  }, [currentPage, searchTerm, typeFilter, statusFilter, pageSize]);
+  }, [currentPage, searchTerm, typeFilter, statusFilter, pageSize, sortBy, sortOrder]);
 
   const updateUrlParams = (newParams) => {
     const params = new URLSearchParams(searchParams);
@@ -66,7 +68,9 @@ export default function PurchaseOrdersView() {
         size: pageSize,
         q: searchTerm,
         type: typeFilter,
-        status: statusFilter
+        status: statusFilter,
+        sortBy,
+        sortOrder
       });
 
       const res = await apiFetch(`/api/p2p/purchase-orders?${params.toString()}`);
@@ -201,14 +205,14 @@ export default function PurchaseOrdersView() {
             <thead className="bg-slate-50/90 sticky top-0 z-10 text-slate-400 font-extrabold uppercase tracking-wider text-[10px] border-b border-slate-200 backdrop-blur-xs">
               <tr>
                 <th className="py-3.5 px-4 text-center">#</th>
-                <th className="py-3.5 px-4">PO NUMBER</th>
-                <th className="py-3.5 px-4">VENDOR</th>
-                <th className="py-3.5 px-4">PO DATE</th>
-                <th className="py-3.5 px-4 whitespace-nowrap">DUE DATE</th>
+                <SortableHeader sortKey="poNumber" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-4">PO NUMBER</SortableHeader>
+                <SortableHeader sortKey="supplierName" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-4">VENDOR</SortableHeader>
+                <SortableHeader sortKey="documentDate" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-4">PO DATE</SortableHeader>
+                <SortableHeader sortKey="dueDate" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-4 whitespace-nowrap">DUE DATE</SortableHeader>
                 <th className="py-3.5 px-4 text-center">TYPE</th>
-                <th className="py-3.5 px-4 text-right">PO VALUE</th>
+                <SortableHeader sortKey="totalAmount" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-4 text-right">PO VALUE</SortableHeader>
                 <th className="py-3.5 px-4 text-center">ADVANCE PAID</th>
-                <th className="py-3.5 px-4 text-center">STATUS</th>
+                <SortableHeader sortKey="status" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-4 text-center">STATUS</SortableHeader>
                 <th className="py-3.5 px-4 text-right">ACTIONS</th>
               </tr>
             </thead>

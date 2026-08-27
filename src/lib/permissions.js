@@ -99,7 +99,8 @@ export const ROLE_PERMISSIONS = {
     'users.view',
     'users.create',
     'users.edit',
-    'workflows.view'
+    'workflows.view',
+    'settlement-ledger.view'
   ],
 
   'logistics': [
@@ -263,8 +264,8 @@ export const ROUTE_PERMISSIONS = {
   '/admin/exim': 'exim.view',
   '/p2p/bl-invoices': 'bl.view',
   '/approvals': 'approvals.view',
-  '/p2p/settlement-ledger': 'approvals.view',
-  '/admin/settlement-ledger': 'approvals.view',
+  '/p2p/settlement-ledger': 'settlement-ledger.view',
+  '/admin/settlement-ledger': 'settlement-ledger.view',
   '/management/vendors': 'vendors.view',
   '/admin/vendors': 'vendors.view',
   '/management/custom-agents': 'custom-agents.view',
@@ -291,6 +292,11 @@ export const isFinanceRole = (userRole) => {
   const r = String(userRole).toLowerCase().trim();
   return r.includes('finance') || r.includes('cfo') || r.includes('account');
 };
+
+// Settlement Ledger contains bank and UTR data and is intentionally narrower
+// than the wider "finance team" grouping (CFO/accounts included elsewhere).
+export const isSettlementLedgerRole = (userRole) =>
+  String(userRole || '').toLowerCase().replace(/[\s_-]+/g, '') === 'finance';
 
 /**
  * Normalize a role name for alias matching.
@@ -395,6 +401,12 @@ export function userHasPermission(userRole, permissionKey, customPermissions) {
 export function userCanAccessRoute(userRole, routePath, customPermissions) {
   // Normalize path (strip query params / trailing slashes)
   const cleanPath = (routePath || '/').split('?')[0].replace(/\/$/, '') || '/';
+
+  // Never allow approval permissions or the admin wildcard to expose bank
+  // settlement data to a non-Finance role.
+  if (cleanPath === '/p2p/settlement-ledger' || cleanPath === '/admin/settlement-ledger') {
+    return isSettlementLedgerRole(userRole);
+  }
 
   // Hierarchy Report (7-Day Payment Report): Accessible ONLY to Finance & Admin teams
   if (cleanPath === '/admin/hierarchy-report') {

@@ -58,7 +58,7 @@ async function findOverlap({ category, minAmount, maxAmount, priority = 100, exc
 }
 
 async function auditConfiguration(req, slab, eventType, previousState = null) {
-  await WorkflowAudit.create({ eventId: `wa-${crypto.randomUUID()}`, eventType, actorId: req.user?.id || req.user?.email || 'system', actorName: req.user?.name, actorRole: req.user?.role, entityType: 'Workflow', entityId: slab.definitionKey || slab.id, workflowId: slab.id, workflowVersion: slab.version, previousState, newState: slab.toObject ? slab.toObject() : slab, requestId: req.headers['x-request-id'] });
+  await WorkflowAudit.record({ eventId: `wa-${crypto.randomUUID()}`, eventType, actorId: req.user?.id || req.user?.email || 'system', actorName: req.user?.name, actorRole: req.user?.role, entityType: 'Workflow', entityId: slab.definitionKey || slab.id, workflowId: slab.id, workflowVersion: slab.version, previousState, newState: slab.toObject ? slab.toObject() : slab, requestId: req.headers['x-request-id'] });
 }
 
 export const getWorkflows = async (req, res) => {

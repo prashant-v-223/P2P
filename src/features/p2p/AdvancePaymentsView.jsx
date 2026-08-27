@@ -8,6 +8,7 @@ import { CustomInput } from '../../components/ui/custom-input';
 import { useToast } from '../../components/ui/toast';
 import { userHasPermission } from '../../lib/permissions';
 import { exportCsv } from '../../utils/exportCsv';
+import { SortableHeader, useUrlSorting } from '../../components/ui/sortable-header';
 import { 
   Search, 
   Eye, 
@@ -60,6 +61,7 @@ export default function AdvancePaymentsView() {
   const statusFilter = searchParams.get('status') || 'All Status';
   const scopeFilter = searchParams.get('scope') || 'team';
   const pageSizeParam = parseInt(searchParams.get('pageSize') || '10', 10);
+  const { sortBy, sortOrder, onSort } = useUrlSorting(searchParams, setSearchParams);
 
   const [advances, setAdvances] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -79,7 +81,7 @@ export default function AdvancePaymentsView() {
 
   useEffect(() => {
     fetchAdvances();
-  }, [currentPage, searchTerm, statusFilter, scopeFilter, pageSize]);
+  }, [currentPage, searchTerm, statusFilter, scopeFilter, pageSize, sortBy, sortOrder]);
 
   const updateUrlParams = (newParams) => {
     const params = new URLSearchParams(searchParams);
@@ -101,7 +103,9 @@ export default function AdvancePaymentsView() {
         size: pageSize,
         q: searchTerm,
         status: statusFilter,
-        scope: scopeFilter
+        scope: scopeFilter,
+        sortBy,
+        sortOrder
       });
 
       const res = await apiFetch(`/api/p2p/advances?${queryParams.toString()}`);
@@ -310,16 +314,16 @@ export default function AdvancePaymentsView() {
             <thead className="bg-slate-50/90 sticky top-0 z-10 text-slate-400 font-extrabold uppercase tracking-wider text-[10px] border-b border-slate-200 backdrop-blur-xs">
               <tr>
                 <th className="py-3.5 px-4 text-center">#</th>
-                <th className="py-3.5 px-4 whitespace-nowrap">REFERENCE</th>
-                <th className="py-3.5 px-4 whitespace-nowrap">PO NUMBER</th>
-                <th className="py-3.5 px-4">VENDOR</th>
-                <th className="py-3.5 px-4">REQUESTED BY</th>
-                <th className="py-3.5 px-4 text-right">AMOUNT</th>
-                <th className="py-3.5 px-4 text-right">ADJUSTED AMOUNT</th>
+                <SortableHeader sortKey="advanceId" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-4 whitespace-nowrap">REFERENCE</SortableHeader>
+                <SortableHeader sortKey="sapPoNumber" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-4 whitespace-nowrap">PO NUMBER</SortableHeader>
+                <SortableHeader sortKey="vendorName" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-4">VENDOR</SortableHeader>
+                <SortableHeader sortKey="createdBy" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-4">REQUESTED BY</SortableHeader>
+                <SortableHeader sortKey="amount" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-4 text-right">AMOUNT</SortableHeader>
+                <SortableHeader sortKey="adjustedAmount" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-4 text-right">ADJUSTED AMOUNT</SortableHeader>
                 <th className="py-3.5 px-4 text-center">% OF PO</th>
                 <th className="py-3.5 px-4 text-center">MODE</th>
-                <th className="py-3.5 px-4 text-center whitespace-nowrap">SUBMITTED</th>
-                <th className="py-3.5 px-4 text-center whitespace-nowrap">DUE DATE</th>
+                <SortableHeader sortKey="createdAt" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-4 text-center whitespace-nowrap">SUBMITTED</SortableHeader>
+                <SortableHeader sortKey="dueDate" activeKey={sortBy} direction={sortOrder} onSort={onSort} className="py-3.5 px-4 text-center whitespace-nowrap">DUE DATE</SortableHeader>
                 <th className="py-3.5 px-4 text-center whitespace-nowrap">APPROVAL STAGE</th>
                 <th className="py-3.5 px-4 text-right">ACTIONS</th>
               </tr>

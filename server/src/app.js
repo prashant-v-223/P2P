@@ -17,12 +17,14 @@ import documentsRouter from './modules/documents/documents.router.js';
 import permissionsRouter from './modules/permissions/permissions.router.js';
 import sapRouter from './modules/sap/sap.router.js';
 import { errorHandler } from './middleware/error.middleware.js';
+import { auditMutationMiddleware } from './services/auditLogger.service.js';
 
 const app = express();
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(auditMutationMiddleware);
 
 // Security Headers Middleware
 app.use((req, res, next) => {
