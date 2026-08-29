@@ -479,6 +479,12 @@ export default function PendingApprovalsView() {
               const activeStep = approval.currentStep
                 ? Math.min(approval.currentStep - 1, Math.max(0, steps.length - 1))
                 : getStepFromStatus(approval.type, approval.status);
+              const activeStepObject = typeof rawStepObjs[activeStep] === 'object' ? rawStepObjs[activeStep] : null;
+              const assignedNames = activeStepObject?.isPoolApproval && activeStepObject?.resolutionMethod === 'vendor_linked_user_pool'
+                ? [...new Set((activeStepObject.approverPool || []).map((person) => person.name).filter(Boolean))]
+                : activeStepObject?.isPoolApproval
+                  ? []
+                  : [...new Set([activeStepObject?.assignedApproverName, approval.assignedApproverName].filter(Boolean))];
 
               const isProcessing = processingId === approval.id;
               const isTerminal = TERMINAL_STATUSES.includes(approval.status);
@@ -673,6 +679,11 @@ export default function PendingApprovalsView() {
                                 <div>
                                   <span className="block whitespace-nowrap font-bold">{label}</span>
                                   {roleName && <span className="block text-[9px] font-normal capitalize text-slate-400">{roleName}</span>}
+                                  {isCurrent && assignedNames.length > 0 && (
+                                    <span className="block max-w-[280px] whitespace-normal text-[9px] font-semibold text-teal-700">
+                                      Assigned to: {assignedNames.join(', ')}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                               {index < steps.length - 1 && <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />}

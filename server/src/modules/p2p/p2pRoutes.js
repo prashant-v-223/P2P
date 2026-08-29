@@ -483,8 +483,11 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
   // submitted the request.
   let vendorLinkedManager = null;
   const vendorId = transactionSnapshot?.vendorId || transactionSnapshot?.createdByVendorId;
-  if (vendorId) {
-    vendorLinkedManager = await resolveVendorPurchaseManager(vendorId, poRef, transactionSnapshot);
+  if (vendorId || vendorName) {
+    vendorLinkedManager = await resolveVendorPurchaseManager(vendorId || vendorName, poRef, {
+      ...transactionSnapshot,
+      vendorName
+    });
     if (vendorLinkedManager) {
       console.log(`[Approval Routing] Vendor-linked purchase manager: ${vendorLinkedManager.name} (${vendorLinkedManager.role})`);
     }
@@ -501,7 +504,11 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
 
   // Override first step assignedApprover if vendor has linked purchase manager
   if (vendorLinkedManager && stepsForWorkflow.length > 0) {
-    const firstStepRole = String(stepsForWorkflow[0]?.roleKey || '').toLowerCase();
+    const firstStepRole = String([
+      stepsForWorkflow[0]?.roleKey,
+      stepsForWorkflow[0]?.roleName,
+      stepsForWorkflow[0]?.title
+    ].filter(Boolean).join(' ')).toLowerCase().replace(/[\s-]+/g, '_');
     if (firstStepRole.includes('purchase_manager') || firstStepRole.includes('procurement_manager') || firstStepRole.includes('manager')) {
       stepsForWorkflow[0] = {
         ...stepsForWorkflow[0],

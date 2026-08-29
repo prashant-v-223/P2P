@@ -65,6 +65,7 @@ const approvalsSlice = createSlice({
   initialState: {
     pendingQueue: [],
     pendingCount: 0,
+    hasAssignedApprovals: false,
     userInfo: null,           // User's hierarchy info
     loading: false,
     error: null,
@@ -91,6 +92,7 @@ const approvalsSlice = createSlice({
         state.loading = false;
         state.pendingQueue = action.payload.requests || [];
         state.pendingCount = action.payload.count || 0;
+        state.hasAssignedApprovals = Boolean(action.payload.hasAssignedApprovals);
         state.userInfo = action.payload.userInfo || null;
         state.error = null;
       })

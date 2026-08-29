@@ -28,8 +28,8 @@ export function isRoleMatchingStep(userRole = '', targetStepRole = '', allowAdmi
   if ((t.includes('procurement_head') || t.includes('procurement_lead') || t.includes('purchase_head') || t.includes('purchase_hod') || t.includes('procurement_hod')) && 
       (u.includes('procurement_head') || u.includes('procurement_lead') || u.includes('purchase_head') || u.includes('purchase_hod') || u.includes('procurement_hod'))) return true;
 
-  if ((t.includes('procurement_manager') || t.includes('purchase_manager') || t === 'manager' || t.includes('team_manager')) &&
-      (u.includes('procurement_manager') || u.includes('purchase_manager') || u === 'manager' || u.includes('team_manager') || u.includes('procurement_head'))) return true;
+  if ((t.includes('procurement_manager') || t.includes('purchase-manager') || t === 'manager' || t.includes('team_manager')) &&
+      (u.includes('procurement_manager') || u.includes('purchase-manager') || u === 'manager' || u.includes('team_manager'))) return true;
 
   if ((t.includes('procurement') || t.includes('purchase')) &&
       (u.includes('procurement') || u.includes('purchase'))) return true;
@@ -44,14 +44,24 @@ export function isRoleMatchingStep(userRole = '', targetStepRole = '', allowAdmi
 /**
  * Resolves internal procurement owner for a vendor matching vendors.controller.js
  */
+let vendorOwnerDirectoryPromise = null;
+let vendorOwnerDirectoryExpiresAt = 0;
+
 export async function resolveVendorOwnerUser(rawVendorQuery) {
   if (!rawVendorQuery) return null;
   try {
     const { Vendor } = await import('../models/Vendor.js');
-    const [vendors, users] = await Promise.all([
-      Vendor.find().sort({ createdAt: -1 }).lean().catch(() => []),
-      User.find().lean().catch(() => [])
-    ]);
+    if (!vendorOwnerDirectoryPromise || Date.now() >= vendorOwnerDirectoryExpiresAt) {
+      vendorOwnerDirectoryExpiresAt = Date.now() + 15_000;
+      vendorOwnerDirectoryPromise = Promise.all([
+        Vendor.find().sort({ createdAt: -1 }).lean().catch(() => []),
+        User.find().lean().catch(() => [])
+      ]).catch((error) => {
+        vendorOwnerDirectoryPromise = null;
+        throw error;
+      });
+    }
+    const [vendors, users] = await vendorOwnerDirectoryPromise;
 
     const internalUsers = users.filter(u => u.role !== 'vendor' && u.role !== 'vendor_portal');
     const internalUsersMap = new Map();
@@ -82,6 +92,13 @@ export async function resolveVendorOwnerUser(rawVendorQuery) {
           || internalUsersMap.get(String(v.buyerId))
           || internalUsersMap.get(String(v.userId))
           || internalUsers.find(u => u.name === v.assignedPurchaseManager || u.name === v.buyerName || u.name === v.createdBy);
+
+        // Match the Vendor Directory's legacy-data behavior exactly. Older
+        // vendor rows without a saved link are displayed with this stable
+        // procurement owner, so approval routing must use the same person.
+        if (!linkedU && internalUsers.length > 0) {
+          linkedU = internalUsers[uniqueVendors.length % internalUsers.length];
+        }
 
         v.linkedUserDoc = linkedU;
         uniqueVendors.push(v);
@@ -478,11 +495,13 @@ export async function resolveApprovalChain(moduleType, amount, requester) {
  */
 export async function resolveVendorPurchaseManager(vendorId, poNumber = null, transactionSnapshot = {}) {
   try {
-    const { Vendor } = await import('../models/Vendor.js');
-    let connectedUser = null;
+    let connectedUser = await resolveVendorOwnerUser(
+      vendorId || transactionSnapshot?.vendorName || transactionSnapshot?.supplierName
+    );
 
     // 1. Vendor Directory's explicit Linked User is authoritative.
-    if (vendorId) {
+    if (!connectedUser && vendorId) {
+      const { Vendor } = await import('../models/Vendor.js');
       const vendor = await Vendor.findOne({
         $or: [{ id: vendorId }, { sapVendorCode: vendorId }, { supplierId: vendorId }, { vendorId }]
       }).lean();
@@ -502,20 +521,15 @@ export async function resolveVendorPurchaseManager(vendorId, poNumber = null, tr
       }
     }
 
-    // A genuine linked procurement manager receives the first approval. If
-    // the linked user is an individual contributor, walk up to the matching
-    // Purchase Manager in their reporting line.
+    // The Vendor Directory's Linked User receives Procurement Manager
+    // Approval directly. Their job title does not change this ownership.
     if (connectedUser) {
-      const isManager = isRoleMatchingStep(connectedUser.role, 'purchase_manager', false);
-      const parentManager = isManager ? null : await findParentManager(connectedUser, 'purchase_manager');
-      const targetUser = parentManager || (isManager ? connectedUser : null);
-      if (!targetUser) return null;
       return {
-        id: targetUser.id || targetUser.userId,
-        name: targetUser.name,
-        role: targetUser.role || 'Purchase Manager',
-        email: targetUser.email,
-        resolutionMethod: parentManager ? 'vendor_linked_parent_manager' : 'vendor_linked_manager'
+        id: connectedUser.id || connectedUser.userId,
+        name: connectedUser.name,
+        role: connectedUser.role || 'Purchase Manager',
+        email: connectedUser.email,
+        resolutionMethod: 'vendor_linked_user'
       };
     }
     // No genuine link: caller keeps the workflow step as a role pool.
