@@ -64,5 +64,11 @@ const approvalSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 approvalSchema.index({ workflowId: 1, status: 1 });
+approvalSchema.index({ status: 1, currentStep: 1 });
+approvalSchema.index({ assignedApproverRole: 1, status: 1 });
+approvalSchema.index({ requestedById: 1, status: 1 });
+approvalSchema.index({ dueDate: 1, isOverdue: 1 });
+approvalSchema.index({ type: 1, status: 1 });
 
 export const Approval = mongoose.models.Approval || mongoose.model('Approval', approvalSchema);
+

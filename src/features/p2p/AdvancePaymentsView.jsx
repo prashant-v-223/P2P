@@ -27,13 +27,13 @@ import {
 const formatRoleName = (str) => {
   if (!str || str === '—') return '—';
   const val = String(str).trim();
-  if (val.toLowerCase() === 'cfo') return 'CFO';
-  if (val.toLowerCase() === 'md') return 'Managing Director (MD)';
-  if (val.toLowerCase() === 'procurement_head' || val.toLowerCase() === 'procurement head') return 'Procurement Head';
-  if (val.toLowerCase() === 'purchase_head' || val.toLowerCase() === 'purchase head') return 'Purchase Head';
-  if (val.toLowerCase() === 'purchase_manager' || val.toLowerCase() === 'purchase manager') return 'Purchase Manager';
-  if (val.toLowerCase() === 'finance_head' || val.toLowerCase() === 'finance head') return 'Finance Head';
-  return val.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  const lower = val.toLowerCase();
+  if (lower === 'cfo') return 'CFO';
+  if (lower === 'md') return 'Managing Director (MD)';
+  if (lower === 'procurement_head' || lower === 'procurement head' || lower === 'purchase_head' || lower === 'purchase head') return 'Purchase Head';
+  if (lower === 'purchase_manager' || lower === 'purchase manager' || lower === 'procurement_manager' || lower === 'procurement manager' || lower === 'procurement' || lower === 'purchase') return 'Purchase Manager';
+  if (lower === 'finance_head' || lower === 'finance head' || lower === 'finance') return 'Finance';
+  return val.replace(/[_-]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 };
 
 const getInitials = (name) => {

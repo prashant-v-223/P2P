@@ -23,6 +23,8 @@ const invoicePaymentSchema = new mongoose.Schema({
   paymentDueDate:   { type: Date },
   grossAmount:      { type: Number, required: true },
   currency:         { type: String, default: 'INR', uppercase: true, trim: true },
+  fxRate:           { type: Number, default: 1 },
+  amountINR:        { type: Number },
   invoiceType:      { type: String, default: 'With GST' },
   gstSubtype:       { type: String, default: 'intra' },
   cgstAmount:       { type: Number, default: 0 },
@@ -64,6 +66,7 @@ const invoicePaymentSchema = new mongoose.Schema({
   assignedApprover:   { type: String, default: null, index: true },
   assignedApproverName: { type: String, default: null },
   assignedApproverRole: { type: String, default: null },
+  currentStep: { type: Number, default: 1 },
   // Audit trail: tracks every update with a required remark explaining the change
   updateHistory: [{
     updatedBy: { type: String },

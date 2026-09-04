@@ -141,7 +141,14 @@ function formatRelativeTime(value) {
   return `${diffDays}d ago`;
 }
 
-function getUrgency() {
+function getUrgency(submittedAt, dueDate, isOverdueProp, urgencyProp) {
+  if (urgencyProp && urgencyProp !== 'normal') return urgencyProp;
+  const now = Date.now();
+  const due = dueDate ? new Date(dueDate).getTime() : (submittedAt ? new Date(submittedAt).getTime() + 48 * 3600 * 1000 : now + 48 * 3600 * 1000);
+  const diffMs = due - now;
+  if (isOverdueProp || diffMs < 0) return 'overdue';
+  if (diffMs <= 24 * 3600 * 1000) return 'today';
+  if (diffMs <= 72 * 3600 * 1000) return 'urgent';
   return 'normal';
 }
 
@@ -154,8 +161,9 @@ const STATUS_STYLES = {
 };
 
 const URGENCY_STYLES = {
-  critical: { accent: 'bg-slate-200', label: null, badge: '' },
-  warning: { accent: 'bg-slate-200', label: null, badge: '' },
+  overdue: { accent: 'bg-rose-500', label: 'OVERDUE', badge: 'bg-rose-100 text-rose-800 border-rose-300 animate-pulse font-extrabold' },
+  today: { accent: 'bg-orange-500', label: 'DUE TODAY', badge: 'bg-orange-100 text-orange-800 border-orange-300 font-black' },
+  urgent: { accent: 'bg-amber-400', label: 'DUE SOON', badge: 'bg-amber-100 text-amber-800 border-amber-300 font-bold' },
   normal: { accent: 'bg-slate-200', label: null, badge: '' }
 };
 
@@ -488,8 +496,8 @@ export default function PendingApprovalsView() {
 
               const isProcessing = processingId === approval.id;
               const isTerminal = TERMINAL_STATUSES.includes(approval.status);
-              const urgency = isTerminal ? 'normal' : getUrgency(approval.submittedAt);
-              const urgencyStyle = URGENCY_STYLES[urgency];
+              const urgency = isTerminal ? 'normal' : getUrgency(approval.submittedAt, approval.dueDate, approval.isOverdue, approval.urgency);
+              const urgencyStyle = URGENCY_STYLES[urgency] || URGENCY_STYLES.normal;
               const statusStyle = STATUS_STYLES[approval.status];
               const typeStyle = TYPE_STYLES[approval.type] || DEFAULT_TYPE_STYLE;
               const allocations = Array.isArray(approval.allocations) ? approval.allocations : null;

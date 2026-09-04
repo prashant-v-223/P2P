@@ -226,7 +226,19 @@ export default function RolesAndPermissionsView() {
 
   useEffect(() => { loadData(); }, []);
 
-  const selectedRole = roles.find((role) => role.id === selectedRoleId) || roles[0];
+  const [roleSearch, setRoleSearch] = useState('');
+  const [roleTypeFilter, setRoleTypeFilter] = useState('All');
+
+  const filteredRoles = useMemo(() => {
+    const query = roleSearch.trim().toLowerCase();
+    return (roles || []).filter((role) => {
+      const matchesSearch = !query || [role.roleName, role.description, role.type].some((value) => String(value || '').toLowerCase().includes(query));
+      const matchesType = roleTypeFilter === 'All' || (roleTypeFilter === 'Custom' ? role.type !== 'System' : role.type === 'System');
+      return matchesSearch && matchesType;
+    });
+  }, [roles, roleSearch, roleTypeFilter]);
+
+  const selectedRole = roles.find((role) => role.id === selectedRoleId) || filteredRoles[0] || roles[0];
   
   const effectivePermissions = useMemo(() => {
     return permissions || [];
@@ -359,29 +371,65 @@ export default function RolesAndPermissionsView() {
       ) : activeModule === 'roles' ? (
         <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-12">
           <Card className="xl:col-span-4 border-slate-200 shadow-2xs">
-            <CardHeader className="flex-row items-center justify-between p-4 border-b border-slate-100">
-              <div><CardTitle className="text-xs font-bold">System roles</CardTitle><CardDescription className="text-[11px]">Select a role to configure access.</CardDescription></div>
-              <Badge variant="secondary">{roles.length}</Badge>
+            <CardHeader className="p-4 border-b border-slate-100 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-xs font-bold">Roles & Access</CardTitle>
+                  <CardDescription className="text-[11px]">System & custom roles ({roles.length} total)</CardDescription>
+                </div>
+                <Badge variant="secondary">{filteredRoles.length}</Badge>
+              </div>
+              <div className="space-y-2">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
+                  <Input
+                    className="pl-8 text-xs h-8"
+                    placeholder="Search roles..."
+                    value={roleSearch}
+                    onChange={(e) => setRoleSearch(e.target.value)}
+                  />
+                  {roleSearch && (
+                    <button onClick={() => setRoleSearch('')} className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+                <div className="flex gap-1 text-[11px]">
+                  {['All', 'System', 'Custom'].map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setRoleTypeFilter(tab)}
+                      className={`px-2.5 py-1 rounded-md font-semibold transition ${roleTypeFilter === tab ? 'bg-teal-700 text-white shadow-2xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </CardHeader>
-            <CardContent className="space-y-2 p-3">
-              {roles.map((role) => (
-                <button key={role.id} onClick={() => setSelectedRoleId(role.id)} className={`w-full rounded-xl border p-3 text-left transition ${selectedRole?.id === role.id ? 'border-teal-300 bg-teal-50/60 ring-2 ring-teal-500/10' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-xs font-bold text-slate-900">{role.roleName}</span>
-                    <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-500"><Users className="h-3 w-3" />{role.usersCount}</span>
-                  </div>
-                  <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-slate-500">{role.description || 'No description provided.'}</p>
-                  <div className="mt-2 flex items-center justify-between">
-                    <Badge variant={role.type === 'System' ? 'secondary' : 'emerald'}>{role.type || 'Custom'}</Badge>
-                    {canManageRoles && (
-                      <span className="flex gap-1">
-                        <span onClick={(event) => { event.stopPropagation(); setDialog({ type: 'role', record: role }); }} className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-teal-700"><Pencil className="h-3.5 w-3.5" /></span>
-                        {role.type !== 'System' && <span onClick={(event) => { event.stopPropagation(); removeRecord('role', role); }} className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-rose-600"><Trash2 className="h-3.5 w-3.5" /></span>}
-                      </span>
-                    )}
-                  </div>
-                </button>
-              ))}
+            <CardContent className="max-h-[560px] overflow-y-auto space-y-2 p-3 pr-1">
+              {filteredRoles.length === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-400">No roles match your filter criteria.</div>
+              ) : (
+                filteredRoles.map((role) => (
+                  <button key={role.id} onClick={() => setSelectedRoleId(role.id)} className={`w-full rounded-xl border p-3 text-left transition ${selectedRole?.id === role.id ? 'border-teal-300 bg-teal-50/60 ring-2 ring-teal-500/10' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'}`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xs font-bold text-slate-900">{role.roleName}</span>
+                      <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-500"><Users className="h-3 w-3" />{role.usersCount}</span>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-slate-500">{role.description || 'No description provided.'}</p>
+                    <div className="mt-2 flex items-center justify-between">
+                      <Badge variant={role.type === 'System' ? 'secondary' : 'emerald'}>{role.type || 'Custom'}</Badge>
+                      {canManageRoles && (
+                        <span className="flex gap-1">
+                          <span onClick={(event) => { event.stopPropagation(); setDialog({ type: 'role', record: role }); }} className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-teal-700"><Pencil className="h-3.5 w-3.5" /></span>
+                          {role.type !== 'System' && <span onClick={(event) => { event.stopPropagation(); removeRecord('role', role); }} className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-rose-600"><Trash2 className="h-3.5 w-3.5" /></span>}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                ))
+              )}
             </CardContent>
           </Card>
 

@@ -8,6 +8,8 @@ const advancePaymentSchema = new mongoose.Schema({
   vendorName: { type: String, required: true },
   amount: { type: Number, required: true },
   currency: { type: String, default: 'INR', uppercase: true, trim: true },
+  fxRate: { type: Number, default: 1 },
+  amountINR: { type: Number },
   percentageOfPo: { type: Number, default: 0 },
   gstBreakup: {
     cgst: { type: Number, default: 0 },
@@ -40,6 +42,7 @@ const advancePaymentSchema = new mongoose.Schema({
   assignedApprover: { type: String, default: null, index: true },
   assignedApproverName: { type: String, default: null },
   assignedApproverRole: { type: String, default: null },
+  currentStep: { type: Number, default: 1 },
   isDeleted: { type: Boolean, default: false, index: true },
   deletedAt: { type: Date },
   deletedBy: { type: String },

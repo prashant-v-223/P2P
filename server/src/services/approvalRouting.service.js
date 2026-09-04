@@ -91,16 +91,9 @@ export async function resolveVendorOwnerUser(rawVendorQuery) {
         let linkedU = internalUsersMap.get(String(v.assignedPurchaseManagerId))
           || internalUsersMap.get(String(v.buyerId))
           || internalUsersMap.get(String(v.userId))
-          || internalUsers.find(u => u.name === v.assignedPurchaseManager || u.name === v.buyerName || u.name === v.createdBy);
+          || internalUsers.find(u => u.name === v.assignedPurchaseManager || u.name === v.buyerName);
 
-        // Match the Vendor Directory's legacy-data behavior exactly. Older
-        // vendor rows without a saved link are displayed with this stable
-        // procurement owner, so approval routing must use the same person.
-        if (!linkedU && internalUsers.length > 0) {
-          linkedU = internalUsers[uniqueVendors.length % internalUsers.length];
-        }
-
-        v.linkedUserDoc = linkedU;
+        v.linkedUserDoc = linkedU || null;
         uniqueVendors.push(v);
       }
     }
@@ -524,13 +517,22 @@ export async function resolveVendorPurchaseManager(vendorId, poNumber = null, tr
     // The Vendor Directory's Linked User receives Procurement Manager
     // Approval directly. Their job title does not change this ownership.
     if (connectedUser) {
-      return {
-        id: connectedUser.id || connectedUser.userId,
-        name: connectedUser.name,
-        role: connectedUser.role || 'Purchase Manager',
-        email: connectedUser.email,
-        resolutionMethod: 'vendor_linked_user'
-      };
+      const requesterId = transactionSnapshot?.requestedById || transactionSnapshot?.userId || transactionSnapshot?.createdBy || transactionSnapshot?.id;
+      const requesterEmail = transactionSnapshot?.requestedByEmail || transactionSnapshot?.email;
+      const isRequesterSelf = (
+        (requesterId && String(connectedUser.id || connectedUser.userId) === String(requesterId)) ||
+        (requesterEmail && connectedUser.email && String(connectedUser.email).toLowerCase() === String(requesterEmail).toLowerCase())
+      );
+
+      if (!isRequesterSelf) {
+        return {
+          id: connectedUser.id || connectedUser.userId,
+          name: connectedUser.name,
+          role: connectedUser.role || 'Purchase Manager',
+          email: connectedUser.email,
+          resolutionMethod: 'vendor_linked_user'
+        };
+      }
     }
     // No genuine link: caller keeps the workflow step as a role pool.
     return null;
@@ -676,10 +678,22 @@ export async function repairAllActiveApprovals() {
       }
 
       if (activeStep) {
-        app.assignedApprover = activeStep.isPoolApproval ? null : (activeStep.assignedApproverId || null);
-        app.assignedApproverName = activeStep.assignedApproverName || null;
-        app.assignedApproverRole = activeStep.assignedApproverRole || activeStep.roleKey || null;
-        app.assignedApproverEmail = activeStep.assignedApproverEmail || null;
+        const isSelfAssigned = (
+          (requester && activeStep.assignedApproverId && String(activeStep.assignedApproverId) === String(requester.id || requester.userId)) ||
+          (app.requestedById && activeStep.assignedApproverId && String(activeStep.assignedApproverId) === String(app.requestedById))
+        );
+
+        if (isSelfAssigned || activeStep.isPoolApproval) {
+          app.assignedApprover = null;
+          app.assignedApproverName = null;
+          app.assignedApproverRole = activeStep.assignedApproverRole || activeStep.roleKey || 'purchase_manager';
+          app.assignedApproverEmail = null;
+        } else {
+          app.assignedApprover = activeStep.assignedApproverId || null;
+          app.assignedApproverName = activeStep.assignedApproverName || null;
+          app.assignedApproverRole = activeStep.assignedApproverRole || activeStep.roleKey || 'purchase_manager';
+          app.assignedApproverEmail = activeStep.assignedApproverEmail || null;
+        }
       }
 
       await app.save();
@@ -794,6 +808,19 @@ export async function repairAllOldPaymentRecords() {
       let role = getDynamicStepRole(app, inv.assignedApproverRole, step);
       const targetStatus = mapDocStatus(app?.status, inv.status);
 
+      let calcDueDate = inv.paymentDueDate;
+      if (!calcDueDate || Number.isNaN(new Date(calcDueDate).getTime())) {
+        const baseDate = (inv.blDate && !Number.isNaN(new Date(inv.blDate).getTime()))
+          ? new Date(inv.blDate)
+          : ((inv.invoiceDate && !Number.isNaN(new Date(inv.invoiceDate).getTime()))
+            ? new Date(inv.invoiceDate)
+            : new Date(inv.createdAt || Date.now()));
+        const days = Number(inv.dueDays) || 45;
+        const d = new Date(baseDate);
+        d.setDate(d.getDate() + days);
+        calcDueDate = d;
+      }
+
       await InvoicePayment.updateOne(
         { _id: inv._id },
         {
@@ -802,10 +829,19 @@ export async function repairAllOldPaymentRecords() {
             assignedApproverRole: role,
             assignedApproverName: app?.assignedApproverName || inv.assignedApproverName || null,
             assignedApprover: app?.assignedApprover || inv.assignedApprover || null,
-            currentStep: step
+            currentStep: step,
+            paymentDueDate: calcDueDate
           }
         }
       );
+
+      if (app && calcDueDate) {
+        await Approval.updateOne(
+          { _id: app._id },
+          { $set: { dueDate: calcDueDate } }
+        ).catch(() => {});
+      }
+
       repaired++;
     }
 

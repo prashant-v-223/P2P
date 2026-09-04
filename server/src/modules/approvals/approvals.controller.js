@@ -100,11 +100,21 @@ export function isApprovalForRole(approval, roleFilter, userId = null) {
     return ['admin', 'superadmin', 'system_admin', 'systemadmin'].includes(u);
   });
 
+  const userIds = userId
+    ? (typeof userId === 'object'
+        ? [userId.id, userId.userId, userId._id, userId.email, userId.name]
+        : [userId])
+      .filter(Boolean)
+      .map(v => String(v).toLowerCase().trim())
+    : [];
+
   // Self-approval logic: If requester has a parent manager, parent manager must approve (block self-approval).
-  // If requester HAS NO parent manager, self-approval is ON / allowed!
-  const isOwnRequest = userId && (String(approval.requestedById) === String(userId) || String(approval.requestedBy) === String(userId));
+  const isOwnRequest = userIds.length > 0 && [approval.requestedById, approval.requestedBy, approval.requestedByEmail]
+    .filter(Boolean)
+    .some(val => userIds.includes(String(val).toLowerCase().trim()));
+
   if (isOwnRequest && !isSuperUser) {
-    if (approval.assignedApprover && String(approval.assignedApprover) === String(userId)) {
+    if (approval.assignedApprover && userIds.includes(String(approval.assignedApprover).toLowerCase().trim())) {
       // Explicitly assigned to this user (e.g. self-approval when no parent manager)
     } else {
       return false;
@@ -127,8 +137,6 @@ export function isApprovalForRole(approval, roleFilter, userId = null) {
   }
 
   // 3. STRICT ASSIGNED APPROVER MATCHING:
-  // If the active step or approval record has an explicit assigned approver (and is NOT pool approval),
-  // ONLY that specific user ID / Name / Email (or superadmin) is authorized! Cross users are strictly blocked.
   const assignedId = activeStepObj?.assignedApproverId || approval.assignedApprover;
   const assignedName = activeStepObj?.assignedApproverName || approval.assignedApproverName;
   const assignedEmail = activeStepObj?.assignedApproverEmail;
@@ -137,13 +145,14 @@ export function isApprovalForRole(approval, roleFilter, userId = null) {
   const isRoleMatch = roles.some((role) => isRoleMatchingStep(role, targetRole, false));
 
   if ((assignedId || assignedName || assignedEmail) && !isPool) {
-    if (userId) {
-      const uStr = String(userId).toLowerCase();
-      if ([assignedId, assignedName, assignedEmail].filter(Boolean).some(val => String(val).toLowerCase() === uStr)) {
-        return isRoleMatch || isSuperUser;
-      }
+    if (userIds.length > 0) {
+      const userMatches = [assignedId, assignedName, assignedEmail]
+        .filter(Boolean)
+        .some(val => userIds.includes(String(val).toLowerCase().trim()));
+      if (userMatches) return isRoleMatch || isSuperUser;
     }
-    return isSuperUser; // Strict isolation: cross-users with non-matching roles are blocked
+    if (isRoleMatch) return true;
+    return isSuperUser;
   }
 
   // 4. POOL APPROVAL MATCHING:
@@ -303,16 +312,9 @@ export const getPendingApprovals = async (req, res) => {
     const type = String(req.query.type || '').trim();
 
     if (mongoose.connection.readyState !== 1) {
-      return res.json({
-        success: true,
-        count: DUMMY_PENDING_APPROVALS.length,
-        total: DUMMY_PENDING_APPROVALS.length,
-        page: 1,
-        size,
-        totalPages: 1,
-        hasPrevious: false,
-        hasNext: false,
-        approvals: DUMMY_PENDING_APPROVALS
+      return res.status(503).json({
+        success: false,
+        error: 'Database connection unavailable. Financial approvals cannot be read or processed at this moment.'
       });
     }
 
@@ -490,17 +492,20 @@ export const getPendingApprovals = async (req, res) => {
     };
 
     // Actionable items specifically assigned to user's role step or direct assignment
-    const actionableApprovals = allApprovals.filter(a => isApprovalForRole(a, effectiveRoles, currentUserId));
+    const actionableApprovals = allApprovals.filter(a => isApprovalForRole(a, effectiveRoles, req.user || currentUserId));
     const hasAssignedApprovals = actionableApprovals.some(isExplicitlyAssignedToCurrentUser);
-    const actionableCount = actionableApprovals.length;
-    // Non-admin users can never expand this endpoint to other roles with
-    // `scope=all`; their queue is always limited to their actionable role.
-    const scope = isSuperUser
+    const isFinanceOrAdmin = isSuperUser || effectiveRoles.some((r) => {
+      const rNorm = r.toLowerCase().replace(/[\s_-]+/g, '').trim();
+      return rNorm.includes('finance') || rNorm.includes('cfo') || rNorm.includes('account');
+    });
+
+    // Finance and Admin users can view all pending/overdue approvals across the company with scope=all (default)
+    const scope = (isFinanceOrAdmin || isSuperUser)
       ? String(req.query.scope || 'all').toLowerCase().trim()
       : 'actionable';
     let approvals = (scope === 'actionable' || req.query.actionableOnly === 'true') ? actionableApprovals : allApprovals;
 
-    if (!isSuperUser) approvals = actionableApprovals;
+    if (!isSuperUser && !isFinanceOrAdmin) approvals = actionableApprovals;
 
     // ── Self-submission exclusion ────────────────────────────────────────
     const currentUserName  = (req.query.me  || '').toLowerCase().trim();
@@ -516,7 +521,38 @@ export const getPendingApprovals = async (req, res) => {
       });
     }
 
-    const total      = (scope === 'actionable' || req.query.actionableOnly === 'true') ? actionableCount : approvals.length;
+    // ── Overdue SLA & Urgency filtering ───────────────────────────────
+    const urgencyFilter = String(req.query.urgency || 'All').toLowerCase().trim();
+    const now = new Date();
+
+    const calculateSla = (item) => {
+      const submitted = item.submittedAt ? new Date(item.submittedAt) : (item.createdAt ? new Date(item.createdAt) : now);
+      const slaHours = Number(item.slaHours) || 48;
+      const rawDueDate = item.dueDate || item.paymentDueDate || item.transactionSnapshot?.paymentDueDate || item.transactionSnapshot?.dueDate || item.transactionSnapshot?.expectedPaymentDate || item.transactionSnapshot?.advanceDueDate;
+      const dueDateObj = (rawDueDate && !isNaN(new Date(rawDueDate).getTime())) ? new Date(rawDueDate) : new Date(submitted.getTime() + slaHours * 60 * 60 * 1000);
+      const diffMs = dueDateObj - now;
+      const isOverdue = diffMs < 0;
+      const overdueDays = isOverdue ? Math.max(1, Math.floor(Math.abs(diffMs) / (1000 * 60 * 60 * 24))) : 0;
+      
+      let urgency = 'normal';
+      if (isOverdue) urgency = 'overdue';
+      else if (diffMs <= 24 * 60 * 60 * 1000) urgency = 'today';
+      else if (diffMs <= 72 * 60 * 60 * 1000) urgency = 'urgent';
+
+      return { dueDate: dueDateObj.toISOString(), isOverdue, overdueDays, urgency };
+    };
+
+    if (urgencyFilter !== 'all') {
+      approvals = approvals.filter((a) => {
+        const sla = calculateSla(a);
+        if (urgencyFilter === 'overdue') return sla.isOverdue;
+        if (urgencyFilter === 'today') return sla.urgency === 'today';
+        if (urgencyFilter === 'urgent') return sla.urgency === 'urgent';
+        return true;
+      });
+    }
+
+    const total      = approvals.length;
     const totalPages = Math.max(1, Math.ceil(approvals.length / size));
     const safePage   = Math.min(page, totalPages);
     const paginated  = approvals.slice((safePage - 1) * size, safePage * size);
@@ -534,6 +570,7 @@ export const getPendingApprovals = async (req, res) => {
       }
 
       const isUserTurnToApprove = isApprovalForRole(a, effectiveRoles, currentUserId);
+      const sla = calculateSla(a);
 
       const parseAmountNum = (val) => {
         if (typeof val === 'number') return isNaN(val) ? 0 : val;
@@ -571,6 +608,10 @@ export const getPendingApprovals = async (req, res) => {
       return {
         ...a,
         amountFormatted:  formattedAmount,
+        dueDate:          sla.dueDate,
+        isOverdue:        sla.isOverdue,
+        overdueDays:      sla.overdueDays,
+        urgency:          sla.urgency,
         workflowId:       a.workflowId || 'WF-STD-001',
         workflowCode:     a.workflowCode || 'WF-STD',
         workflowVersion:  a.workflowVersion || 1,
@@ -634,6 +675,13 @@ function getPreviousStepInfo(approval) {
 // ── POST /api/approvals/:id/action ───────────────────────────────────────────
 export const processApprovalAction = async (req, res) => {
   try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        error: 'Database connection is currently unavailable. Approval actions cannot be processed.'
+      });
+    }
+
     const rawAction = (req.body.action || '').toLowerCase();
     if (!['approve', 'return', 'reject'].includes(rawAction)) {
       return res.status(400).json({ success: false, error: 'Action must be Approve, Return, or Reject.' });

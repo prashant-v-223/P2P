@@ -504,42 +504,47 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
 
   // Override first step assignedApprover if vendor has linked purchase manager
   if (vendorLinkedManager && stepsForWorkflow.length > 0) {
-    const firstStepRole = String([
-      stepsForWorkflow[0]?.roleKey,
-      stepsForWorkflow[0]?.roleName,
-      stepsForWorkflow[0]?.title
-    ].filter(Boolean).join(' ')).toLowerCase().replace(/[\s-]+/g, '_');
-    if (firstStepRole.includes('purchase_manager') || firstStepRole.includes('procurement_manager') || firstStepRole.includes('manager')) {
-      stepsForWorkflow[0] = {
-        ...stepsForWorkflow[0],
-        assignedApproverId: vendorLinkedManager.id,
-        assignedApproverName: vendorLinkedManager.name,
-        assignedApproverRole: vendorLinkedManager.role,
-        assignedApproverEmail: vendorLinkedManager.email,
-        isPoolApproval: false,
-        resolutionMethod: 'vendor_linked_manager'
-      };
+    const isRequesterSelf = requester && (
+      String(vendorLinkedManager.id) === String(requester.id || requester.userId) ||
+      (vendorLinkedManager.email && requester.email && String(vendorLinkedManager.email).toLowerCase() === String(requester.email).toLowerCase())
+    );
+
+    if (!isRequesterSelf) {
+      const firstStepRole = String([
+        stepsForWorkflow[0]?.roleKey,
+        stepsForWorkflow[0]?.roleName,
+        stepsForWorkflow[0]?.title
+      ].filter(Boolean).join(' ')).toLowerCase().replace(/[\s-]+/g, '_');
+      if (firstStepRole.includes('purchase_manager') || firstStepRole.includes('procurement_manager') || firstStepRole.includes('manager')) {
+        stepsForWorkflow[0] = {
+          ...stepsForWorkflow[0],
+          assignedApproverId: vendorLinkedManager.id,
+          assignedApproverName: vendorLinkedManager.name,
+          assignedApproverRole: vendorLinkedManager.role || 'purchase_manager',
+          assignedApproverEmail: vendorLinkedManager.email,
+          isPoolApproval: false,
+          resolutionMethod: 'vendor_linked_manager'
+        };
+      }
     }
   }
 
   // Check for conflicts (requester is also approver)
   const hasConflict = stepsForWorkflow.some(step =>
     requester && step.assignedApproverId &&
-    String(step.assignedApproverId) === String(requester.id)
+    String(step.assignedApproverId) === String(requester.id || requester.userId)
   );
 
-  // If conflict detected, escalate
+  // If conflict detected, clear self-assignment / escalate
   let finalSteps = stepsForWorkflow;
   if (hasConflict) {
-    console.warn(`[Approval Conflict] Requester ${requester?.name} is also an approver. Escalating...`);
+    console.warn(`[Approval Conflict] Requester ${requester?.name} is also an approver. Clearing self-assignment...`);
 
-    // Re-resolve steps with escalation
     finalSteps = await Promise.all(
       stepsForWorkflow.map(async (step) => {
-        if (requester && String(step.assignedApproverId) === String(requester.id)) {
-          // Get escalation approver
+        if (requester && step.assignedApproverId && String(step.assignedApproverId) === String(requester.id || requester.userId)) {
           const escalated = await getEscalationApprover(step.assignedApproverId, step.roleKey);
-          if (escalated) {
+          if (escalated && String(escalated.id) !== String(requester.id || requester.userId)) {
             return {
               ...step,
               assignedApproverId: escalated.id,
@@ -552,6 +557,15 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
               originalApproverName: step.assignedApproverName
             };
           }
+          return {
+            ...step,
+            assignedApproverId: null,
+            assignedApproverName: null,
+            assignedApproverRole: step.roleKey || 'purchase_manager',
+            assignedApproverEmail: null,
+            isPoolApproval: true,
+            resolutionMethod: 'role_pool_conflict'
+          };
         }
         return step;
       })
@@ -605,7 +619,10 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
     status: initialStatus,
     submittedAt: new Date(),
     slaHours: 48,
-    dueDate: new Date(Date.now() + 48 * 3600 * 1000),
+    dueDate: (() => {
+      const rawDocDue = transactionSnapshot?.paymentDueDate || transactionSnapshot?.dueDate || transactionSnapshot?.expectedPaymentDate || transactionSnapshot?.advanceDueDate;
+      return (rawDocDue && !isNaN(new Date(rawDocDue).getTime())) ? new Date(rawDocDue) : new Date(Date.now() + 48 * 3600 * 1000);
+    })(),
     isOverdue: false,
     actionHistory: [],
     // Add metadata
@@ -1007,6 +1024,10 @@ router.post('/purchase-orders/create', authenticateToken, async (req, res) => {
       },
       { upsert: true, new: true }
     );
+    const fxInfo = await getFxConversion(po.totalAmount, po.currency, req.body.fxRate);
+    if (!po.fxRate || po.fxRate === 1) po.fxRate = fxInfo.fxRate;
+    if (!po.amountINR) po.amountINR = fxInfo.amountINR;
+    await po.save();
 
     return res.status(po.isNew ? 201 : 200).json({
       success: true,
@@ -1017,6 +1038,40 @@ router.post('/purchase-orders/create', authenticateToken, async (req, res) => {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
+
+const updatePoHandler = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const isObjectId = mongoose.Types.ObjectId.isValid(id);
+    const filter = {
+      $or: [
+        { id },
+        { poNumber: id },
+        { sapPoNumber: id },
+        { poNumber: `PO-${id}` }
+      ]
+    };
+    if (isObjectId) filter.$or.push({ _id: id });
+
+    const po = await PurchaseOrder.findOne(filter);
+    if (!po) return res.status(404).json({ success: false, error: 'Purchase Order not found.' });
+
+    const { paymentTerms, description, deliveryDate, remarks, lineItems } = req.body;
+    if (paymentTerms) po.paymentTerms = paymentTerms;
+    if (description) po.description = description;
+    if (deliveryDate) po.deliveryDate = deliveryDate;
+    if (remarks) po.remarks = remarks;
+    if (Array.isArray(lineItems) && lineItems.length > 0) po.items = lineItems;
+
+    await po.save();
+    return res.json({ success: true, message: 'Purchase Order updated successfully.', data: po });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+router.put('/purchase-orders/:id', authenticateToken, updatePoHandler);
+router.put('/pos/:id', authenticateToken, updatePoHandler);
 
 router.post('/purchase-orders/:id/close', authenticateToken, async (req, res) => {
   try {
@@ -1337,13 +1392,16 @@ const getAdvancesHandler = async (req, res) => {
       const app = approvalMap.get(advance.advanceId) || approvalMap.get(advance.id);
       const step = app?.currentStep || advance.currentStep || 1;
       let derivedRole = app?.assignedApproverRole || advance.assignedApproverRole;
-      if (!derivedRole || derivedRole === '—') {
+      if (!derivedRole || derivedRole === '—' || derivedRole === 'procurement' || derivedRole === 'procurement_manager') {
         if (app?.workflowSteps) {
           try {
             const steps = typeof app.workflowSteps === 'string' ? JSON.parse(app.workflowSteps) : app.workflowSteps;
             const active = steps.find(s => Number(s.step || s.stepNumber) === Number(step));
             if (active) derivedRole = active.roleKey || active.assignedApproverRole || active.roleName || active.title;
           } catch (_) {}
+        }
+        if (!derivedRole || derivedRole === 'procurement' || derivedRole === 'procurement_manager') {
+          derivedRole = step === 1 ? 'purchase_manager' : derivedRole;
         }
       }
 
@@ -1791,11 +1849,10 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
       if (['draft', 'rejected', 'paid', 'adjusted'].includes(status)) return;
 
       const created = payment.createdAt ? new Date(payment.createdAt) : now;
-      const dueDate = payment.dueDate
-        ? new Date(payment.dueDate)
-        : payment.expectedPaymentDate
-          ? new Date(payment.expectedPaymentDate)
-          : new Date(created.getTime() + 5 * 24 * 60 * 60 * 1000);
+      const rawDueDate = payment.paymentDueDate || payment.dueDate || payment.expectedPaymentDate || payment.advanceDueDate;
+      const dueDate = rawDueDate && !isNaN(new Date(rawDueDate).getTime())
+        ? new Date(rawDueDate)
+        : new Date(created.getTime() + 5 * 24 * 60 * 60 * 1000);
 
       const diffMs = dueDate - now;
       const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
@@ -1852,7 +1909,7 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
     const reportRefIds = upcomingFinancePayments.map(item => item.id).filter(Boolean);
     if (reportRefIds.length > 0) {
       const reportApprovals = await Approval.find({ $or: [{ referenceId: { $in: reportRefIds } }, { id: { $in: reportRefIds } }] })
-        .select('id referenceId assignedApproverRole')
+        .select('id referenceId status currentStep assignedApproverRole workflowSteps')
         .lean()
         .catch(() => []);
       const reportAppMap = new Map();
@@ -1862,8 +1919,25 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
       });
       upcomingFinancePayments.forEach(item => {
         const app = reportAppMap.get(item.id);
-        if (app?.assignedApproverRole) {
-          item.assignedApproverRole = app.assignedApproverRole;
+        if (app) {
+          if (app.status) item.status = app.status;
+          if (app.assignedApproverRole) item.assignedApproverRole = app.assignedApproverRole;
+          if (app.currentStep) item.currentStep = app.currentStep;
+          
+          const isFinanceTurn = String(app.assignedApproverRole || '').toLowerCase().includes('finance') || String(app.status || '').toLowerCase().includes('finance');
+          const isFullyApproved = app.status === 'Approved & Dispatched' || app.status === 'Approved';
+
+          item.workflowStage = `Step ${app.currentStep || 1}: ${app.assignedApproverRole || 'Approver'}`;
+          item.financeReadiness = isFullyApproved
+            ? 'Approved & Ready for Payment'
+            : isFinanceTurn
+              ? 'Awaiting Finance Action'
+              : `Pending Prior Step (${app.assignedApproverRole || 'Procurement'})`;
+        } else {
+          item.workflowStage = `Step 1: ${item.assignedApproverRole || 'Manager'}`;
+          item.financeReadiness = String(item.assignedApproverRole || '').toLowerCase().includes('finance')
+            ? 'Awaiting Finance Action'
+            : `Pending Prior Step (${item.assignedApproverRole || 'Procurement'})`;
         }
       });
     }
@@ -2049,6 +2123,9 @@ const createAdvanceHandler = async (req, res) => {
     });
 
     const { amountINR, fxRate, amountFormatted } = await getFxConversion(numAmount, poCurrency, req.body.fxRate);
+    newAdv.fxRate = fxRate;
+    newAdv.amountINR = amountINR;
+    await newAdv.save();
 
     const wf = await resolveWorkflowFromDB('Advance Payment', amountINR, { currency: poCurrency, vendorType: req.user?.vendorType, poType: po.poType || po.type });
 
@@ -2344,19 +2421,23 @@ router.post('/advances/:id/payout', authenticateToken, authorizePermission('adva
 
     await recalculatePoMetrics(advance.sapPoNumber || advance.poNumber || advance.poId);
 
+    const paidAmt = Number(advance.amount) || 0;
     await PaymentLedger.create({
-      ledgerId: 'LEDGER-' + Date.now().toString().slice(-6),
-      moduleType: 'AdvancePayment',
-      referenceId: advance.advanceId,
-      poReference: advance.sapPoNumber || advance.poId,
-      vendorName: advance.vendorName,
-      amount: advance.amount || 0,
-      currency: advance.currency || 'INR',
-      paymentMode: paymentMode || advance.paymentMode || 'NEFT',
+      paymentId: 'LEDGER-' + Date.now().toString().slice(-6) + '-' + Math.floor(Math.random() * 1000),
+      payableType: 'AdvancePayment',
+      payableId: String(advance._id || advance.advanceId),
+      referenceNumber: advance.sapPoNumber || advance.poNumber || advance.poId,
+      vendorId: advance.vendorId || advance.supplierId || 'VEND-MASTER',
+      vendorName: advance.vendorName || 'Vendor',
+      grossAmount: paidAmt,
+      tdsAmount: 0,
+      netAmount: paidAmt,
+      paymentMode: ['NEFT', 'RTGS', 'Cheque', 'SWIFT', 'ICEGATE'].includes(paymentMode) ? paymentMode : 'NEFT',
+      bankName: advance.bankName || 'HDFC Bank - Main Corporate',
+      bankAccountNumber: advance.bankAccountNumber || '50200049281745',
       utrNumber: cleanUtr || null,
-      remarks: remarks || paymentRemarks || '',
-      status: 'completed',
-      processedAt: advance.paidAt
+      status: 'processed',
+      paidAt: advance.paidAt || new Date()
     }).catch(e => console.error('[Ledger error]', e.message));
 
     return res.json({ success: true, message: 'Advance payment marked as paid.', data: advance });
@@ -3028,7 +3109,15 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
           mimeType: String(document.mimeType || '')
         })),
         invoiceDate: invoiceDate && !Number.isNaN(Date.parse(invoiceDate)) ? new Date(invoiceDate) : new Date(),
-        paymentDueDate: paymentDueDate && !Number.isNaN(Date.parse(paymentDueDate)) ? new Date(paymentDueDate) : undefined,
+        paymentDueDate: (() => {
+          const rawDue = paymentDueDate || req.body.dueDate;
+          if (rawDue && !Number.isNaN(Date.parse(rawDue))) return new Date(rawDue);
+          const baseDate = parseFlexibleDate(blDate) || parseFlexibleDate(invoiceDate) || new Date();
+          const days = Number(req.body.dueDays) || 45;
+          const d = new Date(baseDate);
+          d.setDate(d.getDate() + days);
+          return d;
+        })(),
         grossAmount: numGross,
         currency: poCurrency,
         invoiceType: req.body.invoiceType || (numGst > 0 ? 'With GST' : 'Without GST'),
@@ -3063,6 +3152,9 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       });
 
       const { amountINR, fxRate, amountFormatted } = await getFxConversion(netPayable, poCurrency, req.body.fxRate);
+      newInvoice.fxRate = fxRate;
+      newInvoice.amountINR = amountINR;
+      await newInvoice.save();
       const wf = await resolveWorkflowFromDB('Invoice Payment', amountINR, { currency: poCurrency, vendorType: vendor?.vendorType, poType: po.poType || po.type });
 
       const approval = await createApprovalRecord({
@@ -3078,7 +3170,8 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
           netPayable, amountINR, grossAmount: numGross, currency: poCurrency, fxRate,
           poId: poRef, vendorId: vendorIdFinal, invoiceNumber: finalInvoiceNumber,
           createdByType: req.user?.role === 'Vendor' ? 'vendor' : 'user',
-          createdByVendorId: req.user?.role === 'Vendor' ? vendorIdFinal : ''
+          createdByVendorId: req.user?.role === 'Vendor' ? vendorIdFinal : '',
+          paymentDueDate: newInvoice.paymentDueDate
         },
         wf
       });
@@ -3153,7 +3246,16 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       if (blNumber !== undefined) invoice.blNumber = String(blNumber).trim();
       if (blDate !== undefined) invoice.blDate = parseFlexibleDate(blDate);
       if (boeNumber !== undefined) invoice.boeNumber = String(boeNumber).trim();
-      if (boeDate !== undefined) invoice.boeDate = parseFlexibleDate(boeDate);
+      const rawDue = req.body.paymentDueDate || req.body.dueDate;
+      if (rawDue && !Number.isNaN(Date.parse(rawDue))) {
+        invoice.paymentDueDate = new Date(rawDue);
+      } else if (blDate !== undefined || req.body.invoiceDate !== undefined || req.body.dueDays !== undefined) {
+        const baseDate = parseFlexibleDate(req.body.blDate ?? invoice.blDate) || parseFlexibleDate(req.body.invoiceDate ?? invoice.invoiceDate) || new Date();
+        const days = Number(req.body.dueDays ?? invoice.dueDays) || 45;
+        const d = new Date(baseDate);
+        d.setDate(d.getDate() + days);
+        invoice.paymentDueDate = d;
+      }
       if (grossAmount !== undefined) invoice.grossAmount = Number(grossAmount);
       if (invoiceType !== undefined) invoice.invoiceType = invoiceType;
       if (gstSubtype !== undefined) invoice.gstSubtype = gstSubtype;
@@ -3224,7 +3326,8 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         requestId: req.headers['x-request-id'],
         transactionSnapshot: {
           amount: numGross, amountINR, currency: invCurrency, fxRate, poId: poRef, vendorId: invoice.vendorId,
-          createdByType: invoice.createdByType || 'user', createdByVendorId: invoice.createdByVendorId || ''
+          createdByType: invoice.createdByType || 'user', createdByVendorId: invoice.createdByVendorId || '',
+          paymentDueDate: invoice.paymentDueDate
         },
         wf
       });
@@ -3329,19 +3432,23 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
         await approval.save();
       }
 
+      const paidAmt = Number(invoice.netPayable || invoice.totalAmount || invoice.grossAmount) || 0;
       await PaymentLedger.create({
-        ledgerId: 'LEDGER-' + Date.now().toString().slice(-6),
-        moduleType: 'InvoicePayment',
-        referenceId: invoice.invoicePaymentId,
-        poReference: invoice.sapPoNumber || invoice.poId,
-        vendorName: invoice.vendorName,
-        amount: invoice.netPayable || invoice.totalAmount || 0,
-        currency: invoice.currency || 'INR',
-        paymentMode: paymentMode || invoice.paymentMode || 'NEFT',
+        paymentId: 'LEDGER-' + Date.now().toString().slice(-6) + '-' + Math.floor(Math.random() * 1000),
+        payableType: 'InvoicePayment',
+        payableId: String(invoice._id || invoice.invoicePaymentId),
+        referenceNumber: invoice.sapPoNumber || invoice.poNumber || invoice.poId,
+        vendorId: invoice.vendorId || invoice.supplierId || 'VEND-MASTER',
+        vendorName: invoice.vendorName || 'Vendor',
+        grossAmount: invoice.grossAmount || paidAmt,
+        tdsAmount: invoice.tdsAmount || 0,
+        netAmount: paidAmt,
+        paymentMode: ['NEFT', 'RTGS', 'Cheque', 'SWIFT', 'ICEGATE'].includes(paymentMode) ? paymentMode : 'NEFT',
+        bankName: invoice.bankName || 'HDFC Bank - Main Corporate',
+        bankAccountNumber: invoice.bankAccountNumber || '50200049281745',
         utrNumber: cleanUtr || null,
-        remarks: remarks || paymentRemarks || '',
-        status: 'completed',
-        processedAt: invoice.paidAt
+        status: 'processed',
+        paidAt: invoice.paidAt || new Date()
       }).catch(e => console.error('[Ledger error]', e.message));
 
       return res.json({ success: true, message: 'Invoice payment marked as paid.', data: invoice });

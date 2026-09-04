@@ -140,6 +140,25 @@ export const DEFAULT_ROLES = [
     }
   },
   {
+    id: 'role-purchase-manager',
+    roleName: 'purchase_manager',
+    description: 'Purchase Manager — primary approver for initial purchase and payment requests.',
+    type: 'System',
+    status: 'Active',
+    permissions: {
+      'dashboard': ['view'],
+      'purchase-orders': ['view'],
+      'advance-payments': ['view', 'create', 'mark-paid'],
+      'invoice-payments': ['view', 'create', 'mark-paid'],
+      'logistics-payments': ['view', 'create'],
+      'custom-duty': ['view', 'create'],
+      'approvals': ['view', 'action'],
+      'rfq': ['view', 'create'],
+      'vendors': ['view', 'manage'],
+      'users': ['view']
+    }
+  },
+  {
     id: 'role-finance',
     roleName: 'finance',
     description: 'Finance team — payment marking, vendor oversight and financial approvals.',
@@ -352,7 +371,7 @@ export const seedDatabase = async () => {
     // ── Roles ────────────────────────────────────────────────────────────────
     console.log('[DB] Seeding/updating system roles...');
     // Delete legacy obsolete roles if they exist in DB
-    await Role.deleteMany({ roleName: { $in: ['cfo-inner', 'inner-team', 'purchase-manager', 'purchase-head'] } });
+    await Role.deleteMany({ roleName: { $in: ['cfo-inner', 'inner-team'] } });
     for (const defRole of DEFAULT_ROLES) {
       await Role.updateOne(
         { roleName: defRole.roleName },
@@ -363,8 +382,6 @@ export const seedDatabase = async () => {
 
     // Update any existing users with legacy role keys to standard role keys
     await User.updateMany({ role: 'cfo-inner' }, { $set: { role: 'accounts' } });
-    await User.updateMany({ role: 'purchase-manager' }, { $set: { role: 'procurement_manager' } });
-    await User.updateMany({ role: 'purchase-head' }, { $set: { role: 'procurement_head' } });
     await User.updateMany({ role: 'inner-team' }, { $set: { role: 'procurement' } });
 
     // ── Users ────────────────────────────────────────────────────────────────

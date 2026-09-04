@@ -12,11 +12,10 @@ const formatRoleTitle = (str) => {
   if (str === 'cfo') return 'CFO';
   if (str === 'md') return 'Managing Director (MD)';
   if (str === 'procurement_head') return 'Procurement Head';
-  if (str === 'purchase_head') return 'Purchase Head';
-  if (str === 'purchase_manager') return 'Purchase Manager';
+  if (str === 'purchase_manager' || str === 'purchase-manager') return 'Purchase Manager';
   if (str === 'finance_head') return 'Finance Head';
   return String(str)
-    .replace(/_/g, ' ')
+    .replace(/[_-]/g, ' ')
     .replace(/\b\w/g, (l) => l.toUpperCase());
 };
 
