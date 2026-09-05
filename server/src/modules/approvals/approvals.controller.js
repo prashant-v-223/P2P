@@ -451,6 +451,10 @@ export const getPendingApprovals = async (req, res) => {
       const rNorm = r.toLowerCase().replace(/[\s_-]+/g, ' ').trim();
       return rNorm === 'admin' || rNorm.replace(/\s+/g, '') === 'systemadmin';
     });
+    const isFinanceUser = effectiveRoles.some((r) => {
+      const rNorm = r.toLowerCase().replace(/[\s_-]+/g, '_').trim();
+      return rNorm.includes('finance') || rNorm.includes('cfo') || rNorm.includes('account');
+    }) || Boolean(req.user?.canSeeAllRequests);
 
     // Primary user ID
     const currentUserId = req.user?.id || req.user?.userId;
@@ -493,14 +497,52 @@ export const getPendingApprovals = async (req, res) => {
     const actionableApprovals = allApprovals.filter(a => isApprovalForRole(a, effectiveRoles, currentUserId));
     const hasAssignedApprovals = actionableApprovals.some(isExplicitlyAssignedToCurrentUser);
     const actionableCount = actionableApprovals.length;
-    // Non-admin users can never expand this endpoint to other roles with
-    // `scope=all`; their queue is always limited to their actionable role.
-    const scope = isSuperUser
+    
+    // Superusers and Finance team can view all pending requests across the organization
+    const canViewAll = isSuperUser || isFinanceUser;
+    const scope = canViewAll
       ? String(req.query.scope || 'all').toLowerCase().trim()
       : 'actionable';
-    let approvals = (scope === 'actionable' || req.query.actionableOnly === 'true') ? actionableApprovals : allApprovals;
+    let approvals = (scope === 'actionable' || req.query.actionableOnly === 'true') ? actionableApprovals : (canViewAll ? allApprovals : actionableApprovals);
 
-    if (!isSuperUser) approvals = actionableApprovals;
+    // Compute deadline, daysRemaining, isOverdue, and urgency for all approval records
+    const now = new Date();
+    approvals = approvals.map(a => {
+      const submitted = a.submittedAt ? new Date(a.submittedAt) : (a.createdAt ? new Date(a.createdAt) : now);
+      const computedDueDate = a.dueDate
+        ? new Date(a.dueDate)
+        : a.transactionSnapshot?.paymentDueDate
+          ? new Date(a.transactionSnapshot.paymentDueDate)
+          : a.transactionSnapshot?.expectedPaymentDate
+            ? new Date(a.transactionSnapshot.expectedPaymentDate)
+            : new Date(submitted.getTime() + (a.slaHours || 48) * 60 * 60 * 1000);
+
+      const diffMs = computedDueDate.getTime() - now.getTime();
+      const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+      const isOverdue = diffMs < 0;
+      let urgency = 'upcoming';
+      if (isOverdue) urgency = 'overdue';
+      else if (daysRemaining === 0) urgency = 'today';
+      else if (daysRemaining <= 3) urgency = 'urgent';
+
+      return {
+        ...a,
+        dueDate: computedDueDate.toISOString(),
+        daysRemaining,
+        isOverdue,
+        urgency
+      };
+    });
+
+    // Filter by urgency if requested
+    const urgencyFilter = String(req.query.urgency || '').trim().toLowerCase();
+    if (urgencyFilter && urgencyFilter !== 'all' && urgencyFilter !== 'all 7 days') {
+      approvals = approvals.filter(a => a.urgency === urgencyFilter);
+    }
+
+    if (req.query.sort === 'overdue') {
+      approvals.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+    }
 
     // ── Self-submission exclusion ────────────────────────────────────────
     const currentUserName  = (req.query.me  || '').toLowerCase().trim();
@@ -566,7 +608,7 @@ export const getPendingApprovals = async (req, res) => {
         } else {
           formattedAmount = `₹0.00`;
         }
-      }
+      };
 
       return {
         ...a,

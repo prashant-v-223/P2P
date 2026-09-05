@@ -537,30 +537,40 @@ export default function InvoicePaymentDetailView() {
                 <span className="font-mono font-bold text-slate-900 text-base">{formatCurrency(invoice.grossAmount || 0, invCurrency)}</span>
               </div>
 
-              <div className="py-3 flex items-center justify-between">
-                <span className="text-slate-600">CGST</span>
-                <span className="font-mono text-slate-600">{formatCurrency(invoice.cgstAmount || 0, invCurrency)}</span>
-              </div>
+              {Number(invoice.cgstAmount || 0) > 0 && (
+                <div className="py-3 flex items-center justify-between">
+                  <span className="text-slate-600">CGST</span>
+                  <span className="font-mono text-slate-600">{formatCurrency(invoice.cgstAmount, invCurrency)}</span>
+                </div>
+              )}
 
-              <div className="py-3 flex items-center justify-between">
-                <span className="text-slate-600">SGST</span>
-                <span className="font-mono text-slate-600">{formatCurrency(invoice.sgstAmount || 0, invCurrency)}</span>
-              </div>
+              {Number(invoice.sgstAmount || 0) > 0 && (
+                <div className="py-3 flex items-center justify-between">
+                  <span className="text-slate-600">SGST</span>
+                  <span className="font-mono text-slate-600">{formatCurrency(invoice.sgstAmount, invCurrency)}</span>
+                </div>
+              )}
 
-              <div className="py-3 flex items-center justify-between">
-                <span className="text-slate-600">IGST</span>
-                <span className="font-mono text-slate-600">{formatCurrency(invoice.igstAmount || 0, invCurrency)}</span>
-              </div>
+              {Number(invoice.igstAmount || 0) > 0 && (
+                <div className="py-3 flex items-center justify-between">
+                  <span className="text-slate-600">IGST</span>
+                  <span className="font-mono text-slate-600">{formatCurrency(invoice.igstAmount, invCurrency)}</span>
+                </div>
+              )}
 
-              <div className="py-3 flex items-center justify-between">
-                <span className="text-slate-600">TDS ({invoice.tdsPercentage || 0.00}%)</span>
-                <span className="font-mono text-rose-600 font-semibold">- {formatCurrency(invoice.tdsAmount || 0, invCurrency)}</span>
-              </div>
+              {Number(invoice.tdsAmount || 0) > 0 && (
+                <div className="py-3 flex items-center justify-between">
+                  <span className="text-slate-600">TDS {invoice.tdsPercentage ? `(${invoice.tdsPercentage}%)` : ''}</span>
+                  <span className="font-mono text-rose-600 font-semibold">- {formatCurrency(invoice.tdsAmount, invCurrency)}</span>
+                </div>
+              )}
 
-              <div className="py-3 flex items-center justify-between">
-                <span className="text-slate-600">Advance Adjusted</span>
-                <span className="font-mono text-amber-700 font-semibold">- {formatCurrency(invoice.advanceAdjusted || 0, invCurrency)}</span>
-              </div>
+              {Number(invoice.advanceAdjusted || 0) > 0 && (
+                <div className="py-3 flex items-center justify-between">
+                  <span className="text-slate-600">Advance Adjusted</span>
+                  <span className="font-mono text-amber-700 font-semibold">- {formatCurrency(invoice.advanceAdjusted, invCurrency)}</span>
+                </div>
+              )}
 
               <div className="py-4 flex items-center justify-between bg-gradient-to-r from-teal-50 to-teal-100/50 px-4 rounded-xl mt-2 border-2 border-teal-200">
                 <div>

@@ -200,7 +200,7 @@ export default function HierarchicalReportView() {
               className="flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-extrabold bg-gradient-to-r from-[#0d7676] to-teal-700 text-white shadow-sm"
             >
               <Clock className="h-3.5 w-3.5 text-white" />
-              <span>7-Day Finance Payments Forecast</span>
+              <span>Upcoming Payment Report</span>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-white/20 text-white">
                 {upcomingFinancePayments.length}
               </span>
@@ -242,10 +242,10 @@ export default function HierarchicalReportView() {
         {loading ? (
           <div className="flex flex-1 items-center justify-center py-16 text-slate-400 text-xs gap-2">
             <Loader2 className="h-5 w-5 animate-spin text-[#0d7676]" />
-            <span className="font-bold">Loading hierarchy & 7-day payment projections...</span>
+            <span className="font-bold">Loading upcoming payment projections...</span>
           </div>
         ) : viewMode === 'upcoming7d' ? (
-          /* ── UPCOMING 7-DAY FINANCE PAYMENTS VIEW ── */
+          /* ── UPCOMING PAYMENTS VIEW ── */
           <div className="flex flex-1 flex-col overflow-hidden">
             
             {/* Filter Bar for 7D View */}
@@ -315,8 +315,8 @@ export default function HierarchicalReportView() {
                     <tr>
                       <td colSpan={8} className="py-16 text-center text-slate-400">
                         <Clock className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                        <p className="font-extrabold text-sm text-slate-600">No 7-day upcoming finance payments match your filter.</p>
-                        <p className="text-xs text-slate-400 mt-1">All payment requests are either processed or fall outside the 7-day window.</p>
+                        <p className="font-extrabold text-sm text-slate-600">No upcoming finance payments match your filter.</p>
+                        <p className="text-xs text-slate-400 mt-1">All payment requests are either processed or fall outside the active payment window.</p>
                       </td>
                     </tr>
                   ) : (

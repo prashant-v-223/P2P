@@ -62,7 +62,7 @@ const NAV_SECTIONS = [
     title: 'APPROVALS',
     items: [
       { path: '/approvals', label: 'Pending Approvals', icon: CheckSquare, badge: 'pendingCount' },
-      { path: '/admin/hierarchy-report', label: '7-Day Payment Report', icon: Network }
+      { path: '/admin/hierarchy-report', label: 'Upcoming Payment Report', icon: Network }
     ]
   },
   {

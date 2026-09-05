@@ -1781,92 +1781,75 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
       requesters: Array.from(metric.requesters)
     })).sort((a, b) => b.totalAmount - a.totalAmount);
 
-    // ── Build Upcoming 7-Day Payments List (Finance Approval Based) ──
+    // ── Build Upcoming Payments List (Unified with Pending Approvals Queue) ──
     const now = new Date();
-    const upcomingFinancePayments = [];
+    const TERMINAL = ['Approved & Dispatched', 'Rejected', 'Returned for changes'];
+    const activeApprovals = await Approval.find({ status: { $nin: TERMINAL } }).sort({ submittedAt: -1, createdAt: -1 }).lean();
 
-    const processUpcomingItem = (payment, type, idKey, amtKey, vendorKey, poKey) => {
-      const status = String(payment.status || '').toLowerCase();
-      // Exclude drafts, rejected, paid, and adjusted items from upcoming finance queue
-      if (['draft', 'rejected', 'paid', 'adjusted'].includes(status)) return;
+    const upcomingFinancePayments = activeApprovals.map((app) => {
+      const submitted = app.submittedAt ? new Date(app.submittedAt) : (app.createdAt ? new Date(app.createdAt) : now);
+      const computedDueDate = app.dueDate
+        ? new Date(app.dueDate)
+        : app.transactionSnapshot?.paymentDueDate
+          ? new Date(app.transactionSnapshot.paymentDueDate)
+          : app.transactionSnapshot?.expectedPaymentDate
+            ? new Date(app.transactionSnapshot.expectedPaymentDate)
+            : new Date(submitted.getTime() + (app.slaHours || 48) * 60 * 60 * 1000);
 
-      const created = payment.createdAt ? new Date(payment.createdAt) : now;
-      const dueDate = payment.dueDate
-        ? new Date(payment.dueDate)
-        : payment.expectedPaymentDate
-          ? new Date(payment.expectedPaymentDate)
-          : new Date(created.getTime() + 5 * 24 * 60 * 60 * 1000);
-
-      const diffMs = dueDate - now;
+      const diffMs = computedDueDate.getTime() - now.getTime();
       const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 
-      const amount = Number(payment[amtKey] ?? payment.amount ?? payment.totalAmount) || 0;
-      const fxRate = Number(payment.fxRate) || 83.5;
-      const currency = payment.currency || 'INR';
-      const amountINR = currency === 'INR' ? amount : (payment.amountINR || (amount * fxRate));
-
       let urgency = 'upcoming';
-      if (daysRemaining < 0) urgency = 'overdue';
+      if (diffMs < 0) urgency = 'overdue';
       else if (daysRemaining === 0) urgency = 'today';
       else if (daysRemaining <= 3) urgency = 'urgent';
 
-      let assignedRole = payment.assignedApproverRole;
+      const amount = Number(app.amountOriginal || app.transactionSnapshot?.amount || app.transactionSnapshot?.grossAmount || app.amountINR) || 0;
+      const amountINR = Number(app.amountINR || (amount * (app.transactionSnapshot?.fxRate || 83.5))) || amount;
+      const currency = app.currency || app.transactionSnapshot?.currency || 'INR';
+
+      let assignedRole = app.assignedApproverRole;
       if (!assignedRole) {
-        if (status.includes('manager')) assignedRole = 'Purchase Manager';
-        else if (status.includes('head') || status.includes('hod')) assignedRole = 'Purchase Head';
-        else if (status.includes('cfo')) assignedRole = 'CFO';
-        else if (status.includes('md') || status.includes('director')) assignedRole = 'Managing Director';
-        else assignedRole = 'Finance Lead';
+        if (app.workflowSteps) {
+          try {
+            const steps = typeof app.workflowSteps === 'string' ? JSON.parse(app.workflowSteps) : app.workflowSteps;
+            if (Array.isArray(steps)) {
+              const activeStepObj = steps.find((s) => Number(s.step || s.stepNumber) === Number(app.currentStep || 1));
+              if (activeStepObj) {
+                assignedRole = activeStepObj.assignedApproverRole || activeStepObj.roleName || activeStepObj.roleKey;
+              }
+            }
+          } catch (_) {}
+        }
+      }
+      if (!assignedRole) {
+        assignedRole = app.status || 'Pending Finance Approval';
       }
 
-      const itemId = payment[idKey] || payment.invoicePaymentId || payment.advanceId || payment.logisticsPaymentId || payment.dutyId || payment.id || payment.invoiceNumber || payment._id;
+      const itemId = app.id || app.referenceId;
 
-      upcomingFinancePayments.push({
+      return {
         id: itemId,
-        referenceId: itemId,
-        invoicePaymentId: payment.invoicePaymentId || itemId,
-        invoiceNumber: payment.invoiceNumber || '',
-        advanceId: payment.advanceId || '',
-        type,
-        vendorName: payment[vendorKey] || payment.vendorName || payment.customAgentName || 'Vendor',
-        poNumber: payment[poKey] || payment.sapPoNumber || payment.poId || '—',
+        referenceId: app.referenceId || itemId,
+        invoicePaymentId: app.referenceId || itemId,
+        invoiceNumber: app.transactionSnapshot?.invoiceNumber || app.poReference || '',
+        advanceId: app.referenceId || '',
+        type: app.type || 'Invoice Payment',
+        vendorName: app.vendorName || app.transactionSnapshot?.vendorName || 'Vendor',
+        poNumber: app.poReference || app.poNumber || app.transactionSnapshot?.sapPoNumber || '—',
         amount,
         amountINR,
         currency,
-        status: payment.status || 'Pending Finance Approval',
+        status: app.status || 'Pending Finance Approval',
         assignedApproverRole: assignedRole,
-        requestedBy: payment.requestedByName || payment.requestedBy || payment.createdBy || 'Finance Team',
-        department: payment.department || 'Procurement',
-        createdAt: payment.createdAt,
-        dueDate: dueDate.toISOString(),
+        requestedBy: app.requestedBy || 'Finance Team',
+        department: app.department || app.transactionSnapshot?.department || 'Procurement',
+        createdAt: app.createdAt || app.submittedAt,
+        dueDate: computedDueDate.toISOString(),
         daysRemaining,
         urgency
-      });
-    };
-
-    advances.forEach(adv => processUpcomingItem(adv, 'Advance Payment', 'advanceId', 'amount', 'vendorName', 'sapPoNumber'));
-    invoices.forEach(inv => processUpcomingItem(inv, 'Invoice Payment', 'invoicePaymentId', 'netPayable', 'vendorName', 'sapPoNumber'));
-    logisticsPayments.forEach(log => processUpcomingItem(log, 'Logistics Payment', 'logisticsPaymentId', 'totalAmount', 'vendorName', 'sapPoNumber'));
-    customDuties.forEach(duty => processUpcomingItem(duty, 'Custom Duty', 'dutyId', 'dutyAmount', 'customAgentName', 'sapPoNumber'));
-
-    const reportRefIds = upcomingFinancePayments.map(item => item.id).filter(Boolean);
-    if (reportRefIds.length > 0) {
-      const reportApprovals = await Approval.find({ $or: [{ referenceId: { $in: reportRefIds } }, { id: { $in: reportRefIds } }] })
-        .select('id referenceId assignedApproverRole')
-        .lean()
-        .catch(() => []);
-      const reportAppMap = new Map();
-      reportApprovals.forEach(app => {
-        if (app.referenceId) reportAppMap.set(app.referenceId, app);
-        if (app.id) reportAppMap.set(app.id, app);
-      });
-      upcomingFinancePayments.forEach(item => {
-        const app = reportAppMap.get(item.id);
-        if (app?.assignedApproverRole) {
-          item.assignedApproverRole = app.assignedApproverRole;
-        }
-      });
-    }
+      };
+    });
 
     upcomingFinancePayments.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
 

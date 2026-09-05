@@ -192,9 +192,9 @@ export const routeMeta = {
   },
   '/admin/hierarchy-report': {
     icon: RefreshCw,
-    eyebrow: 'Management',
-    title: 'Hierarchy Report',
-    description: 'Hierarchical grid showing advance QTs, PO amounts, invoice adjustments, and vendor requirements per user.',
+    eyebrow: 'Approvals',
+    title: 'Upcoming Payment Report',
+    description: 'Upcoming cashflow forecasts, hierarchical payment projections, and overdue tracking.',
   },
   '/admin/sap-sync': {
     icon: Cloud,

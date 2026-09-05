@@ -14,7 +14,11 @@ import {
   ArrowRightLeft,
   AlertTriangle,
   Inbox,
-  X
+  X,
+  Filter,
+  ShieldCheck,
+  Building2,
+  UserCheck
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../ui/toast';
@@ -62,8 +66,7 @@ const JOURNEY_LABELS = {
   ]
 };
 
-// One distinct color per payment type, so the pill works as a quick visual
-// sort key across a mixed queue instead of every card reading the same emerald.
+// One distinct color per payment type
 const TYPE_STYLES = {
   'BL Freight Invoice': { bg: 'bg-sky-50', text: 'text-sky-700', border: 'border-sky-200' },
   'Logistics Payments': { bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-200' },
@@ -76,16 +79,38 @@ const TYPE_STYLES = {
 };
 const DEFAULT_TYPE_STYLE = { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' };
 
+function formatRoleLabel(role = '') {
+  const r = String(role || '').trim();
+  if (!r) return 'Approver';
+  const rLower = r.toLowerCase();
+  if (rLower === 'cfo') return 'CFO';
+  if (rLower === 'md' || rLower === 'director') return 'Managing Director (MD)';
+  if (rLower.includes('procurement_head') || rLower.includes('purchase_head')) return 'Procurement Head';
+  if (rLower.includes('procurement_manager') || rLower.includes('purchase_manager')) return 'Purchase Manager';
+  if (rLower.includes('finance_head') || rLower.includes('finance_lead') || rLower === 'finance') return 'Finance Lead';
+  if (rLower.includes('logistics')) return 'Logistics Head';
+  if (rLower.includes('exim')) return 'EXIM Manager';
+  return r.replace(/[_-]+/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
+}
+
+function formatActionVerb(action = '') {
+  const a = String(action || '').toLowerCase().trim();
+  if (a === 'approve') return 'Approved';
+  if (a === 'return') return 'Returned';
+  if (a === 'reject') return 'Rejected';
+  return action;
+}
+
 function getStepFromStatus(type, status = '') {
   const stepObjs = JOURNEY_LABELS[type] || JOURNEY_LABELS['Advance Payment'];
-  const steps = stepObjs.map(s => s.title);
+  const steps = stepObjs.map((s) => s.title);
   const statusLower = status.toLowerCase();
-  const idx = steps.findIndex(s => statusLower.includes(s.toLowerCase()));
+  const idx = steps.findIndex((s) => statusLower.includes(s.toLowerCase()));
   return idx === -1 ? 0 : idx;
 }
 
 const getApprovalDetailUrl = (approval) => {
-  if (!approval) return '/admin/pending-approvals';
+  if (!approval) return '/approvals';
   const type = String(approval.type || '').toLowerCase();
   const refId = approval.referenceId || approval.id;
 
@@ -104,15 +129,36 @@ const getApprovalDetailUrl = (approval) => {
   return `/admin/advance-payments/${refId}`;
 };
 
-const formatSubmitted = (value) => {
+const formatSubmittedDate = (value) => {
   if (!value) return 'Recently submitted';
-  return new Intl.DateTimeFormat('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(new Date(value));
+  try {
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return 'Recently submitted';
+    return new Intl.DateTimeFormat('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(d);
+  } catch {
+    return 'Recently submitted';
+  }
+};
+
+const formatTargetDate = (value) => {
+  if (!value) return '—';
+  try {
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return '—';
+    return new Intl.DateTimeFormat('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    }).format(d);
+  } catch {
+    return String(value);
+  }
 };
 
 const formatCurrency = (amount, currency = 'INR', amountFormatted = '') => {
@@ -129,7 +175,6 @@ const formatCurrency = (amount, currency = 'INR', amountFormatted = '') => {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(val);
 };
 
-// Relative time gives a quicker sense of urgency than an absolute date alone
 function formatRelativeTime(value) {
   if (!value) return '';
   const diffMs = Date.now() - new Date(value).getTime();
@@ -141,7 +186,13 @@ function formatRelativeTime(value) {
   return `${diffDays}d ago`;
 }
 
-function getUrgency() {
+function getUrgency(approval) {
+  if (!approval) return 'normal';
+  if (approval.urgency) return approval.urgency;
+  if (approval.isOverdue) return 'overdue';
+  const now = Date.now();
+  const due = approval.dueDate ? new Date(approval.dueDate).getTime() : (approval.submittedAt ? new Date(approval.submittedAt).getTime() + 48 * 3600 * 1000 : null);
+  if (due && due < now) return 'overdue';
   return 'normal';
 }
 
@@ -154,29 +205,12 @@ const STATUS_STYLES = {
 };
 
 const URGENCY_STYLES = {
-  critical: { accent: 'bg-slate-200', label: null, badge: '' },
-  warning: { accent: 'bg-slate-200', label: null, badge: '' },
+  overdue: { accent: 'bg-rose-500', label: 'Overdue', badge: 'bg-rose-100 text-rose-800 border-rose-300' },
+  today: { accent: 'bg-orange-500', label: 'Due Today', badge: 'bg-orange-100 text-orange-800 border-orange-300' },
+  urgent: { accent: 'bg-amber-500', label: '1–3 Days', badge: 'bg-amber-100 text-amber-800 border-amber-300' },
+  upcoming: { accent: 'bg-teal-500', label: '4–7 Days', badge: 'bg-teal-100 text-teal-800 border-teal-300' },
   normal: { accent: 'bg-slate-200', label: null, badge: '' }
 };
-
-// Small stat tile for the summary header
-function StatTile({ icon: Icon, label, value, tone = 'slate' }) {
-  const toneMap = {
-    slate: 'bg-slate-50 text-slate-700 border-slate-200',
-    emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    amber: 'bg-amber-50 text-amber-700 border-amber-200',
-    rose: 'bg-rose-50 text-rose-700 border-rose-200'
-  };
-  return (
-    <div className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${toneMap[tone]}`}>
-      <Icon className="h-4 w-4 shrink-0" />
-      <div className="min-w-0">
-        <span className="block text-[10px] font-bold uppercase tracking-wider opacity-70">{label}</span>
-        <span className="block text-sm font-extrabold truncate">{value}</span>
-      </div>
-    </div>
-  );
-}
 
 // Shown while the queue loads so the layout doesn't jump once data arrives
 function ApprovalCardSkeleton() {
@@ -208,19 +242,17 @@ export default function PendingApprovalsView() {
   const [processingAction, setProcessingAction] = useState(null);
   const [remarks, setRemarks] = useState({});
   const [remarkErrors, setRemarkErrors] = useState({});
-  const [confirmingReject, setConfirmingReject] = useState(null); // id awaiting a second tap before it actually rejects
+  const [confirmingReject, setConfirmingReject] = useState(null);
   const [pagination, setPagination] = useState({ total: 0, page: 1, size: 10, totalPages: 1 });
 
-  const currentUserRole = user?.role || 'Finance Lead';
   const query = searchParams.get('q') || '';
   const type = searchParams.get('type') || 'All';
   const sort = searchParams.get('sort') || 'newest';
   const onlyMine = searchParams.get('mine') === 'true';
+  const urgencyFilter = searchParams.get('urgency') || 'All';
   const pageSize = Math.max(1, Number(searchParams.get('size')) || 10);
   const requestedPage = Math.max(1, Number(searchParams.get('page')) || 1);
 
-  // Local, instantly-editable copy of the search box. The URL (and the fetch it triggers)
-  // only updates after typing pauses, so we're not re-querying on every keystroke.
   const [searchInput, setSearchInput] = useState(query);
   useEffect(() => setSearchInput(query), [query]);
   const debounceRef = useRef(null);
@@ -247,9 +279,8 @@ export default function PendingApprovalsView() {
   const totalPages = pagination.totalPages || 1;
   const page = pagination.page || requestedPage;
   const types = useMemo(() => ['All', ...Object.keys(JOURNEY_LABELS)], []);
-  const hasActiveFilters = Boolean(query || type !== 'All' || onlyMine);
+  const hasActiveFilters = Boolean(query || type !== 'All' || searchParams.get('urgency') || onlyMine);
 
-  const [actionableCount, setActionableCount] = useState(0);
   const [allCount, setAllCount] = useState(0);
 
   const fetchApprovals = useCallback(async () => {
@@ -263,8 +294,6 @@ export default function PendingApprovalsView() {
       const rawApprovals = data.approvals || [];
       setApprovals(rawApprovals);
 
-      const aCount = rawApprovals.filter((approval) => approval.isUserTurnToApprove).length;
-      setActionableCount(aCount);
       const totalPending = data.total ?? data.count ?? rawApprovals.length;
       setAllCount(totalPending);
 
@@ -287,42 +316,13 @@ export default function PendingApprovalsView() {
     fetchApprovals();
   }, [fetchApprovals]);
 
-
-  // Summary derived from the current page — labelled "on page" since the API doesn't
-  // (yet) return aggregate totals for the whole queue.
-  const summary = useMemo(() => {
-    let value = 0;
-    let awaitingMe = 0;
-    let aging = 0;
-    approvals.forEach((approval) => {
-      let amt = 0;
-      const rawInr = approval.amountINR;
-      if (typeof rawInr === 'number') {
-        amt = rawInr;
-      } else if (typeof rawInr === 'string') {
-        const inrMatch = rawInr.match(/₹\s*([0-9,.]+)/);
-        if (inrMatch) {
-          amt = parseFloat(inrMatch[1].replace(/,/g, '')) || 0;
-        } else {
-          amt = parseFloat(rawInr.replace(/[^0-9.-]+/g, '')) || 0;
-        }
-      }
-      value += amt;
-      if (getUrgency(approval.submittedAt) === 'critical') aging += 1;
-    });
-    return { value, awaitingMe, aging };
-  }, [approvals]);
-
   const handleAction = async (id, action) => {
     const trimmedRemark = remarks[id]?.trim() || '';
 
-    // Returning or rejecting without a reason leaves the requester guessing why —
-    // require a short note for those two actions before calling the API.
     if ((action === 'Return' || action === 'Reject') && !trimmedRemark) {
-      setRemarkErrors((current) => ({ ...current, [id]: `Add a note explaining why this is being ${action === 'Return' ? 'returned' : 'rejected'}.` }));
+      setRemarkErrors((current) => ({ ...current, [id]: `Please provide a reason before ${action === 'Return' ? 'returning' : 'rejecting'} this request.` }));
       return;
     }
-    // A second tap confirms a rejection, so a stray click can't reject a request outright.
     if (action === 'Reject' && confirmingReject !== id) {
       setConfirmingReject(id);
       return;
@@ -340,7 +340,7 @@ export default function PendingApprovalsView() {
       });
       const data = await res.json();
       if (!res.ok) {
-        showToast({ type: 'error', title: 'Not authorized for this step', description: data.error || 'Unable to process approval.' });
+        showToast({ type: 'error', title: 'Action not authorized', description: data.error || 'Unable to process approval.' });
         return;
       }
       const label = action === 'Approve' ? 'approved' : action === 'Return' ? 'returned' : 'rejected';
@@ -348,9 +348,9 @@ export default function PendingApprovalsView() {
 
       showToast({
         type: action === 'Reject' ? 'error' : action === 'Return' ? 'info' : 'success',
-        title: isFullyApproved ? 'Fully approved' : `Request ${label}`,
+        title: isFullyApproved ? 'Fully Approved & Dispatched' : `Request ${label}`,
         description: isFullyApproved
-          ? `${id} has cleared every approval step and is Approved & Dispatched.`
+          ? `${id} has successfully cleared all workflow approval stages.`
           : `${id} was ${label}.`
       });
 
@@ -367,85 +367,140 @@ export default function PendingApprovalsView() {
   };
 
   return (
-    <div className="flex h-[calc(100dvh-5.5rem)] min-h-0 w-full flex-col gap-3 overflow-hidden pb-4 text-left font-sans">
-      {/* Toolbar */}
-      <div className="surface-card flex flex-col gap-2 p-2.5 lg:flex-row lg:items-center">
-        <div className="relative min-w-0 flex-1">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" aria-hidden="true" />
-          <input
-            value={searchInput}
-            onChange={(event) => handleSearchChange(event.target.value)}
-            placeholder="Search request ID, vendor, requester, workflow..."
-            aria-label="Search pending approvals"
-            className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-8 text-xs placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none"
-          />
-          {searchInput && (
+    <div className="flex h-[calc(100dvh-5.5rem)] min-h-0 w-full flex-col gap-3.5 overflow-hidden pb-4 text-left font-sans text-slate-800">
+      
+      {/* ── Top Header ── */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xs shrink-0">
+        
+        {/* Left: Pending Approvals Title Badge */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#0d7676] to-teal-700 px-3.5 py-2 text-xs font-extrabold text-white shadow-sm">
+            <FileText className="h-4 w-4" />
+            <span>Pending Approvals</span>
+            <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-black text-white">
+              {allCount}
+            </span>
+          </div>
+        </div>
+
+        {/* Search Bar & Reset */}
+        <div className="flex items-center gap-3 w-full sm:w-auto flex-1 max-w-lg justify-end">
+          <div className="relative w-full">
+            <Search className="absolute left-3.5 top-2.5 h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+            <input
+              value={searchInput}
+              onChange={(event) => handleSearchChange(event.target.value)}
+              placeholder="Search request ID, vendor, PO number, or requester..."
+              aria-label="Search pending approvals"
+              className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50/80 pl-9 pr-8 text-xs font-medium placeholder:text-slate-400 focus:bg-white focus:border-[#0d7676] focus:ring-2 focus:ring-[#0d7676]/20 outline-none transition"
+            />
+            {searchInput && (
+              <button
+                type="button"
+                onClick={() => handleSearchChange('')}
+                aria-label="Clear search"
+                className="absolute right-2.5 top-2.5 text-slate-300 hover:text-slate-500"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Sub-Toolbar: Urgency Filters + Payment Type + Sort ── */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 shadow-2xs shrink-0">
+        
+        {/* Urgency Filter Pills */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mr-1 flex items-center gap-1">
+            <Clock className="w-3.5 h-3.5 text-slate-400" /> Urgency:
+          </span>
+          {[
+            { id: 'All', label: 'All 7 Days' },
+            { id: 'overdue', label: 'Overdue' },
+            { id: 'today', label: 'Due Today' },
+            { id: 'urgent', label: '1–3 Days' },
+            { id: 'upcoming', label: '4–7 Days' }
+          ].map((u) => {
+            const isSelected = urgencyFilter === u.id;
+            return (
+              <button
+                key={u.id}
+                type="button"
+                onClick={() => updateFilters({ urgency: u.id === 'All' ? null : u.id })}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                  isSelected
+                    ? (u.id === 'overdue' ? 'bg-rose-600 text-white shadow-2xs font-extrabold' : u.id === 'today' ? 'bg-orange-500 text-white shadow-2xs font-extrabold' : 'bg-[#0d7676] text-white shadow-2xs font-extrabold')
+                    : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                {u.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Dropdowns & Reset */}
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <div className="w-44">
+            <SearchableSelect
+              options={types.map((item) => ({ label: item === 'All' ? 'All Payment Types' : item, value: item }))}
+              value={type}
+              onChange={(val) => updateFilters({ type: val })}
+              size="sm"
+              searchable={false}
+            />
+          </div>
+
+          <div className="w-36">
+            <SearchableSelect
+              options={[
+                { label: 'Newest First', value: 'newest' },
+                { label: 'Oldest First', value: 'oldest' },
+                { label: 'Overdue First', value: 'overdue' }
+              ]}
+              value={sort}
+              onChange={(val) => updateFilters({ sort: val })}
+              size="sm"
+              searchable={false}
+            />
+          </div>
+
+          <div className="w-28">
+            <SearchableSelect
+              options={[
+                { label: '5 / page', value: '5' },
+                { label: '10 / page', value: '10' },
+                { label: '20 / page', value: '20' },
+                { label: '50 / page', value: '50' }
+              ]}
+              value={String(pageSize)}
+              onChange={(val) => updateFilters({ size: val })}
+              size="sm"
+              searchable={false}
+            />
+          </div>
+
+          {hasActiveFilters && (
             <button
               type="button"
-              onClick={() => handleSearchChange('')}
-              aria-label="Clear search"
-              className="absolute right-2 top-2 text-slate-300 hover:text-slate-500"
+              onClick={() => setSearchParams(new URLSearchParams(), { replace: true })}
+              className="h-8 rounded-lg px-2.5 text-xs font-bold text-slate-500 hover:text-slate-800 hover:underline"
             >
-              <X className="h-4 w-4" />
+              Reset Filters
             </button>
           )}
         </div>
-
-        <div className="w-44">
-          <SearchableSelect
-            options={types.map((item) => ({ label: item === 'All' ? 'All payment types' : item, value: item }))}
-            value={type}
-            onChange={(val) => updateFilters({ type: val })}
-            size="sm"
-            searchable={false}
-          />
-        </div>
-
-        <div className="w-36">
-          <SearchableSelect
-            options={[
-              { label: 'Newest first', value: 'newest' },
-              { label: 'Oldest first', value: 'oldest' }
-            ]}
-            value={sort}
-            onChange={(val) => updateFilters({ sort: val })}
-            size="sm"
-            searchable={false}
-          />
-        </div>
-
-        <div className="w-32">
-          <SearchableSelect
-            options={[
-              { label: '5 per page', value: '5' },
-              { label: '10 per page', value: '10' },
-              { label: '20 per page', value: '20' },
-              { label: '50 per page', value: '50' }
-            ]}
-            value={String(pageSize)}
-            onChange={(val) => updateFilters({ size: val })}
-            size="sm"
-            searchable={false}
-          />
-        </div>
-
-        {hasActiveFilters && (
-          <button
-            type="button"
-            onClick={() => setSearchParams(new URLSearchParams(), { replace: true })}
-            className="h-9 rounded-lg px-3 text-xs font-bold text-slate-500 hover:text-slate-700 hover:underline"
-          >
-            Clear filters
-          </button>
-        )}
       </div>
 
+      {/* ── Main Approvals List Area ── */}
       {loading ? (
         <div className="report-scroll min-h-0 flex-1 space-y-4 overflow-y-auto pr-2">
           {Array.from({ length: 3 }).map((_, i) => <ApprovalCardSkeleton key={i} />)}
         </div>
       ) : approvals.length === 0 ? (
-        <div className="surface-card py-16 text-center">
+        <div className="surface-card py-16 text-center rounded-2xl border border-slate-200 bg-white">
           <CheckCircle2 className="mx-auto h-9 w-9 text-emerald-500" />
           <h3 className="mt-2 text-sm font-bold text-slate-900">
             {hasActiveFilters ? 'No approvals match these filters' : 'No pending approvals'}
@@ -453,21 +508,21 @@ export default function PendingApprovalsView() {
           <p className="mt-1 text-xs text-slate-500">
             {hasActiveFilters
               ? 'Try widening the search, payment type, or clearing filters.'
-              : 'There are currently no workflow requests waiting for your approval.'}
+              : 'There are currently no workflow requests waiting for approval in this queue.'}
           </p>
           {hasActiveFilters && (
             <button
               type="button"
               onClick={() => setSearchParams(new URLSearchParams(), { replace: true })}
-              className="mt-3 text-xs font-bold text-teal-700 hover:underline"
+              className="mt-3 text-xs font-bold text-[#0d7676] hover:underline"
             >
-              Clear filters
+              Reset All Filters
             </button>
           )}
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-2.5">
-          <div className="report-scroll min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain pr-2">
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          <div className="report-scroll min-h-0 flex-1 space-y-3.5 overflow-y-auto overscroll-contain pr-1.5">
             {approvals.map((approval, approvalIndex) => {
               const rawStepObjs = (approval.parsedSteps && Array.isArray(approval.parsedSteps) && approval.parsedSteps.length > 0)
                 ? approval.parsedSteps
@@ -488,22 +543,25 @@ export default function PendingApprovalsView() {
 
               const isProcessing = processingId === approval.id;
               const isTerminal = TERMINAL_STATUSES.includes(approval.status);
-              const urgency = isTerminal ? 'normal' : getUrgency(approval.submittedAt);
-              const urgencyStyle = URGENCY_STYLES[urgency];
+              const urgency = isTerminal ? 'normal' : getUrgency(approval);
+              const urgencyStyle = URGENCY_STYLES[urgency] || URGENCY_STYLES.normal;
               const statusStyle = STATUS_STYLES[approval.status];
               const typeStyle = TYPE_STYLES[approval.type] || DEFAULT_TYPE_STYLE;
               const allocations = Array.isArray(approval.allocations) ? approval.allocations : null;
+              const isOverdueItem = !isTerminal && (urgency === 'overdue' || approval.isOverdue);
+              const poNumber = approval.poReference || approval.sapPoNumber || approval.poId || '—';
 
               return (
                 <div
                   key={approval.id || approvalIndex}
-                  className="flex overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-2xs transition-all hover:border-teal-400 hover:shadow-xs"
+                  className="flex overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-2xs transition-all hover:border-[#0d7676]/40 hover:shadow-xs"
                 >
-                  {/* Urgency accent rail — a quiet signal for how long this has been waiting */}
+                  {/* Urgency accent rail */}
                   <div className={`w-1.5 shrink-0 ${isTerminal ? (statusStyle?.dot || 'bg-slate-200') : urgencyStyle.accent}`} aria-hidden="true" />
 
                   <div className="flex-1 space-y-3 p-4">
-                    {/* 1. Header: Ref ID + Type + status/urgency signals */}
+                    
+                    {/* 1. Header: Ref ID + Type + Urgency Badges + Stage Title */}
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-2.5">
                       <div className="flex flex-wrap items-center gap-2.5">
                         <div className={`flex h-8 w-8 items-center justify-center rounded-lg border ${typeStyle.border} ${typeStyle.bg} ${typeStyle.text}`}>
@@ -511,33 +569,44 @@ export default function PendingApprovalsView() {
                         </div>
                         <Link
                           to={getApprovalDetailUrl(approval)}
-                          className="font-mono text-base font-extrabold text-slate-900 transition-colors hover:text-teal-700"
+                          className="font-mono text-base font-extrabold text-slate-900 transition-colors hover:text-[#0d7676]"
                         >
                           {approval.id}
                         </Link>
                         <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider ${typeStyle.bg} ${typeStyle.text} ${typeStyle.border}`}>
                           {approval.type}
                         </span>
+
                         {isTerminal && (
                           <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider ${statusStyle?.bg} ${statusStyle?.text} ${statusStyle?.border}`}>
                             {approval.status}
                           </span>
                         )}
-                        {!isTerminal && urgencyStyle.label && (
+
+                        {isOverdueItem && (
+                          <span className="flex items-center gap-1 rounded-full border border-rose-300 bg-rose-100 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-rose-800 animate-pulse">
+                            <Clock className="h-3 w-3 text-rose-600" />
+                            {`OVERDUE (${Math.abs(approval.daysRemaining || 1)}D)`}
+                          </span>
+                        )}
+
+                        {!isTerminal && !isOverdueItem && urgencyStyle.label && (
                           <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider ${urgencyStyle.badge}`}>
                             {urgencyStyle.label}
                           </span>
                         )}
+
                         {approval.delegatedFrom && (
                           <span className="flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold text-amber-800">
                             <ArrowRightLeft className="h-3 w-3 text-amber-600" />
                             Delegated from {approval.delegatedFrom.name} ({approval.delegatedFrom.role})
                           </span>
                         )}
+
                         <span className="text-slate-300">·</span>
-                        <span className="flex items-center gap-1 text-xs font-medium text-slate-500" title={formatSubmitted(approval.submittedAt)}>
+                        <span className="flex items-center gap-1 text-xs font-medium text-slate-500" title={formatSubmittedDate(approval.submittedAt)}>
                           <Clock className="h-3.5 w-3.5 text-slate-400" />
-                          {formatRelativeTime(approval.submittedAt) || formatSubmitted(approval.submittedAt)}
+                          {formatRelativeTime(approval.submittedAt) || formatSubmittedDate(approval.submittedAt)}
                         </span>
                       </div>
 
@@ -549,62 +618,65 @@ export default function PendingApprovalsView() {
                           (approval.status || '').toLowerCase().includes('md') || (approval.status || '').toLowerCase().includes('director') ? 'bg-purple-50 text-purple-700 border-purple-200' :
                           'bg-teal-50 text-teal-700 border-teal-200'
                         }`}>
-                          {steps[activeStep] || approval.status || '—'}
+                          {formatRoleLabel(steps[activeStep] || approval.status || 'Approval')}
                         </span>
                       </div>
                     </div>
 
-                    {/* 2. Key attributes */}
+                    {/* 2. Key Attributes Grid */}
                     <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-xs md:grid-cols-4">
                       <div>
-                        <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Amount</span>
+                        <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Amount (Payable)</span>
                         <span className="block font-mono text-base font-extrabold text-slate-900">
                           {approval.amountFormatted || formatCurrency(approval.amountOriginal || approval.amountINR, approval.currency, approval.amountFormatted)}
                         </span>
                       </div>
+                      
                       <div>
-                        <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Vendor</span>
+                        <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Vendor & PO</span>
                         <span className="block truncate font-bold text-slate-900">
                           {approval.vendorName || (allocations ? `${allocations.length} vendors` : '—')}
                         </span>
+                        {poNumber && poNumber !== '—' && (
+                          <span className="block font-mono text-[11px] font-bold text-[#0d7676] mt-0.5">
+                            PO: {poNumber}
+                          </span>
+                        )}
                       </div>
+                      
                       <div>
-                        <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Requester</span>
+                        <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Requested By</span>
                         <span className="block truncate font-semibold text-slate-800">{approval.requestedBy || '—'}</span>
+                        <span className="block text-[10px] text-slate-400 font-medium">Procurement Team</span>
                       </div>
+                      
                       <div className="flex flex-col gap-1 justify-between">
                         <div className="flex items-center justify-between gap-2">
                           <div>
-                            <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Submitted</span>
-                            <span className="block font-medium text-slate-700">{formatSubmitted(approval.submittedAt)}</span>
+                            <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">Target / Due Date</span>
+                            <span className={`block font-bold ${
+                              isOverdueItem ? 'text-rose-600 font-extrabold' : 'text-slate-700'
+                            }`}>
+                              {formatTargetDate(approval.dueDate || approval.transactionSnapshot?.paymentDueDate || approval.transactionSnapshot?.expectedPaymentDate)}
+                            </span>
                           </div>
-                          {(approval.dueDate || approval.transactionSnapshot?.paymentDueDate) && (
-                            <div>
-                              <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wider text-slate-400">SLA Due</span>
-                              <span className={`block font-bold ${
-                                approval.dueDate && new Date(approval.dueDate) < new Date() ? 'text-rose-600' : 'text-slate-700'
-                              }`}>
-                                {formatSubmitted(approval.dueDate || approval.transactionSnapshot?.paymentDueDate)}
-                              </span>
-                            </div>
-                          )}
                         </div>
                         <Link
                           to={getApprovalDetailUrl(approval)}
-                          className="flex shrink-0 items-center gap-1 text-xs font-bold text-teal-700 hover:text-teal-800 hover:underline self-end"
+                          className="flex shrink-0 items-center gap-1 text-xs font-bold text-[#0d7676] hover:text-teal-800 hover:underline self-end"
                         >
-                          Details <ChevronRight className="h-3.5 w-3.5" />
+                          Inspect Details <ChevronRight className="h-3.5 w-3.5" />
                         </Link>
                       </div>
                     </div>
 
-                    {/* 3. Item / allocation breakdown — only rendered when the backend actually supplied it */}
+                    {/* 3. Item / Allocation breakdown */}
                     {allocations && allocations.length > 0 && (
                       <div className="space-y-2.5 rounded-xl border border-emerald-200/80 bg-emerald-50/20 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-100 pb-2">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="rounded bg-emerald-100 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider text-emerald-800">
-                              Allocation basis
+                              Allocation Basis
                             </span>
                             {approval.title && <span className="text-xs font-bold text-slate-800">{approval.title}</span>}
                             {approval.poReference && (
@@ -632,11 +704,11 @@ export default function PendingApprovalsView() {
                                   <span className="block font-bold text-slate-800">{alloc.containers}</span>
                                 </div>
                                 <div>
-                                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Rate / container</span>
+                                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Rate / Container</span>
                                   <span className="block font-mono font-bold text-slate-800">{formatCurrency(alloc.ratePerContainer)}</span>
                                 </div>
                                 <div>
-                                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Allocation amount</span>
+                                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Allocation Amount</span>
                                   <span className="block font-mono font-extrabold text-slate-900">{formatCurrency(alloc.allocationAmount)}</span>
                                 </div>
                               </div>
@@ -652,7 +724,7 @@ export default function PendingApprovalsView() {
                       </div>
                     )}
 
-                    {/* 4. Workflow stepper with role badges */}
+                    {/* 4. Workflow Stepper & Role Badges */}
                     <div className="space-y-1.5 pt-0.5">
                       <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
                         {steps.map((label, index) => {
@@ -678,9 +750,9 @@ export default function PendingApprovalsView() {
                                 </span>
                                 <div>
                                   <span className="block whitespace-nowrap font-bold">{label}</span>
-                                  {roleName && <span className="block text-[9px] font-normal capitalize text-slate-400">{roleName}</span>}
+                                  {roleName && <span className="block text-[9px] font-normal capitalize text-slate-400">{formatRoleLabel(roleName)}</span>}
                                   {isCurrent && assignedNames.length > 0 && (
-                                    <span className="block max-w-[280px] whitespace-normal text-[9px] font-semibold text-teal-700">
+                                    <span className="block max-w-[280px] whitespace-normal text-[9px] font-semibold text-[#0d7676]">
                                       Assigned to: {assignedNames.join(', ')}
                                     </span>
                                   )}
@@ -692,9 +764,9 @@ export default function PendingApprovalsView() {
                         })}
                       </div>
 
-                      {/* Approval history */}
+                      {/* Approval History Trail */}
                       <div className="space-y-1">
-                        <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-400">Approval history</span>
+                        <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-400">Approval Audit Trail</span>
                         {Array.isArray(approval.actionHistory) && approval.actionHistory.length > 0 ? (
                           <div className="flex flex-wrap items-center gap-1.5">
                             {approval.actionHistory.map((rec, hi) => {
@@ -709,30 +781,30 @@ export default function PendingApprovalsView() {
                               return (
                                 <div key={hi} className={`flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${c}`}>
                                   <span className={`h-1.5 w-1.5 rounded-full ${d}`} />
-                                  <span>{rec.actionedBy || 'User'}</span>
+                                  <span className="font-bold">{rec.actionedBy || 'User'}</span>
                                   <span>·</span>
-                                  <span className="font-bold capitalize">{rec.action}</span>
+                                  <span className="font-bold capitalize">{formatActionVerb(rec.action)}</span>
                                   <span>·</span>
                                   <span>Step {rec.step}</span>
-                                  {rec.role && <span className="opacity-60">({rec.role})</span>}
+                                  {rec.role && <span className="opacity-75">({formatRoleLabel(rec.role)})</span>}
                                 </div>
                               );
                             })}
                           </div>
                         ) : (
-                          <span className="text-[11px] italic text-slate-400">No actions taken yet</span>
+                          <span className="text-[11px] italic text-slate-400">No prior approval actions recorded</span>
                         )}
                       </div>
                     </div>
 
-                    {/* 5. Comments + actions */}
+                    {/* 5. Comments & Authorization Action Controls */}
                     {!isTerminal && (
                       <div className="space-y-2.5 border-t border-slate-100 pt-2.5">
                         {!approval.isUserTurnToApprove && (
-                          <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-1.5 text-xs text-amber-800">
+                          <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-900 font-medium">
                             <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
                             <span>
-                              {`Pending Step ${approval.currentStep} approval by assigned approver.`}
+                              {`Currently awaiting Step ${approval.currentStep} approval by ${formatRoleLabel(approval.currentStepRole || 'Assigned Approver')}. Action is locked until preceding steps are completed.`}
                             </span>
                           </div>
                         )}
@@ -740,7 +812,7 @@ export default function PendingApprovalsView() {
                         <div className="flex flex-col items-stretch justify-between gap-2.5 md:flex-row md:items-end">
                           <div className="flex-1 space-y-1">
                             <label htmlFor={`remark-${approval.id}`} className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                              Comments (required to return or reject)
+                              Approver Remarks (Optional for Approve, Required for Return / Reject)
                             </label>
                             <input
                               id={`remark-${approval.id}`}
@@ -750,10 +822,10 @@ export default function PendingApprovalsView() {
                                 setRemarkErrors((current) => ({ ...current, [approval.id]: undefined }));
                               }}
                               disabled={!approval.isUserTurnToApprove || isProcessing}
-                              placeholder={approval.isUserTurnToApprove ? "Add a note before acting..." : "Action locked for this step"}
+                              placeholder={approval.isUserTurnToApprove ? "Add an approval note or return reason..." : "Action locked for this step"}
                               aria-invalid={Boolean(remarkErrors[approval.id])}
                               className={`h-10 w-full rounded-xl border bg-slate-50/50 px-3.5 text-xs text-slate-700 outline-none transition-all placeholder:text-slate-400 focus:bg-white focus:ring-2 ${
-                                remarkErrors[approval.id] ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-100' : 'border-slate-200 focus:border-teal-500 focus:ring-teal-100'
+                                remarkErrors[approval.id] ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-100' : 'border-slate-200 focus:border-[#0d7676] focus:ring-[#0d7676]/20'
                               } disabled:cursor-not-allowed disabled:opacity-50`}
                             />
                             {remarkErrors[approval.id] && (
@@ -765,7 +837,7 @@ export default function PendingApprovalsView() {
                             <button
                               onClick={() => handleAction(approval.id, 'Approve')}
                               disabled={!approval.isUserTurnToApprove || isProcessing}
-                              className="flex h-10 items-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-extrabold text-white shadow-2xs transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                              className="flex h-10 items-center gap-2 rounded-xl bg-emerald-600 px-5 text-xs font-extrabold text-white shadow-2xs transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40 active:scale-95"
                             >
                               {isProcessing && processingAction === 'Approve' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                               Approve
@@ -774,7 +846,7 @@ export default function PendingApprovalsView() {
                             <button
                               onClick={() => handleAction(approval.id, 'Return')}
                               disabled={!approval.isUserTurnToApprove || isProcessing}
-                              className="flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 text-xs font-bold text-slate-700 transition-all hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                              className="flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 text-xs font-bold text-slate-700 transition-all hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 active:scale-95"
                             >
                               {isProcessing && processingAction === 'Return' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5 text-slate-500" />}
                               Return
@@ -784,14 +856,14 @@ export default function PendingApprovalsView() {
                               onClick={() => handleAction(approval.id, 'Reject')}
                               onBlur={() => setConfirmingReject((current) => (current === approval.id ? null : current))}
                               disabled={!approval.isUserTurnToApprove || isProcessing}
-                              className={`flex h-10 items-center gap-1.5 rounded-xl border px-4 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
+                              className={`flex h-10 items-center gap-1.5 rounded-xl border px-4 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-40 active:scale-95 ${
                                 confirmingReject === approval.id
                                   ? 'border-rose-600 bg-rose-600 text-white hover:bg-rose-700'
                                   : 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
                               }`}
                             >
                               {isProcessing && processingAction === 'Reject' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />}
-                              {confirmingReject === approval.id ? 'Confirm reject?' : 'Reject'}
+                              {confirmingReject === approval.id ? 'Confirm Reject?' : 'Reject'}
                             </button>
                           </div>
                         </div>
