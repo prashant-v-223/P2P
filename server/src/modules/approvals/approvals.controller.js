@@ -498,67 +498,14 @@ export const getPendingApprovals = async (req, res) => {
     // Actionable items specifically assigned to user's role step or direct assignment
     const actionableApprovals = allApprovals.filter(a => isApprovalForRole(a, effectiveRoles, req.user || currentUserId));
     const hasAssignedApprovals = actionableApprovals.some(isExplicitlyAssignedToCurrentUser);
-<<<<<<< HEAD
     const actionableCount = actionableApprovals.length;
     
     // Superusers and Finance team can view all pending requests across the organization
     const canViewAll = isSuperUser || isFinanceUser;
     const scope = canViewAll
-=======
-    const isFinanceOrAdmin = isSuperUser || effectiveRoles.some((r) => {
-      const rNorm = r.toLowerCase().replace(/[\s_-]+/g, '').trim();
-      return rNorm.includes('finance') || rNorm.includes('cfo') || rNorm.includes('account');
-    });
-
-    // Finance and Admin users can view all pending/overdue approvals across the company with scope=all (default)
-    const scope = (isFinanceOrAdmin || isSuperUser)
->>>>>>> 2ae35037a8336cdb1b4015921fd08c0056c8b58c
       ? String(req.query.scope || 'all').toLowerCase().trim()
       : 'actionable';
     let approvals = (scope === 'actionable' || req.query.actionableOnly === 'true') ? actionableApprovals : (canViewAll ? allApprovals : actionableApprovals);
-
-<<<<<<< HEAD
-    // Compute deadline, daysRemaining, isOverdue, and urgency for all approval records
-    const now = new Date();
-    approvals = approvals.map(a => {
-      const submitted = a.submittedAt ? new Date(a.submittedAt) : (a.createdAt ? new Date(a.createdAt) : now);
-      const computedDueDate = a.dueDate
-        ? new Date(a.dueDate)
-        : a.transactionSnapshot?.paymentDueDate
-          ? new Date(a.transactionSnapshot.paymentDueDate)
-          : a.transactionSnapshot?.expectedPaymentDate
-            ? new Date(a.transactionSnapshot.expectedPaymentDate)
-            : new Date(submitted.getTime() + (a.slaHours || 48) * 60 * 60 * 1000);
-
-      const diffMs = computedDueDate.getTime() - now.getTime();
-      const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-      const isOverdue = diffMs < 0;
-      let urgency = 'upcoming';
-      if (isOverdue) urgency = 'overdue';
-      else if (daysRemaining === 0) urgency = 'today';
-      else if (daysRemaining <= 3) urgency = 'urgent';
-
-      return {
-        ...a,
-        dueDate: computedDueDate.toISOString(),
-        daysRemaining,
-        isOverdue,
-        urgency
-      };
-    });
-
-    // Filter by urgency if requested
-    const urgencyFilter = String(req.query.urgency || '').trim().toLowerCase();
-    if (urgencyFilter && urgencyFilter !== 'all' && urgencyFilter !== 'all 7 days') {
-      approvals = approvals.filter(a => a.urgency === urgencyFilter);
-    }
-
-    if (req.query.sort === 'overdue') {
-      approvals.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-    }
-=======
-    if (!isSuperUser && !isFinanceOrAdmin) approvals = actionableApprovals;
->>>>>>> 2ae35037a8336cdb1b4015921fd08c0056c8b58c
 
     // ── Self-submission exclusion ────────────────────────────────────────
     const currentUserName  = (req.query.me  || '').toLowerCase().trim();
@@ -583,7 +530,7 @@ export const getPendingApprovals = async (req, res) => {
       const slaHours = Number(item.slaHours) || 48;
       const rawDueDate = item.dueDate || item.paymentDueDate || item.transactionSnapshot?.paymentDueDate || item.transactionSnapshot?.dueDate || item.transactionSnapshot?.expectedPaymentDate || item.transactionSnapshot?.advanceDueDate;
       const dueDateObj = (rawDueDate && !isNaN(new Date(rawDueDate).getTime())) ? new Date(rawDueDate) : new Date(submitted.getTime() + slaHours * 60 * 60 * 1000);
-      const diffMs = dueDateObj - now;
+      const diffMs = dueDateObj.getTime() - now.getTime();
       const isOverdue = diffMs < 0;
       const overdueDays = isOverdue ? Math.max(1, Math.floor(Math.abs(diffMs) / (1000 * 60 * 60 * 24))) : 0;
       
@@ -591,17 +538,27 @@ export const getPendingApprovals = async (req, res) => {
       if (isOverdue) urgency = 'overdue';
       else if (diffMs <= 24 * 60 * 60 * 1000) urgency = 'today';
       else if (diffMs <= 72 * 60 * 60 * 1000) urgency = 'urgent';
+      else if (diffMs <= 7 * 24 * 60 * 60 * 1000) urgency = 'upcoming';
 
       return { dueDate: dueDateObj.toISOString(), isOverdue, overdueDays, urgency };
     };
 
-    if (urgencyFilter !== 'all') {
+    if (urgencyFilter !== 'all' && urgencyFilter !== 'all 7 days') {
       approvals = approvals.filter((a) => {
         const sla = calculateSla(a);
         if (urgencyFilter === 'overdue') return sla.isOverdue;
         if (urgencyFilter === 'today') return sla.urgency === 'today';
         if (urgencyFilter === 'urgent') return sla.urgency === 'urgent';
-        return true;
+        if (urgencyFilter === 'upcoming') return sla.urgency === 'upcoming';
+        return sla.urgency === urgencyFilter;
+      });
+    }
+
+    if (req.query.sort === 'overdue') {
+      approvals.sort((a, b) => {
+        const dueA = new Date(calculateSla(a).dueDate).getTime();
+        const dueB = new Date(calculateSla(b).dueDate).getTime();
+        return dueA - dueB;
       });
     }
 

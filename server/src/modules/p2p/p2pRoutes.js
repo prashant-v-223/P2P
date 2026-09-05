@@ -1854,17 +1854,7 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
             ? new Date(app.transactionSnapshot.expectedPaymentDate)
             : new Date(submitted.getTime() + (app.slaHours || 48) * 60 * 60 * 1000);
 
-<<<<<<< HEAD
       const diffMs = computedDueDate.getTime() - now.getTime();
-=======
-      const created = payment.createdAt ? new Date(payment.createdAt) : now;
-      const rawDueDate = payment.paymentDueDate || payment.dueDate || payment.expectedPaymentDate || payment.advanceDueDate;
-      const dueDate = rawDueDate && !isNaN(new Date(rawDueDate).getTime())
-        ? new Date(rawDueDate)
-        : new Date(created.getTime() + 5 * 24 * 60 * 60 * 1000);
-
-      const diffMs = dueDate - now;
->>>>>>> 2ae35037a8336cdb1b4015921fd08c0056c8b58c
       const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 
       let urgency = 'upcoming';
@@ -1895,6 +1885,8 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
       }
 
       const itemId = app.id || app.referenceId;
+      const isFinanceTurn = String(assignedRole || '').toLowerCase().includes('finance') || String(app.status || '').toLowerCase().includes('finance');
+      const isFullyApproved = app.status === 'Approved & Dispatched' || app.status === 'Approved';
 
       return {
         id: itemId,
@@ -1915,55 +1907,15 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
         createdAt: app.createdAt || app.submittedAt,
         dueDate: computedDueDate.toISOString(),
         daysRemaining,
-        urgency
-<<<<<<< HEAD
+        urgency,
+        workflowStage: `Step ${app.currentStep || 1}: ${assignedRole || 'Approver'}`,
+        financeReadiness: isFullyApproved
+          ? 'Approved & Ready for Payment'
+          : isFinanceTurn
+            ? 'Awaiting Finance Action'
+            : `Pending Prior Step (${assignedRole || 'Procurement'})`
       };
     });
-=======
-      });
-    };
-
-    advances.forEach(adv => processUpcomingItem(adv, 'Advance Payment', 'advanceId', 'amount', 'vendorName', 'sapPoNumber'));
-    invoices.forEach(inv => processUpcomingItem(inv, 'Invoice Payment', 'invoicePaymentId', 'netPayable', 'vendorName', 'sapPoNumber'));
-    logisticsPayments.forEach(log => processUpcomingItem(log, 'Logistics Payment', 'logisticsPaymentId', 'totalAmount', 'vendorName', 'sapPoNumber'));
-    customDuties.forEach(duty => processUpcomingItem(duty, 'Custom Duty', 'dutyId', 'dutyAmount', 'customAgentName', 'sapPoNumber'));
-
-    const reportRefIds = upcomingFinancePayments.map(item => item.id).filter(Boolean);
-    if (reportRefIds.length > 0) {
-      const reportApprovals = await Approval.find({ $or: [{ referenceId: { $in: reportRefIds } }, { id: { $in: reportRefIds } }] })
-        .select('id referenceId status currentStep assignedApproverRole workflowSteps')
-        .lean()
-        .catch(() => []);
-      const reportAppMap = new Map();
-      reportApprovals.forEach(app => {
-        if (app.referenceId) reportAppMap.set(app.referenceId, app);
-        if (app.id) reportAppMap.set(app.id, app);
-      });
-      upcomingFinancePayments.forEach(item => {
-        const app = reportAppMap.get(item.id);
-        if (app) {
-          if (app.status) item.status = app.status;
-          if (app.assignedApproverRole) item.assignedApproverRole = app.assignedApproverRole;
-          if (app.currentStep) item.currentStep = app.currentStep;
-          
-          const isFinanceTurn = String(app.assignedApproverRole || '').toLowerCase().includes('finance') || String(app.status || '').toLowerCase().includes('finance');
-          const isFullyApproved = app.status === 'Approved & Dispatched' || app.status === 'Approved';
-
-          item.workflowStage = `Step ${app.currentStep || 1}: ${app.assignedApproverRole || 'Approver'}`;
-          item.financeReadiness = isFullyApproved
-            ? 'Approved & Ready for Payment'
-            : isFinanceTurn
-              ? 'Awaiting Finance Action'
-              : `Pending Prior Step (${app.assignedApproverRole || 'Procurement'})`;
-        } else {
-          item.workflowStage = `Step 1: ${item.assignedApproverRole || 'Manager'}`;
-          item.financeReadiness = String(item.assignedApproverRole || '').toLowerCase().includes('finance')
-            ? 'Awaiting Finance Action'
-            : `Pending Prior Step (${item.assignedApproverRole || 'Procurement'})`;
-        }
-      });
-    }
->>>>>>> 2ae35037a8336cdb1b4015921fd08c0056c8b58c
 
     upcomingFinancePayments.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
 
