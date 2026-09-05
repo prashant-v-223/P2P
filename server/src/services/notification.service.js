@@ -153,6 +153,7 @@ export async function sendApprovalCreatedEmails({ approval }) {
     const roleKey = step1.roleKey || step1.roleName || '';
     const stepTitle = step1.title || step1.roleName || 'Approval';
     const assignedId = step1.assignedApproverId || approval.assignedApprover;
+    let recipients = [];
 
     // 1. Explicit assigned approver (direct parent manager / specific level 2 senior):
     if (assignedId || step1.assignedApproverName || approval.assignedApproverName) {

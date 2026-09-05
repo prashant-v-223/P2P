@@ -479,12 +479,12 @@ export default function InvoicePaymentDetailView() {
 
               <div>
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-1.5">Invoice Date</span>
-                <span className="font-semibold text-slate-700 block">{formatDate(invoice.invoiceDate || '2026-06-15')}</span>
+                <span className="font-semibold text-slate-700 block">{invoice.invoiceDate ? formatDate(invoice.invoiceDate) : '—'}</span>
               </div>
 
               <div>
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-1.5">Due Date</span>
-                <span className="font-semibold text-slate-700 block">{formatDate(invoice.dueDate || '2026-07-31')}</span>
+                <span className="font-semibold text-slate-700 block">{formatDate(invoice.paymentDueDate || invoice.dueDate)}</span>
               </div>
 
               <div>
@@ -644,17 +644,17 @@ export default function InvoicePaymentDetailView() {
 
               <div className="flex items-center justify-between py-2 border-b border-slate-100">
                 <span className="text-slate-500 font-medium">Invoice Date</span>
-                <span className="font-semibold text-slate-800">{formatDate(invoice.invoiceDate || '2026-06-16')}</span>
+                <span className="font-semibold text-slate-800">{invoice.invoiceDate ? formatDate(invoice.invoiceDate) : '—'}</span>
               </div>
 
               <div className="flex items-center justify-between py-2 border-b border-slate-100">
                 <span className="text-slate-500 font-medium">Vendor Code</span>
-                <span className="font-mono font-bold text-slate-900">{invoice.vendorId || '10000088'}</span>
+                <span className="font-mono font-bold text-slate-900">{invoice.vendorId || '—'}</span>
               </div>
 
               <div className="flex items-center justify-between py-2">
                 <span className="text-slate-500 font-medium">Created</span>
-                <span className="font-semibold text-slate-800">{formatDate(invoice.createdAt || '2026-07-20')}</span>
+                <span className="font-semibold text-slate-800">{invoice.createdAt ? formatDate(invoice.createdAt) : '—'}</span>
               </div>
             </div>
 

@@ -17,6 +17,8 @@ const purchaseOrderSchema = new mongoose.Schema({
   supplierName: String,
   companyCode: { type: String, default: '1000' },
   currency: { type: String, default: 'INR' },
+  fxRate: { type: Number, default: 1 },
+  amountINR: { type: Number },
   totalAmount: { type: Number, required: true },
   advancePaid: { type: Number, default: 0 },
   advanceCommitted: { type: Number, default: 0 },

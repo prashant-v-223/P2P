@@ -229,15 +229,24 @@ export default function InvoicePaymentFormView() {
   const [sendApprovalTo, setSendApprovalTo] = useState('');
   const [documents, setDocuments] = useState([]);
 
-  const calculateDueDate = () => {
-    if (!poNumber) return 'Select Purchase Order';
+  const calculateDueDateISO = () => {
     const baseDate = (isImportVendor && blDate) ? blDate : invoiceDate;
-    if (isImportVendor && !blDate) return 'Enter BL Date to calculate due date';
-    if (!invoiceDate && !isImportVendor) return 'Select Supplier Invoice Date';
-    if (!baseDate || dueDays === '' || dueDays === null || dueDays === undefined) return isImportVendor ? 'Enter BL Date' : 'Select Supplier Invoice Date';
+    if (!baseDate || dueDays === '' || dueDays === null || dueDays === undefined) return undefined;
     const d = new Date(`${baseDate}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return undefined;
     d.setDate(d.getDate() + Number(dueDays || 0));
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    return d.toISOString();
+  };
+
+  const calculateDueDate = () => {
+    const iso = calculateDueDateISO();
+    if (!iso) {
+      if (!poNumber) return 'Select Purchase Order';
+      if (isImportVendor && !blDate) return 'Enter BL Date to calculate due date';
+      if (!invoiceDate && !isImportVendor) return 'Select Supplier Invoice Date';
+      return isImportVendor ? 'Enter BL Date' : 'Select Supplier Invoice Date';
+    }
+    return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
   // Fetch POs from API (server-side filtered when searching)
@@ -504,7 +513,8 @@ export default function InvoicePaymentFormView() {
         boeDate: boeDate || undefined,
         invoiceDate,
         dueDays: Number(dueDays),
-        dueDate: calculateDueDate(),
+        paymentDueDate: calculateDueDateISO(),
+        dueDate: calculateDueDateISO(),
         grossAmount: Number(invoiceAmount) || 0,
         currency,
         fxRate: activeFxRate,

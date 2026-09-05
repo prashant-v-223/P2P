@@ -117,7 +117,7 @@ export default function HierarchicalReportView() {
   const [search, setSearch] = useState('');
   const [selectedRole, setSelectedRole] = useState('All');
   const [selectedTypeFilter, setSelectedTypeFilter] = useState('All');
-  const [selectedUrgencyFilter, setSelectedUrgencyFilter] = useState('All');
+  const [selectedUrgencyFilter, setSelectedUrgencyFilter] = useState('upcoming');
   const [selectedUserRecords, setSelectedUserRecords] = useState(null);
   const { showToast } = useToast();
 
@@ -181,7 +181,9 @@ export default function HierarchicalReportView() {
       item.amountINR ? Number(item.amountINR).toLocaleString('en-IN') : ''
     ].some((val) => String(val || '').toLowerCase().replace(/[,₹$\s]/g, '').includes(cleanSearch));
     const matchType = selectedTypeFilter === 'All' || item.type === selectedTypeFilter;
-    const matchUrgency = selectedUrgencyFilter === 'All' || item.urgency === selectedUrgencyFilter;
+    const matchUrgency = selectedUrgencyFilter === 'All' || selectedUrgencyFilter === 'upcoming'
+      ? true
+      : item.urgency === selectedUrgencyFilter;
     return matchSearch && matchType && matchUrgency;
   });
 
@@ -273,11 +275,11 @@ export default function HierarchicalReportView() {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Urgency:</span>
                 {[
-                  { id: 'All', label: 'All 7 Days' },
-                  { id: 'overdue', label: 'Overdue' },
+                  { id: 'upcoming', label: 'Active Forecast & Overdue' },
                   { id: 'today', label: 'Due Today' },
                   { id: 'urgent', label: '1–3 Days' },
-                  { id: 'upcoming', label: '4–7 Days' }
+                  { id: 'overdue', label: 'Overdue' },
+                  { id: 'All', label: 'All Records' }
                 ].map((u) => (
                   <button
                     key={u.id}
@@ -285,7 +287,7 @@ export default function HierarchicalReportView() {
                     onClick={() => setSelectedUrgencyFilter(u.id)}
                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
                       selectedUrgencyFilter === u.id
-                        ? 'bg-amber-500 text-white shadow-2xs'
+                        ? 'bg-[#0d7676] text-white shadow-2xs'
                         : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
                     }`}
                   >
@@ -382,12 +384,16 @@ export default function HierarchicalReportView() {
                             {formatCurrency(item.amountINR, 'INR')}
                           </td>
 
-                          {/* Finance Status */}
+                          {/* Workflow Stage & Finance Readiness */}
                           <td className="px-4 py-3.5 text-center">
-                            <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-amber-50 text-amber-800 border border-amber-200">
-                              {item.status}
+                            <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-extrabold border ${
+                              item.financeReadiness === 'Approved & Ready for Payment' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                              item.financeReadiness === 'Awaiting Finance Action' ? 'bg-teal-50 text-teal-800 border-teal-200 ring-1 ring-teal-400' :
+                              'bg-amber-50 text-amber-800 border-amber-200'
+                            }`}>
+                              {item.financeReadiness || item.status}
                             </span>
-                            <p className="text-[10px] text-slate-400 font-semibold mt-0.5">Role: {item.assignedApproverRole}</p>
+                            <p className="text-[10px] text-slate-500 font-bold mt-0.5">{item.workflowStage || `Role: ${item.assignedApproverRole}`}</p>
                           </td>
 
                           {/* Action */}

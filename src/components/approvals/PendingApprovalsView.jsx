@@ -186,6 +186,7 @@ function formatRelativeTime(value) {
   return `${diffDays}d ago`;
 }
 
+<<<<<<< HEAD
 function getUrgency(approval) {
   if (!approval) return 'normal';
   if (approval.urgency) return approval.urgency;
@@ -193,6 +194,16 @@ function getUrgency(approval) {
   const now = Date.now();
   const due = approval.dueDate ? new Date(approval.dueDate).getTime() : (approval.submittedAt ? new Date(approval.submittedAt).getTime() + 48 * 3600 * 1000 : null);
   if (due && due < now) return 'overdue';
+=======
+function getUrgency(submittedAt, dueDate, isOverdueProp, urgencyProp) {
+  if (urgencyProp && urgencyProp !== 'normal') return urgencyProp;
+  const now = Date.now();
+  const due = dueDate ? new Date(dueDate).getTime() : (submittedAt ? new Date(submittedAt).getTime() + 48 * 3600 * 1000 : now + 48 * 3600 * 1000);
+  const diffMs = due - now;
+  if (isOverdueProp || diffMs < 0) return 'overdue';
+  if (diffMs <= 24 * 3600 * 1000) return 'today';
+  if (diffMs <= 72 * 3600 * 1000) return 'urgent';
+>>>>>>> 2ae35037a8336cdb1b4015921fd08c0056c8b58c
   return 'normal';
 }
 
@@ -205,10 +216,16 @@ const STATUS_STYLES = {
 };
 
 const URGENCY_STYLES = {
+<<<<<<< HEAD
   overdue: { accent: 'bg-rose-500', label: 'Overdue', badge: 'bg-rose-100 text-rose-800 border-rose-300' },
   today: { accent: 'bg-orange-500', label: 'Due Today', badge: 'bg-orange-100 text-orange-800 border-orange-300' },
   urgent: { accent: 'bg-amber-500', label: '1–3 Days', badge: 'bg-amber-100 text-amber-800 border-amber-300' },
   upcoming: { accent: 'bg-teal-500', label: '4–7 Days', badge: 'bg-teal-100 text-teal-800 border-teal-300' },
+=======
+  overdue: { accent: 'bg-rose-500', label: 'OVERDUE', badge: 'bg-rose-100 text-rose-800 border-rose-300 animate-pulse font-extrabold' },
+  today: { accent: 'bg-orange-500', label: 'DUE TODAY', badge: 'bg-orange-100 text-orange-800 border-orange-300 font-black' },
+  urgent: { accent: 'bg-amber-400', label: 'DUE SOON', badge: 'bg-amber-100 text-amber-800 border-amber-300 font-bold' },
+>>>>>>> 2ae35037a8336cdb1b4015921fd08c0056c8b58c
   normal: { accent: 'bg-slate-200', label: null, badge: '' }
 };
 
@@ -543,7 +560,11 @@ export default function PendingApprovalsView() {
 
               const isProcessing = processingId === approval.id;
               const isTerminal = TERMINAL_STATUSES.includes(approval.status);
+<<<<<<< HEAD
               const urgency = isTerminal ? 'normal' : getUrgency(approval);
+=======
+              const urgency = isTerminal ? 'normal' : getUrgency(approval.submittedAt, approval.dueDate, approval.isOverdue, approval.urgency);
+>>>>>>> 2ae35037a8336cdb1b4015921fd08c0056c8b58c
               const urgencyStyle = URGENCY_STYLES[urgency] || URGENCY_STYLES.normal;
               const statusStyle = STATUS_STYLES[approval.status];
               const typeStyle = TYPE_STYLES[approval.type] || DEFAULT_TYPE_STYLE;

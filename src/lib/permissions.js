@@ -206,6 +206,46 @@ export const ROLE_PERMISSIONS = {
     'users.create',
     'users.edit',
     'sap.view'
+  ],
+
+  'purchase_manager': [
+    'dashboard.view',
+    'purchase-orders.view',
+    'advance-payments.view',
+    'invoice-payments.view',
+    'logistics-payments.view',
+    'custom-duty.view',
+    'blank-invoices.view',
+    'approvals.view',
+    'approvals.action',
+    'rfq.view',
+    'exchange-rates.view',
+    'vendors.view',
+    'workflows.view',
+    'users.view',
+    'sap.view',
+    'custom-agents.view',
+    'logistics-providers.view'
+  ],
+
+  'purchase-manager': [
+    'dashboard.view',
+    'purchase-orders.view',
+    'advance-payments.view',
+    'invoice-payments.view',
+    'logistics-payments.view',
+    'custom-duty.view',
+    'blank-invoices.view',
+    'approvals.view',
+    'approvals.action',
+    'rfq.view',
+    'exchange-rates.view',
+    'vendors.view',
+    'workflows.view',
+    'users.view',
+    'sap.view',
+    'custom-agents.view',
+    'logistics-providers.view'
   ]
 };
 
@@ -297,7 +337,8 @@ const resolveStaticRolePerms = (userRole) => {
     if (raw.includes('cfo')) rolePerms = ROLE_PERMISSIONS['cfo'];
     else if (raw.includes('finance')) rolePerms = ROLE_PERMISSIONS['finance'];
     else if (raw.includes('account')) rolePerms = ROLE_PERMISSIONS['accounts'];
-    else if (raw.includes('procurement') && raw.includes('head')) rolePerms = ROLE_PERMISSIONS['procurement_head'];
+    else if ((raw.includes('purchase') || raw.includes('procurement')) && raw.includes('manager')) rolePerms = ROLE_PERMISSIONS['purchase_manager'];
+    else if ((raw.includes('procurement') || raw.includes('purchase')) && (raw.includes('head') || raw.includes('lead'))) rolePerms = ROLE_PERMISSIONS['procurement_head'];
     else if (raw.includes('procurement')) rolePerms = ROLE_PERMISSIONS['procurement'];
     else if (raw.includes('exim') && raw.includes('manager')) rolePerms = ROLE_PERMISSIONS['exim-manager'];
     else if (raw.includes('exim')) rolePerms = ROLE_PERMISSIONS['exim'];

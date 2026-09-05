@@ -53,10 +53,11 @@ export const connectDB = async ({ seed = process.env.AUTO_SEED === 'true', ensur
 
     await mongoose.connect(uri, {
       dbName: databaseName,
-      serverSelectionTimeoutMS: 5000,
-      connectTimeoutMS: 5000,
-      maxPoolSize: 10,
-      minPoolSize: 1
+      serverSelectionTimeoutMS: 30000,
+      connectTimeoutMS: 30000,
+      socketTimeoutMS: 45000,
+      maxPoolSize: 20,
+      minPoolSize: 2
     });
 
     mongoose.set('bufferCommands', true);
@@ -73,7 +74,10 @@ export const connectDB = async ({ seed = process.env.AUTO_SEED === 'true', ensur
   } catch (error) {
     mongoose.set('bufferCommands', false);
     console.error(`[DB] Database connection failed: ${error.message}`);
-    console.warn('[DB FALLBACK]: Using resilient in-memory data store.');
+    console.warn('[DB WARNING]: MongoDB Atlas connection unavailable. Critical financial transactions and approvals will be rejected safely until DB restores.');
     return false;
   }
 };
+
+export const isDbConnected = () => mongoose.connection.readyState === 1;
+

@@ -26,12 +26,13 @@ workflowAuditSchema.index({ entityType: 1, entityId: 1, occurredAt: -1 });
 workflowAuditSchema.index({ requestId: 1, entityId: 1 });
 
 workflowAuditSchema.statics.record = async function record(payload) {
-  const requestId = payload?.requestId;
-  if (!requestId) return this.create(payload);
-  const auditKey = crypto.createHash('sha256').update([
-    requestId, payload.actorId, payload.entityType, payload.entityId,
-    payload.eventType, payload.action, Number(payload.step || 1)
-  ].map((value) => String(value || '').trim().toLowerCase()).join('|')).digest('hex');
+  const keyBase = [
+    payload?.requestId || payload?.idempotencyKey || payload?.eventId || 'no-req',
+    payload?.actorId, payload?.entityType, payload?.entityId,
+    payload?.eventType, payload?.action, Number(payload?.step || 1)
+  ].map((value) => String(value || '').trim().toLowerCase()).join('|');
+  
+  const auditKey = crypto.createHash('sha256').update(keyBase).digest('hex');
   return this.findOneAndUpdate(
     { auditKey },
     { $setOnInsert: { ...payload, auditKey } },
