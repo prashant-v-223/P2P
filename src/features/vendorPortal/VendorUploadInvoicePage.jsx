@@ -176,7 +176,7 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
           setSgstAmount(String(fetchedData.sgstAmount || '0'));
           setIgstAmount(String(fetchedData.igstAmount || '0'));
           setTdsPercentage(`${fetchedData.tdsPercentage || 0}%`);
-          setAdvanceAdjust(String(fetchedData.advanceAdjusted || fetchedData.advanceAdjust || '0'));
+          setAdvanceAdjust(String(Math.max(0, Math.abs(Number(fetchedData.advanceAdjusted || fetchedData.advanceAdjust || 0)))));
 
           if (Array.isArray(fetchedData.supportingDocuments)) {
             setSelectedFiles(fetchedData.supportingDocuments.map(d => ({
@@ -387,7 +387,7 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
   const grossTotal = invoiceAmountNum + totalGst;
   const tdsPctNum = parseFloat(tdsPercentage) || 0;
   const tdsDeduction = (invoiceAmountNum * tdsPctNum) / 100;
-  const advanceAdjNum = Number(advanceAdjust) || 0;
+  const advanceAdjNum = Math.max(0, Math.abs(Number(advanceAdjust) || 0));
   const netPayable = Math.max(0, grossTotal - advanceAdjNum);
 
   // Apply GST rate presets
@@ -479,7 +479,7 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
           sgstAmount: sgstNum.toString(),
           igstAmount: igstNum.toString(),
           tdsPercentage,
-          advanceAdjust,
+          advanceAdjust: advanceAdjNum.toString(),
           supportingDocuments: (selectedFiles || []).map((file) => ({
             fileName: file.s3Key || file.fileName || file.name,
             originalName: file.originalName || file.name,
@@ -512,7 +512,7 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
           sgstAmount: sgstNum.toString(),
           igstAmount: igstNum.toString(),
           tdsPercentage,
-          advanceAdjust,
+          advanceAdjust: advanceAdjNum.toString(),
           fileName: selectedFiles[0]?.name || selectedFiles[0]?.fileName || 'Invoice.pdf',
           supportingDocuments: (selectedFiles || []).map((file) => ({
             fileName: file.s3Key || file.fileName || file.name,
@@ -935,8 +935,13 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
                 disabled={isViewMode}
                 readOnly={isViewMode}
                 value={invoiceAmount}
+                onKeyDown={(e) => {
+                  if (['-', '+', 'e', 'E'].includes(e.key) || e.code === 'Minus' || e.code === 'NumpadSubtract') {
+                    e.preventDefault();
+                  }
+                }}
                 onChange={(e) => {
-                  setInvoiceAmount(e.target.value);
+                  setInvoiceAmount(e.target.value.replace(/[-+eE]/g, ''));
                   setErrorMsg('');
                 }}
                 placeholder="0.00"
@@ -1042,10 +1047,16 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
                   <input
                     type="number"
                     step="0.01"
+                    min="0"
                     disabled={isViewMode}
                     readOnly={isViewMode}
                     value={cgstAmount}
-                    onChange={(e) => setCgstAmount(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (['-', '+', 'e', 'E'].includes(e.key) || e.code === 'Minus' || e.code === 'NumpadSubtract') {
+                        e.preventDefault();
+                      }
+                    }}
+                    onChange={(e) => setCgstAmount(e.target.value.replace(/[-+eE]/g, ''))}
                     className={`w-full px-3.5 py-2.5 border rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] ${
                       isViewMode ? 'bg-slate-100 cursor-not-allowed text-slate-700 border-slate-200' : 'bg-slate-50 border-slate-200 focus:bg-white'
                     }`}
@@ -1057,10 +1068,16 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
                   <input
                     type="number"
                     step="0.01"
+                    min="0"
                     disabled={isViewMode}
                     readOnly={isViewMode}
                     value={sgstAmount}
-                    onChange={(e) => setSgstAmount(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (['-', '+', 'e', 'E'].includes(e.key) || e.code === 'Minus' || e.code === 'NumpadSubtract') {
+                        e.preventDefault();
+                      }
+                    }}
+                    onChange={(e) => setSgstAmount(e.target.value.replace(/[-+eE]/g, ''))}
                     className={`w-full px-3.5 py-2.5 border rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] ${
                       isViewMode ? 'bg-slate-100 cursor-not-allowed text-slate-700 border-slate-200' : 'bg-slate-50 border-slate-200 focus:bg-white'
                     }`}
@@ -1073,10 +1090,16 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
                 <input
                   type="number"
                   step="0.01"
+                  min="0"
                   disabled={isViewMode}
                   readOnly={isViewMode}
                   value={igstAmount}
-                  onChange={(e) => setIgstAmount(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (['-', '+', 'e', 'E'].includes(e.key) || e.code === 'Minus' || e.code === 'NumpadSubtract') {
+                      e.preventDefault();
+                    }
+                  }}
+                  onChange={(e) => setIgstAmount(e.target.value.replace(/[-+eE]/g, ''))}
                   className={`w-full px-3.5 py-2.5 border rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] ${
                     isViewMode ? 'bg-slate-100 cursor-not-allowed text-slate-700 border-slate-200' : 'bg-slate-50 border-slate-200 focus:bg-white'
                   }`}
@@ -1087,12 +1110,31 @@ export default function VendorUploadInvoicePage({ mode: propMode }) {
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-slate-700">Advance Adjustment ({currency})</label>
               <input
-                type="number"
-                step="0.01"
+                type="text"
+                inputMode="decimal"
                 disabled={isViewMode}
                 readOnly={isViewMode}
                 value={advanceAdjust}
-                onChange={(e) => setAdvanceAdjust(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === '-' || e.key === 'Minus' || e.code === 'Minus' || e.code === 'NumpadSubtract') {
+                    e.preventDefault();
+                  }
+                }}
+                onPaste={(e) => {
+                  e.preventDefault();
+                  const pasteData = e.clipboardData?.getData('text') || '';
+                  const clean = pasteData.replace(/[^0-9.]/g, '');
+                  const parts = clean.split('.');
+                  const sanitized = parts.length > 2 ? parts[0] + '.' + parts.slice(1).join('') : clean;
+                  setAdvanceAdjust(sanitized);
+                }}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/[^0-9.]/g, '');
+                  const parts = val.split('.');
+                  const sanitized = parts.length > 2 ? parts[0] + '.' + parts.slice(1).join('') : val;
+                  setAdvanceAdjust(sanitized);
+                }}
+                placeholder="0.00"
                 className={`w-full px-3.5 py-2.5 border rounded-xl text-slate-900 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#0d7676] ${
                   isViewMode ? 'bg-slate-100 cursor-not-allowed text-slate-700 border-slate-200' : 'bg-slate-50 border-slate-200 focus:bg-white'
                 }`}

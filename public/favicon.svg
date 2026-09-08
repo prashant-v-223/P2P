@@ -1,0 +1,17 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="100%" height="100%">
+  <defs>
+    <linearGradient id="rayzonGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d7676" />
+      <stop offset="100%" stop-color="#084e4e" />
+    </linearGradient>
+    <linearGradient id="amberGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#rayzonGrad)" />
+  <!-- Stylized Solar / Hex Shield Symbol -->
+  <circle cx="64" cy="64" r="44" fill="none" stroke="#ffffff" stroke-width="4" stroke-opacity="0.2" />
+  <path d="M44 38 L84 38 C94 38 100 44 100 54 C100 63 93 69 83 70 L98 94 L82 94 L69 73 L58 73 L58 94 L44 94 Z M58 60 L80 60 C84.5 60 87 58 87 54.5 C87 51 84.5 49 80 49 L58 49 Z" fill="#ffffff" />
+  <circle cx="92" cy="40" r="10" fill="url(#amberGrad)" />
+</svg>

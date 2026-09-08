@@ -7,9 +7,16 @@ import { RfqBlEntry } from '../../models/RfqLogistics.js';
 
 const buildAgentQuery = (id) => {
   if (!id) return { agentId: 'none' };
-  const filter = [{ agentId: id }];
-  if (mongoose.Types.ObjectId.isValid(id)) {
-    filter.push({ _id: id });
+  const rawId = String(id).trim();
+  const filter = [
+    { agentId: rawId },
+    { agentId: new RegExp(`^${rawId}$`, 'i') }
+  ];
+  if (mongoose.Types.ObjectId.isValid(rawId)) {
+    filter.push({ _id: rawId });
+  }
+  if (rawId.includes('@')) {
+    filter.push({ email: rawId.toLowerCase() });
   }
   return { $or: filter };
 };
@@ -257,30 +264,51 @@ export const updateCustomAgentPortalAccess = async (req, res) => {
   }
 };
 
-// POST - Generate a one-time temporary password for an agent
+// POST - Generate a temporary or custom password for an agent
 export const generateCustomAgentPassword = async (req, res) => {
   try {
     const { id } = req.params;
-    const temporaryPassword = `RyznCHA@${crypto.randomInt(100000, 1000000)}`;
-    const passwordHash = await CustomAgent.hashPassword(temporaryPassword);
+    const { customPassword, newPassword, password } = req.body || {};
+    const passInput = customPassword || newPassword || password;
+
+    let passToSet = passInput ? String(passInput).trim() : '';
+    let isCustom = false;
+
+    if (passToSet) {
+      if (passToSet.length < 6) {
+        return res.status(400).json({ success: false, error: 'Password must be at least 6 characters long.' });
+      }
+      isCustom = true;
+    } else {
+      passToSet = `RyznCHA@${crypto.randomInt(100000, 1000000)}`;
+    }
+
+    const passwordHash = await CustomAgent.hashPassword(passToSet);
     const agent = await CustomAgent.findOneAndUpdate(
       buildAgentQuery(id),
-      { $set: { passwordHash } },
+      { $set: { passwordHash, portalAccessEnabled: true } },
       { new: true, runValidators: true }
     ).select('+passwordHash');
 
-    if (!agent) return res.status(404).json({ success: false, error: 'Custom agent not found. Password was not changed.' });
-    if (!await agent.verifyPassword(temporaryPassword)) {
+    if (!agent) {
+      return res.status(404).json({ success: false, error: 'Custom agent not found. Password was not changed.' });
+    }
+
+    if (!await agent.verifyPassword(passToSet)) {
       return res.status(500).json({ success: false, error: 'Password could not be saved. Please try again.' });
     }
 
     return res.json({
       success: true,
-      message: 'Temporary password generated. It will only be displayed once.',
-      temporaryPassword,
-      agent: { agentId: agent.agentId, email: agent.email }
+      message: isCustom
+        ? `Password updated successfully for ${agent.agencyName || agent.contactPerson || 'agent'}`
+        : `Temporary password generated for ${agent.agencyName || agent.contactPerson || 'agent'}`,
+      temporaryPassword: passToSet,
+      isCustom,
+      agent: { agentId: agent.agentId, email: agent.email, agencyName: agent.agencyName }
     });
   } catch (err) {
+    console.error('Error in generateCustomAgentPassword:', err);
     return res.status(500).json({ success: false, error: err.message });
   }
 };

@@ -1038,12 +1038,28 @@ export default function CreateAdvancePaymentWizard() {
                               {currSymbol}
                             </span>
                             <input
-                              type="number"
-                              min="0"
-                              max={calculatedAmount}
-                              step="0.01"
+                              type="text"
+                              inputMode="decimal"
                               value={advanceAdjust}
-                              onChange={(e) => setAdvanceAdjust(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === '-' || e.key === 'Minus' || e.code === 'Minus' || e.code === 'NumpadSubtract') {
+                                  e.preventDefault();
+                                }
+                              }}
+                              onPaste={(e) => {
+                                e.preventDefault();
+                                const pasteData = e.clipboardData?.getData('text') || '';
+                                const clean = pasteData.replace(/[^0-9.]/g, '');
+                                const parts = clean.split('.');
+                                const sanitized = parts.length > 2 ? parts[0] + '.' + parts.slice(1).join('') : clean;
+                                setAdvanceAdjust(sanitized);
+                              }}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/[^0-9.]/g, '');
+                                const parts = val.split('.');
+                                const sanitized = parts.length > 2 ? parts[0] + '.' + parts.slice(1).join('') : val;
+                                setAdvanceAdjust(sanitized);
+                              }}
                               placeholder="0.00"
                               className={inp(false) + ' h-9 pl-6 pr-2 py-1.5 text-xs font-mono font-bold text-slate-900'}
                             />

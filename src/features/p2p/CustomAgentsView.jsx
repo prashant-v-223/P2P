@@ -1,6 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Plus, Search, Loader2, Edit3, Key, Trash2, ToggleLeft, ToggleRight, ExternalLink } from 'lucide-react';
+import { 
+  Shield, 
+  Plus, 
+  Search, 
+  Loader2, 
+  Edit3, 
+  Pencil,
+  Key, 
+  Trash2, 
+  ToggleLeft, 
+  ToggleRight, 
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Copy,
+  Check,
+  RefreshCw,
+  KeyRound,
+  ShieldCheck,
+  X
+} from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import { SearchableSelect } from '../../components/ui/searchable-select';
@@ -21,7 +41,11 @@ export default function CustomAgentsView() {
   // Password reset modal state
   const [resetModal, setResetModal] = useState(null);
   const [newPass, setNewPass] = useState('');
+  const [showPassword, setShowPassword] = useState(true);
+  const [copied, setCopied] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [statusMsg, setStatusMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
 
   const fetchAgents = async () => {
     try {
@@ -79,21 +103,80 @@ export default function CustomAgentsView() {
     }
   };
 
-  const handleResetPassword = async () => {
+  const handleOpenResetModal = (agent) => {
+    setResetModal(agent);
+    setNewPass('');
+    setShowPassword(true);
+    setCopied(false);
+    setStatusMsg('');
+    setErrorMsg('');
+  };
+
+  const handleGeneratePassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
+    let rand = 'RyznCHA@';
+    for (let i = 0; i < 6; i++) {
+      rand += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setNewPass(rand);
+    setShowPassword(true);
+    setErrorMsg('');
+    setStatusMsg('');
+  };
+
+  const handleCopyPassword = () => {
+    if (!newPass) return;
+    navigator.clipboard.writeText(newPass);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 3000);
+  };
+
+  const handleResetPassword = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
     if (!resetModal) return;
+
+    if (!newPass || newPass.trim().length < 6) {
+      setErrorMsg('Password must be at least 6 characters long.');
+      return;
+    }
+
     try {
       setResetting(true);
-      const res = await apiFetch(`/api/custom-agents/${resetModal._id || resetModal.id}/generate-password`, {
-        method: 'POST'
+      setErrorMsg('');
+      setStatusMsg('');
+      const targetId = resetModal.agentId || resetModal._id || resetModal.id;
+      const res = await apiFetch(`/api/custom-agents/${targetId}/generate-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: newPass.trim() })
       });
       const data = await res.json();
-      if (res.ok && data.temporaryPassword) {
-        setNewPass(data.temporaryPassword);
+      if (res.ok && data.success) {
+        showToast({
+          title: 'Password Updated',
+          description: `Password updated successfully for ${resetModal.agencyName || resetModal.contactPerson || 'Custom Agent'}.`,
+          type: 'success'
+        });
+        setStatusMsg('Password saved successfully! Credentials are active.');
+        setTimeout(() => {
+          setResetModal(null);
+          setNewPass('');
+          setStatusMsg('');
+          fetchAgents();
+        }, 1200);
       } else {
-        showToast({ type: 'error', title: 'Failed to reset password' });
+        const errorText = data.error || 'Failed to update password.';
+        setErrorMsg(errorText);
+        showToast({
+          type: 'error',
+          title: 'Password Reset Failed',
+          description: errorText
+        });
       }
     } catch (err) {
-      showToast({ type: 'error', title: 'Error resetting password' });
+      console.error('Error resetting password:', err);
+      setErrorMsg('Network error while resetting password.');
+      showToast({ type: 'error', title: 'Error resetting password', description: err.message });
     } finally {
       setResetting(false);
     }
@@ -305,15 +388,15 @@ export default function CustomAgentsView() {
                           <TableActionButton
                             onClick={() => navigate(`${agent.agentId || agent._id}/edit`)}
                             title="Edit Custom Agent"
-                            icon={Edit3}
+                            icon={Pencil}
                             variant="edit"
                           />
 
                           {/* Key / Password Reset */}
                           <TableActionButton
-                            onClick={() => setResetModal(agent)}
-                            title="Reset Password"
-                            icon={Key}
+                            onClick={() => handleOpenResetModal(agent)}
+                            title="Generate Password"
+                            icon={KeyRound}
                             variant="close"
                           />
 
@@ -347,38 +430,121 @@ export default function CustomAgentsView() {
 
       {/* Password Reset Modal */}
       {resetModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-2xl w-full max-w-md space-y-4">
-            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <Key className="w-4 h-4 text-amber-600" /> Reset Password for {resetModal.agencyName || resetModal.contactPerson}
-            </h3>
-            <p className="text-xs text-slate-500 font-medium">
-              Enter a new portal login password for account <span className="font-bold text-slate-800">{resetModal.email}</span>.
-            </p>
-            <form onSubmit={handleResetPassword} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">New Password</label>
-                <input
-                  type="text"
-                  required
-                  value={newPass}
-                  onChange={(e) => setNewPass(e.target.value)}
-                  placeholder="Enter new password (min 6 chars)"
-                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-1 focus:ring-[#0d7676]"
-                />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden font-sans">
+            {/* Header */}
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-700 ring-1 ring-amber-200/80 flex items-center justify-center shrink-0">
+                  <KeyRound className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900 leading-tight">Reset Agent Password</h2>
+                  <p className="text-xs text-slate-500 font-medium truncate max-w-[240px]">
+                    {resetModal.agencyName || resetModal.contactPerson}
+                  </p>
+                </div>
               </div>
-              <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setResetModal(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <form onSubmit={handleResetPassword} className="p-5 space-y-4">
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80 text-xs space-y-1">
+                <div className="flex justify-between items-center text-slate-500">
+                  <span>Account Email:</span>
+                  <span className="font-bold font-mono text-slate-800">{resetModal.email}</span>
+                </div>
+                <div className="flex justify-between items-center text-slate-500">
+                  <span>License / Agent ID:</span>
+                  <span className="font-semibold text-slate-700">{resetModal.licenceNumber || resetModal.agentId || '—'}</span>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700">New Portal Password</label>
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={newPass}
+                      onChange={(e) => {
+                        setNewPass(e.target.value);
+                        setErrorMsg('');
+                        setStatusMsg('');
+                      }}
+                      placeholder="Type or click Generate..."
+                      className="w-full pr-10 pl-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:outline-none focus:border-[#0d7676] focus:ring-2 focus:ring-teal-500/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-700"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleGeneratePassword}
+                    className="border border-teal-200 text-[#0d7676] bg-teal-50/60 hover:bg-teal-50 text-xs font-bold py-2.5 px-3 rounded-xl flex items-center gap-1.5 shrink-0 transition"
+                    title="Auto-generate random secure password"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Generate</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Action Row: Copy */}
+              {newPass && (
+                <div className="flex items-center justify-between text-xs pt-0.5">
+                  <span className="text-[11px] text-slate-500">Share credentials with custom agent</span>
+                  <button
+                    type="button"
+                    onClick={handleCopyPassword}
+                    className="text-xs font-bold text-[#0d7676] hover:text-teal-800 flex items-center gap-1 cursor-pointer"
+                  >
+                    {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copied ? 'Copied!' : 'Copy Password'}</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Status and Error Messages */}
+              {statusMsg && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-800 flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{statusMsg}</span>
+                </div>
+              )}
+
+              {errorMsg && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-bold text-rose-700">
+                  {errorMsg}
+                </div>
+              )}
+
+              {/* Footer Actions */}
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setResetModal(null)}
-                  className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 rounded-xl text-xs font-bold text-slate-700"
+                  className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 rounded-xl text-xs font-bold text-slate-700 transition"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={resetting}
-                  className="px-4 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5"
+                  disabled={resetting || !newPass.trim()}
+                  className="px-5 py-2 bg-[#0d7676] hover:bg-[#0f766e] text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 transition disabled:opacity-50 cursor-pointer"
                 >
                   {resetting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Save Password'}
                 </button>

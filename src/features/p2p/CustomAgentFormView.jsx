@@ -133,7 +133,7 @@ export default function CustomAgentFormView() {
           {isEdit ? 'Edit Custom Agent Account' : 'Add New Custom Agent Account'}
         </h1>
         <p className="text-xs text-slate-500 font-medium mt-1">
-          Create a portal account for a custom clearing agent. They will log in at <code className="text-[#0d7676] font-bold bg-teal-50 px-1.5 py-0.5 rounded">/agent/login</code> to manage BL clearances assigned to them.
+          Create a portal account for a custom clearing agent. They will log in at <code className="text-[#0d7676] font-bold bg-teal-50 px-1.5 py-0.5 rounded">/customs-agent/login</code> to manage BL clearances assigned to them.
         </p>
       </div>
 
@@ -263,7 +263,7 @@ export default function CustomAgentFormView() {
             <div className="p-3 bg-amber-50/80 border border-amber-200/80 rounded-xl flex items-start gap-2.5 text-xs text-amber-800 font-medium">
               <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <span>
-                Share these with the agent so they can log in at <code className="font-bold">/agent/login</code>. After creating, use <span className="font-bold">Generate Password</span> from the agent list for a shareable one-time password.
+                Share these with the agent so they can log in at <code className="font-bold">/customs-agent/login</code>. After creating, use <span className="font-bold">Generate Password</span> from the agent list for a shareable one-time password.
               </span>
             </div>
 
@@ -340,7 +340,7 @@ export default function CustomAgentFormView() {
                 <span className="font-bold text-slate-900">Enter license numbers</span> — IEC code and CHA license for compliance records.
               </li>
               <li>
-                <span className="font-bold text-slate-900">Set email + password</span> — these are the agent's portal login credentials at <code className="text-emerald-800 font-semibold bg-emerald-100/60 px-1 py-0.5 rounded">/agent/login</code>.
+                <span className="font-bold text-slate-900">Set email + password</span> — these are the agent's portal login credentials at <code className="text-emerald-800 font-semibold bg-emerald-100/60 px-1 py-0.5 rounded">/customs-agent/login</code>.
               </li>
               <li>
                 <span className="font-bold text-slate-900">Once created</span>, assign BL entries to this agent from the Exim module.

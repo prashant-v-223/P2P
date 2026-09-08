@@ -45,7 +45,7 @@ const NAV_SECTIONS = [
       { path: '/p2p/invoices', label: 'Invoice Payments', icon: Receipt },
       { path: '/p2p/custom-duty', label: 'Custom Duty', icon: ShieldCheck },
       { path: '/p2p/logistics-payments', label: 'Logistics Payments', icon: Truck },
-      { path: '/p2p/settlement-ledger', label: 'Settlement Ledger', icon: CreditCard }
+      // { path: '/p2p/settlement-ledger', label: 'Settlement Ledger', icon: CreditCard }
     ]
   },
   {
@@ -62,7 +62,7 @@ const NAV_SECTIONS = [
     title: 'APPROVALS',
     items: [
       { path: '/approvals', label: 'Pending Approvals', icon: CheckSquare, badge: 'pendingCount' },
-      { path: '/admin/hierarchy-report', label: 'Upcoming Payment Report', icon: Network }
+      // { path: '/admin/hierarchy-report', label: 'Upcoming Payment Report', icon: Network }
     ]
   },
   {

@@ -2,6 +2,8 @@ import mongoose from 'mongoose';
 
 const invoicePaymentSchema = new mongoose.Schema({
   invoicePaymentId: { type: String, required: true, unique: true, index: true },
+  legacyInvoicePaymentId: { type: String, default: '', index: true },
+  legacyInvoicePaymentIds: [{ type: String }],
   poId:             { type: String, required: true, index: true },
   sapPoNumber:      { type: String, required: true },
   vendorId:         { type: String, required: true },
@@ -24,6 +26,7 @@ const invoicePaymentSchema = new mongoose.Schema({
   grossAmount:      { type: Number, required: true },
   currency:         { type: String, default: 'INR', uppercase: true, trim: true },
   fxRate:           { type: Number, default: 1 },
+  grossAmountINR:   { type: Number },
   amountINR:        { type: Number },
   invoiceType:      { type: String, default: 'With GST' },
   gstSubtype:       { type: String, default: 'intra' },

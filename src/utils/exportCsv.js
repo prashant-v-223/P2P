@@ -51,24 +51,29 @@ export function exportPurchaseOrdersCsv(pos) {
   if (!Array.isArray(pos) || pos.length === 0) return false;
 
   const formattedRows = pos.map((po, index) => {
-    const netValue = Number(po.netValue || po.poValue || 0);
-    const advancePaid = Number(po.advancePaidAmount || po.paidAdvanceTotal || 0);
+    const poNum = po.poNumber || po.sapPoNumber || po.id || '';
+    const netValue = Number(po.totalAmount || po.netValue || po.poValue || 0);
+    const advancePaid = Number(po.paidAdvanceAmount || po.advancePaid || po.advancePaidAmount || po.paidAdvanceTotal || po.paidAmount || 0);
     const advanceLimit = Number(po.advanceLimitAmount || (netValue * (Number(po.maxAdvancePercentage || 100) / 100)));
     const remainingBalance = Math.max(0, advanceLimit - advancePaid);
+    const inferredType = (poNum.startsWith('PO-43') || poNum.startsWith('60') || (po.sapPoNumber || '').startsWith('43') || (po.sapPoNumber || '').startsWith('60')) ? 'Import' : 'Domestic';
+    const poStatus = po.status === 'open' ? 'Open' : (po.status ? (po.status.charAt(0).toUpperCase() + po.status.slice(1)) : 'Open');
 
     return {
       'S.No': index + 1,
-      'PO Number': po.poNumber || po.id || '',
+      'PO Number': poNum,
       'Vendor / Supplier Name': po.supplierName || po.vendorName || '',
-      'SAP Supplier Code': po.supplierCode || po.sapCode || '',
-      'PO Date': formatDate(po.documentDate || po.createdAt),
+      'SAP Supplier Code': po.supplierId || po.supplierCode || po.sapCode || po.vendorCode || '',
+      'PO Date': formatDate(po.documentDate || po.createdAt || po.poDate),
+      'Due Date': formatDate(po.dueDate || po.deliveryDate || po.paymentDueDate),
+      'Type': po.type || inferredType,
       'Net PO Value (INR)': netValue ? `₹${netValue.toLocaleString('en-IN')}` : '₹0',
       'Currency': po.currency || 'INR',
       'Advance Limit (%)': `${po.maxAdvancePercentage || 100}%`,
       'Advance Limit Value (INR)': advanceLimit ? `₹${advanceLimit.toLocaleString('en-IN')}` : '₹0',
       'Advance Paid to Date (INR)': advancePaid ? `₹${advancePaid.toLocaleString('en-IN')}` : '₹0',
       'Remaining Advance Balance (INR)': remainingBalance ? `₹${remainingBalance.toLocaleString('en-IN')}` : '₹0',
-      'Status': po.status || 'Active'
+      'Status': poStatus
     };
   });
 

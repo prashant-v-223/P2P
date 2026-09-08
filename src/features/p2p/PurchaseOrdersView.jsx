@@ -8,6 +8,7 @@ import { formatCurrency } from '../../utils/formatCurrency';
 import { SortableHeader, useUrlSorting } from '../../components/ui/sortable-header';
 import { TableActionButton } from '../../components/ui/table-action-button';
 import { exportPurchaseOrdersCsv } from '../../utils/exportCsv';
+import { useToast } from '../../components/ui/toast';
 import { 
   Search, 
   Eye, 
@@ -30,6 +31,7 @@ const getInitials = (name) => {
 export default function PurchaseOrdersView() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { showToast } = useToast();
 
   // Read state directly from URL search params
   const currentPage = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
@@ -41,6 +43,7 @@ export default function PurchaseOrdersView() {
 
   const [pos, setPos] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const [pageSize, setPageSize] = useState(pageSizeParam);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -127,6 +130,55 @@ export default function PurchaseOrdersView() {
     updateUrlParams({ page: String(newPage) });
   };
 
+  const handleExportCsv = async () => {
+    try {
+      setExporting(true);
+      const params = new URLSearchParams({
+        export: 'true',
+        q: searchTerm,
+        type: typeFilter,
+        status: statusFilter,
+        sortBy,
+        sortOrder
+      });
+
+      const res = await apiFetch(`/api/p2p/purchase-orders?${params.toString()}`);
+      if (res.ok) {
+        const json = await res.json();
+        const records = json.data || [];
+        if (records.length === 0) {
+          showToast({
+            title: 'No Records',
+            description: 'No purchase orders found matching the current criteria.',
+            type: 'info'
+          });
+          return;
+        }
+        exportPurchaseOrdersCsv(records);
+        showToast({
+          title: 'Export Successful',
+          description: `Successfully exported all ${records.length} purchase order record${records.length === 1 ? '' : 's'} to CSV.`,
+          type: 'success'
+        });
+      } else {
+        showToast({
+          title: 'Export Failed',
+          description: 'Could not fetch records for export.',
+          type: 'error'
+        });
+      }
+    } catch (err) {
+      console.error('Export error:', err);
+      showToast({
+        title: 'Export Error',
+        description: err.message || 'An unexpected error occurred during export.',
+        type: 'error'
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="space-y-3 font-sans text-left pb-10 flex flex-col min-h-0">
       {/* SINGLE UNIFIED CONTROL BAR (Search + Type + Status + Page Size + Action Button) */}
@@ -194,8 +246,15 @@ export default function PurchaseOrdersView() {
         >
           <Plus className="w-4 h-4" /> Raise Advance Request
         </Link>
-        <button type="button" onClick={() => exportPurchaseOrdersCsv(pos)} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">
-          <Download className="h-4 w-4" /> Export CSV
+        <button
+          type="button"
+          onClick={handleExportCsv}
+          disabled={exporting}
+          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50 cursor-pointer"
+          title="Export all matching purchase orders to CSV"
+        >
+          {exporting ? <Loader2 className="h-4 w-4 animate-spin text-[#0d7676]" /> : <Download className="h-4 w-4 text-slate-500" />}
+          <span>{exporting ? 'Exporting...' : 'Export CSV'}</span>
         </button>
       </div>
 

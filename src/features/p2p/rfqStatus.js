@@ -2,9 +2,66 @@ export function getRfqAllocationSummary(rfq) {
   const cargo = rfq?.cargoDetails || {};
   const totalContainers = Number(cargo.containerCount) || Number(rfq?.totalQuantity) || 0;
   const rawStatus = String(rfq?.status || '').toLowerCase();
-  const allAwardAllocations = Array.isArray(rfq?.awardAllocations) ? rfq.awardAllocations : [];
+  const rawAllocations = Array.isArray(rfq?.awardAllocations) ? rfq.awardAllocations : [];
   const isPendingApproval = rawStatus === 'pending_approval';
   const approvalCompleted = String(rfq?.approvalProgress?.status || '').toLowerCase() === 'approved & dispatched';
+
+  const normalizeAllocation = (allocation) => {
+    if (!allocation || typeof allocation !== 'object') return allocation;
+    const matchingQuote = Array.isArray(rfq?.quotes)
+      ? rfq.quotes.find(q =>
+          (allocation.quoteId && (q.quoteId === allocation.quoteId || q._id === allocation.quoteId)) ||
+          (allocation.vendorId && (q.vendorId === allocation.vendorId || q.sapVendorCode === allocation.vendorId)) ||
+          (allocation.vendorName && q.vendorName === allocation.vendorName)
+        )
+      : null;
+
+    const containers = Number(allocation.containers || allocation.awardedContainers || allocation.awarded_containers || 0);
+    const quoteRate = Number(matchingQuote?.totalInr || matchingQuote?.totalCostINR || matchingQuote?.ratePerContainer || 0);
+    const ratePerContainer = Number(allocation.ratePerContainer || allocation.ratePerContainerInr || allocation.rate || 0) || quoteRate;
+    const allocationAmount = Number(allocation.allocationAmount || allocation.totalAmountInr || allocation.allocationAmountInr || allocation.totalAmount || 0) || (ratePerContainer * containers);
+    const remark = allocation.remark || allocation.remarks || '';
+
+    return {
+      ...allocation,
+      containers,
+      ratePerContainer,
+      ratePerContainerInr: ratePerContainer,
+      allocationAmount,
+      totalAmountInr: allocationAmount,
+      remark,
+      remarks: remark,
+      vendorName: allocation.vendorName || matchingQuote?.vendorName || rfq?.awardedVendorName || 'Vendor'
+    };
+  };
+
+  let allAwardAllocations = rawAllocations.map(normalizeAllocation);
+  if (allAwardAllocations.length === 0 && (rawStatus === 'awarded' || Number(rfq?.allocatedQuantity) > 0) && (rfq?.awardedVendorName || rfq?.awardedVendorId)) {
+    const matchingQuote = Array.isArray(rfq?.quotes)
+      ? rfq.quotes.find(q =>
+          (rfq.awardedQuoteId && (q.quoteId === rfq.awardedQuoteId || q._id === rfq.awardedQuoteId)) ||
+          (rfq.awardedVendorId && (q.vendorId === rfq.awardedVendorId || q.sapVendorCode === rfq.awardedVendorId)) ||
+          (rfq.awardedVendorName && q.vendorName === rfq.awardedVendorName) ||
+          q.status === 'awarded'
+        )
+      : null;
+    const containers = Number(rfq?.allocatedQuantity) || totalContainers;
+    const quoteRate = Number(matchingQuote?.totalInr || matchingQuote?.totalCostINR || matchingQuote?.ratePerContainer || 0);
+    const amount = quoteRate * containers;
+    allAwardAllocations = [
+      normalizeAllocation({
+        vendorId: rfq.awardedVendorId || matchingQuote?.vendorId || '',
+        vendorName: rfq.awardedVendorName || matchingQuote?.vendorName || 'Awarded Vendor',
+        quoteId: rfq.awardedQuoteId || matchingQuote?.quoteId || '',
+        containers,
+        ratePerContainer: quoteRate,
+        ratePerContainerInr: quoteRate,
+        allocationAmount: amount,
+        totalAmountInr: amount,
+        approved: true
+      })
+    ];
+  }
 
   const approvedAllocations = allAwardAllocations.filter((allocation) => {
     if (allocation?.approved === true) return true;

@@ -777,7 +777,7 @@ export default function RfqDetailView() {
               <th className="py-2.5 px-2 whitespace-nowrap min-w-[80px]">Route</th>
               <th className="py-2.5 px-2.5 text-right whitespace-nowrap min-w-[85px]">Freight</th>
               <th className="py-2.5 px-2.5 text-right whitespace-nowrap min-w-[95px]">St. Charges</th>
-              <th className="py-2.5 px-2.5 text-right whitespace-nowrap min-w-[105px]">Total (INR)</th>
+              <th className="py-2.5 px-2.5 text-right whitespace-nowrap min-w-[125px]">Total Value ({normalizedTotalContainers} ctr)</th>
               <th className="py-2.5 px-1.5 text-center whitespace-nowrap w-14">Transit</th>
               <th className="py-2.5 px-2 text-center whitespace-nowrap min-w-[95px]">Schedule</th>
               <th className="py-2.5 px-2.5 text-center whitespace-nowrap sticky right-0 bg-slate-50 text-slate-500 font-extrabold uppercase tracking-tight text-[9.5px] shadow-[-6px_0_12px_-2px_rgba(0,0,0,0.08)] border-l border-slate-200 z-20 min-w-[110px]">Allocation Status</th>
@@ -818,8 +818,11 @@ export default function RfqDetailView() {
                     ₹{(Number(q.stChargesInr) || 0).toLocaleString('en-IN')}
                   </td>
                   <td className="py-2 px-2.5 text-right whitespace-nowrap">
-                    <div className="font-extrabold text-[#0d7676] text-[11px]">
-                      ₹{(Number(q.totalInr) || 0).toLocaleString('en-IN')}
+                    <div className="font-extrabold text-[#0d7676] text-[11.5px] font-mono">
+                      ₹{((Number(q.totalInr) || 0) * (normalizedTotalContainers || 1)).toLocaleString('en-IN')}
+                    </div>
+                    <div className="text-[9px] font-semibold text-slate-400 font-mono">
+                      ₹{(Number(q.totalInr) || 0).toLocaleString('en-IN')}/ctr
                     </div>
                   </td>
                   <td className="py-2 px-1.5 text-center font-bold text-slate-700 whitespace-nowrap text-[11px]">
@@ -918,9 +921,9 @@ export default function RfqDetailView() {
                       <p className="text-[10px] text-slate-500 mt-0.5">Documentation & Misc</p>
                     </div>
                     <div className="bg-teal-50 p-3 rounded-xl border border-teal-200">
-                      <p className="text-[10px] font-extrabold text-teal-700 uppercase">Total Rate / Container</p>
-                      <p className="mt-1 text-sm font-extrabold font-mono text-[#0d7676]">₹{(Number(quote.totalInr) || 0).toLocaleString('en-IN')}</p>
-                      <p className="text-[10px] text-teal-600 font-bold mt-0.5">All-Inclusive Rate</p>
+                      <p className="text-[10px] font-extrabold text-teal-700 uppercase">Total Value ({normalizedTotalContainers} ctr)</p>
+                      <p className="mt-1 text-sm font-extrabold font-mono text-[#0d7676]">₹{((Number(quote.totalInr) || 0) * (normalizedTotalContainers || 1)).toLocaleString('en-IN')}</p>
+                      <p className="text-[10px] text-teal-600 font-bold mt-0.5 font-mono">₹{(Number(quote.totalInr) || 0).toLocaleString('en-IN')}/ctr all-in</p>
                     </div>
                   </div>
 
@@ -1154,7 +1157,7 @@ export default function RfqDetailView() {
           <div className="divide-y divide-slate-100">
             {/* ── CURRENT ACTIVE CYCLE (pending_approval) ── */}
             {normalizedIsPendingApproval && normalizedPendingAllocations.length > 0 && (() => {
-              const cycleTotal = normalizedPendingAllocations.reduce((s, a) => s + (Number(a.allocationAmount) || 0), 0);
+              const cycleTotal = normalizedPendingAllocations.reduce((s, a) => s + (Number(a.allocationAmount || a.totalAmountInr || ((Number(a.ratePerContainer || a.ratePerContainerInr) || 0) * (Number(a.containers) || 0))) || 0), 0);
               const cycleCont = normalizedPendingAllocations.reduce((s, a) => s + (Number(a.containers) || 0), 0);
               return (
                 <div className="p-5 bg-amber-50/40 space-y-3.5">
@@ -1206,27 +1209,32 @@ export default function RfqDetailView() {
 
                   {/* Vendor rows */}
                   <div className="space-y-2">
-                    {normalizedPendingAllocations.map((alloc, i) => (
-                      <div key={i} className="flex items-center justify-between bg-white rounded-xl border border-amber-200 px-4 py-3 shadow-2xs">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center text-amber-600 font-black text-[10px] shrink-0">
-                            {alloc.containers}
+                    {normalizedPendingAllocations.map((alloc, i) => {
+                      const rate = Number(alloc.ratePerContainer || alloc.ratePerContainerInr || 0);
+                      const amount = Number(alloc.allocationAmount || alloc.totalAmountInr || (rate * (Number(alloc.containers) || 0)));
+                      const remarkText = alloc.remark || alloc.remarks;
+                      return (
+                        <div key={i} className="flex items-center justify-between bg-white rounded-xl border border-amber-200 px-4 py-3 shadow-2xs">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center text-amber-600 font-black text-[10px] shrink-0">
+                              {alloc.containers}
+                            </div>
+                            <div>
+                              <p className="text-xs font-bold text-slate-900">{alloc.vendorName}</p>
+                              <p className="text-[10px] font-medium text-slate-500">
+                                {alloc.containers} ctr × ₹{rate.toLocaleString('en-IN')}/ctr
+                                {remarkText ? ` · "${remarkText}"` : ''}
+                              </p>
+                              {alloc.quoteId && <p className="text-[9px] font-mono text-slate-300 mt-0.5">{alloc.quoteId}</p>}
+                            </div>
                           </div>
-                          <div>
-                            <p className="text-xs font-bold text-slate-900">{alloc.vendorName}</p>
-                            <p className="text-[10px] font-medium text-slate-500">
-                              {alloc.containers} ctr × ₹{(alloc.ratePerContainer || 0).toLocaleString('en-IN')}/ctr
-                              {alloc.remark ? ` · "${alloc.remark}"` : ''}
-                            </p>
-                            {alloc.quoteId && <p className="text-[9px] font-mono text-slate-300 mt-0.5">{alloc.quoteId}</p>}
+                          <div className="text-right">
+                            <p className="font-extrabold font-mono text-amber-700 text-xs">₹{amount.toLocaleString('en-IN')}</p>
+                            <p className="text-[9px] text-slate-400">Pending</p>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <p className="font-extrabold font-mono text-amber-700 text-xs">₹{(alloc.allocationAmount || 0).toLocaleString('en-IN')}</p>
-                          <p className="text-[9px] text-slate-400">Pending</p>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                     {normalizedPendingAllocations.length > 1 && (
                       <div className="flex justify-end pr-1">
                         <span className="text-[10px] font-extrabold font-mono text-amber-700">
@@ -1251,7 +1259,9 @@ export default function RfqDetailView() {
                       <p className="text-xs font-extrabold text-slate-900">
                         {normalizedApprovedAllocations.reduce((s, a) => s + (Number(a.containers) || 0), 0)} Container(s) — Approved & Awarded
                       </p>
-                      <p className="text-[10px] font-semibold text-emerald-700 mt-0.5">Formally confirmed and completed</p>
+                      <p className="text-[10px] font-semibold text-emerald-700 mt-0.5">
+                        Total Value: ₹{normalizedApprovedAllocations.reduce((sum, a) => sum + (Number(a.allocationAmount || a.totalAmountInr || ((Number(a.ratePerContainer || a.ratePerContainerInr) || 0) * (Number(a.containers) || 0))) || 0), 0).toLocaleString('en-IN')} · Formally confirmed
+                      </p>
                     </div>
                   </div>
                   <span className="text-[9px] font-extrabold uppercase px-2.5 py-1.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 inline-flex items-center gap-1 shrink-0">
@@ -1259,32 +1269,43 @@ export default function RfqDetailView() {
                   </span>
                 </div>
                 <div className="space-y-2">
-                  {normalizedApprovedAllocations.map((alloc, i) => (
-                    <div key={i} className="flex items-center justify-between bg-white rounded-xl border border-emerald-200 px-4 py-3 shadow-2xs">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600 font-black text-[10px] shrink-0">
-                          {alloc.containers}
+                  {normalizedApprovedAllocations.map((alloc, i) => {
+                    const rate = Number(alloc.ratePerContainer || alloc.ratePerContainerInr || 0);
+                    const amount = Number(alloc.allocationAmount || alloc.totalAmountInr || (rate * (Number(alloc.containers) || 0)));
+                    const remarkText = alloc.remark || alloc.remarks;
+                    return (
+                      <div key={i} className="flex items-center justify-between bg-white rounded-xl border border-emerald-200 px-4 py-3 shadow-2xs">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600 font-black text-[10px] shrink-0">
+                            {alloc.containers}
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-slate-900">{alloc.vendorName}</p>
+                            <p className="text-[10px] font-medium text-slate-500">
+                              {alloc.containers} ctr × ₹{rate.toLocaleString('en-IN')}/ctr
+                              {remarkText ? ` · "${remarkText}"` : ''}
+                            </p>
+                            {alloc.quoteId && <p className="text-[9px] font-mono text-slate-300 mt-0.5">{alloc.quoteId}</p>}
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-xs font-bold text-slate-900">{alloc.vendorName}</p>
-                          <p className="text-[10px] font-medium text-slate-500">
-                            {alloc.containers} ctr × ₹{(alloc.ratePerContainer || 0).toLocaleString('en-IN')}/ctr
-                            {alloc.remark ? ` · "${alloc.remark}"` : ''}
-                          </p>
+                        <div className="text-right">
+                          <p className="font-extrabold font-mono text-emerald-700 text-xs">₹{amount.toLocaleString('en-IN')}</p>
+                          <p className="text-[9px] text-emerald-600 font-semibold">Awarded</p>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <p className="font-extrabold font-mono text-emerald-700 text-xs">₹{(alloc.allocationAmount || 0).toLocaleString('en-IN')}</p>
-                        <p className="text-[9px] text-emerald-600 font-semibold">Awarded</p>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 {normalizedAllocatedContainers >= normalizedTotalContainers && normalizedTotalContainers > 0 && (
-                  <div className="flex items-center gap-2 bg-emerald-50 rounded-xl px-4 py-2.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                    <p className="text-xs font-extrabold text-emerald-800">
-                      All {normalizedTotalContainers} containers fully awarded · {rfq.awardedVendorName || 'Completed'}
+                  <div className="flex items-center justify-between bg-emerald-50 rounded-xl px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                      <p className="text-xs font-extrabold text-emerald-800">
+                        All {normalizedTotalContainers} containers fully awarded · {normalizedApprovedAllocations.map(a => a.vendorName).filter(Boolean).join(', ') || rfq.awardedVendorName || 'Completed'}
+                      </p>
+                    </div>
+                    <p className="text-xs font-black font-mono text-emerald-800 shrink-0">
+                      Total: ₹{normalizedApprovedAllocations.reduce((sum, a) => sum + (Number(a.allocationAmount || a.totalAmountInr || ((Number(a.ratePerContainer || a.ratePerContainerInr) || 0) * (Number(a.containers) || 0))) || 0), 0).toLocaleString('en-IN')}
                     </p>
                   </div>
                 )}
@@ -1300,7 +1321,11 @@ export default function RfqDetailView() {
                 {[...cycleHistory].reverse().map((hist, revIdx) => {
                   const histIdx = cycleHistory.length - 1 - revIdx;
                   const cycleNum = histIdx + 1;
-                  const histAllocs = hist.newAllocations || [];
+                  const histAllocs = (hist.newAllocations || []).map(a => {
+                    const rate = Number(a.ratePerContainer || a.ratePerContainerInr || 0);
+                    const amount = Number(a.allocationAmount || a.totalAmountInr || (rate * (Number(a.containers) || 0)));
+                    return { ...a, ratePerContainer: rate, allocationAmount: amount };
+                  });
                   const histTotal = histAllocs.reduce((s, a) => s + (Number(a.allocationAmount) || 0), 0);
                   const histCont = hist.newAllocatedQuantity || histAllocs.reduce((s, a) => s + (Number(a.containers) || 0), 0);
                   return (
@@ -1336,7 +1361,7 @@ export default function RfqDetailView() {
                                 <p className="text-[10px] font-bold text-slate-700">{alloc.vendorName}</p>
                                 <p className="text-[9px] font-medium text-slate-400">
                                   {alloc.containers} ctr × ₹{(alloc.ratePerContainer || 0).toLocaleString('en-IN')}/ctr
-                                  {alloc.remark ? ` · "${alloc.remark}"` : ''}
+                                  {alloc.remark || alloc.remarks ? ` · "${alloc.remark || alloc.remarks}"` : ''}
                                 </p>
                               </div>
                               <span className="font-bold font-mono text-slate-600 text-[10px]">

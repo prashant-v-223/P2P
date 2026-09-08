@@ -116,7 +116,7 @@ export const VendorProvider = ({ children }) => {
           }
 
           const gross = Number(i.grossAmount || i.invoiceAmount) || 0;
-          const adv = Number(i.advanceAdjusted || i.advanceAdjust) || 0;
+          const adv = Math.max(0, Math.abs(Number(i.advanceAdjusted || i.advanceAdjust) || 0));
           const calculatedNet = Math.max(0, gross - adv);
           const netPayableVal = Number(i.netPayableAmount ?? i.netPayable) || calculatedNet || gross;
 
@@ -260,7 +260,7 @@ export const VendorProvider = ({ children }) => {
       gstAmount: Number(newInvoice.cgstAmount || 0) + Number(newInvoice.sgstAmount || 0) + Number(newInvoice.igstAmount || 0),
       tdsPercentage: Number.parseFloat(newInvoice.tdsPercentage) || 0,
       tdsAmount: (Number(newInvoice.invoiceAmount) || 0) * (Number.parseFloat(newInvoice.tdsPercentage) || 0) / 100,
-      advanceAdjusted: Number(newInvoice.advanceAdjust || 0),
+      advanceAdjusted: Math.max(0, Math.abs(Number(newInvoice.advanceAdjust || 0))),
       remarks: newInvoice.remarks
     };
 
@@ -407,7 +407,7 @@ export const VendorProvider = ({ children }) => {
       gstAmount: Number(updatedInvoice.cgstAmount || 0) + Number(updatedInvoice.sgstAmount || 0) + Number(updatedInvoice.igstAmount || 0),
       tdsPercentage: Number.parseFloat(updatedInvoice.tdsPercentage) || 0,
       tdsAmount: (Number(updatedInvoice.invoiceAmount) || 0) * (Number.parseFloat(updatedInvoice.tdsPercentage) || 0) / 100,
-      advanceAdjusted: Number(updatedInvoice.advanceAdjust || updatedInvoice.advanceAdjusted || 0),
+      advanceAdjusted: Math.max(0, Math.abs(Number(updatedInvoice.advanceAdjust || updatedInvoice.advanceAdjusted || 0))),
       remarks: updatedInvoice.remarks,
       supportingDocuments: updatedInvoice.supportingDocuments
     };

@@ -15,6 +15,8 @@
     "test:backend": "node server/src/db/smoke-test.js",
     "test:mail": "node server/src/services/verify-mail.js",
     "import:legacy": "node server/src/db/import-legacy-mysql.js",
+    "migrate:payment-references": "node server/src/db/normalize-payment-references.js",
+    "migrate:invoice-fx": "node server/src/db/backfill-invoice-fx.js",
     "backup:database": "node server/src/db/export-database.js",
     "dev:all": "concurrently \"npm run server:dev\" \"npm run dev\"",
     "start": "node server/server.js"

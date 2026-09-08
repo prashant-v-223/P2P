@@ -2,6 +2,8 @@ import mongoose from 'mongoose';
 
 const advancePaymentSchema = new mongoose.Schema({
   advanceId: { type: String, required: true, unique: true, index: true },
+  legacyAdvanceId: { type: String, default: '', index: true },
+  legacyAdvanceIds: [{ type: String }],
   poId: { type: String, required: true, index: true },
   sapPoNumber: { type: String, required: true },
   vendorId: { type: String, required: true },

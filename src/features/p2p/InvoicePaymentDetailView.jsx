@@ -189,6 +189,10 @@ export default function InvoicePaymentDetailView() {
   const isPaid = invoice.status === 'paid';
   const isMatched = invoice.threeWayMatch?.status === 'matched';
   const invCurrency = invoice.currency || invoice.poCurrency || ((String(invoice.sapPoNumber || invoice.poId || '').startsWith('43') || String(invoice.sapPoNumber || invoice.poId || '').startsWith('60')) ? 'USD' : 'INR');
+  const isForeignCurrency = String(invCurrency).toUpperCase() !== 'INR';
+  const fxRate = Number(invoice.fxRate) > 0 ? Number(invoice.fxRate) : null;
+  const netAmountINR = Number(invoice.amountINR) || null;
+  const grossAmountINR = Number(invoice.grossAmountINR) || null;
 
   const bankAdviceDocs = (() => {
     const raw = [
@@ -525,20 +529,51 @@ export default function InvoicePaymentDetailView() {
           </div>
 
           {/* Card 2: Amount Breakdown */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-            <h3 className="text-base font-bold text-slate-900 border-b border-slate-100 pb-3 flex items-center gap-2">
-              <DollarSign className="w-5 h-5 text-slate-600" />
-              Amount Breakdown
-            </h3>
-            
-            <div className="divide-y divide-slate-100 text-sm font-medium text-slate-700">
-              <div className="py-3 flex items-center justify-between">
-                <span className="text-slate-600">Invoice Amount</span>
-                <span className="font-mono font-bold text-slate-900 text-base">{formatCurrency(invoice.grossAmount || 0, invCurrency)}</span>
-              </div>
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 sm:px-5">
+              <h3 className="flex items-center gap-2 text-base font-bold text-slate-900">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-50 text-teal-700">
+                  <DollarSign className="h-4 w-4" />
+                </span>
+                Amount Breakdown
+              </h3>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                {String(invCurrency).toUpperCase()}
+              </span>
+            </div>
+
+            <div className="space-y-3 p-4 sm:px-5 sm:py-4">
+              {isForeignCurrency && fxRate && grossAmountINR ? (
+                <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2.5">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Invoice amount</span>
+                    <span className="mt-0.5 block font-mono text-base font-extrabold text-slate-900">{formatCurrency(invoice.grossAmount || 0, invCurrency)}</span>
+                  </div>
+
+                  <div className="flex items-center justify-center">
+                    <div className="flex w-full items-center justify-between gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 font-mono text-[11px] font-bold text-teal-800 sm:w-auto sm:justify-center">
+                      <span className="text-[9px] uppercase tracking-wider text-teal-600 sm:hidden">Rate</span>
+                      <span>1 {String(invCurrency).toUpperCase()} = {formatCurrency(fxRate, 'INR')}</span>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2.5 sm:text-right">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Converted amount</span>
+                    <span className="mt-0.5 block font-mono text-base font-extrabold text-slate-900">{formatCurrency(grossAmountINR, 'INR')}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                  <span className="text-sm font-medium text-slate-600">Invoice Amount</span>
+                  <span className="font-mono text-lg font-extrabold text-slate-900">{formatCurrency(invoice.grossAmount || 0, invCurrency)}</span>
+                </div>
+              )}
+
+              <div className="divide-y divide-slate-100 text-sm font-medium text-slate-700">
 
               {Number(invoice.cgstAmount || 0) > 0 && (
                 <div className="py-3 flex items-center justify-between">
+
                   <span className="text-slate-600">CGST</span>
                   <span className="font-mono text-slate-600">{formatCurrency(invoice.cgstAmount, invCurrency)}</span>
                 </div>
@@ -565,23 +600,33 @@ export default function InvoicePaymentDetailView() {
                 </div>
               )}
 
-              {Number(invoice.advanceAdjusted || 0) > 0 && (
+              {Math.abs(Number(invoice.advanceAdjusted || 0)) > 0 && (
                 <div className="py-3 flex items-center justify-between">
                   <span className="text-slate-600">Advance Adjusted</span>
-                  <span className="font-mono text-amber-700 font-semibold">- {formatCurrency(invoice.advanceAdjusted, invCurrency)}</span>
+                  <span className="font-mono text-amber-700 font-semibold">- {formatCurrency(Math.abs(Number(invoice.advanceAdjusted || 0)), invCurrency)}</span>
                 </div>
               )}
 
-              <div className="py-4 flex items-center justify-between bg-gradient-to-r from-teal-50 to-teal-100/50 px-4 rounded-xl mt-2 border-2 border-teal-200">
-                <div>
-                  <span className="font-extrabold text-slate-900 text-base block">Net Payable</span>
-                  {invCurrency !== 'INR' && (
-                    <span className="text-[11px] font-semibold text-teal-700 block font-mono">
-                      (INR Equiv: ₹{(invoice.amountINR || ((invoice.netPayable || 0) * (invoice.fxRate || 83.5))).toLocaleString('en-IN')})
+              </div>
+
+              <div className="flex flex-col gap-2 rounded-lg border border-teal-200 bg-gradient-to-r from-teal-50 via-emerald-50/70 to-teal-50 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-teal-700 shadow-sm ring-1 ring-teal-200">
+                    <CheckCircle2 className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <span className="block text-sm font-extrabold text-slate-900">Net Payable</span>
+                  {isForeignCurrency && netAmountINR && (
+                    <span className="mt-0.5 block font-mono text-[11px] font-semibold text-teal-700">
+                      INR payable: {formatCurrency(netAmountINR, 'INR')}
                     </span>
                   )}
+                  </div>
                 </div>
-                <span className="font-mono font-extrabold text-teal-800 text-xl">{formatCurrency(invoice.netPayable || 0, invCurrency)}</span>
+                <div className="sm:text-right">
+                  <span className="block font-mono text-xl font-extrabold text-teal-800">{formatCurrency(invoice.netPayable || 0, invCurrency)}</span>
+                  <span className="mt-0.5 block text-[9px] font-bold uppercase tracking-wider text-teal-600">Final payable amount</span>
+                </div>
               </div>
             </div>
           </div>
@@ -622,6 +667,12 @@ export default function InvoicePaymentDetailView() {
           <div className="bg-gradient-to-br from-[#0f4c4c] to-[#0d7676] text-white p-6 rounded-2xl shadow-lg space-y-2 border border-teal-900/20">
             <span className="text-xs font-bold uppercase tracking-wider text-teal-200 block">Net Payable Amount</span>
             <p className="font-mono text-3xl font-extrabold text-white tracking-tight">{formatCurrency(invoice.netPayable || 0, invCurrency)}</p>
+            {isForeignCurrency && netAmountINR && (
+              <div className="rounded-lg border border-white/15 bg-black/10 px-3 py-2 font-mono text-xs text-teal-50">
+                <p className="font-bold">{formatCurrency(netAmountINR, 'INR')}</p>
+                {fxRate && <p className="mt-0.5 text-[10px] text-teal-200">1 {String(invCurrency).toUpperCase()} = {formatCurrency(fxRate, 'INR')}</p>}
+              </div>
+            )}
             <div className="flex items-center gap-2 pt-1">
               <span className="px-2.5 py-1 rounded-lg bg-teal-900/30 text-xs font-bold text-teal-100 border border-teal-700/30">NEFT</span>
             </div>

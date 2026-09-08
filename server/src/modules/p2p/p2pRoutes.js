@@ -2958,12 +2958,12 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       const numSgst = Number(req.body.sgstAmount) || 0;
       const numIgst = Number(req.body.igstAmount) || 0;
       const numGst = Number(gstAmount) || (numCgst + numSgst + numIgst) || 0;
-      const tdsRate = Number.parseFloat(tdsPercentage) || 0;
-      const numTds = tdsAmount == null ? (numGross * tdsRate / 100) : (Number(tdsAmount) || 0);
-      const numAdv = Number(advanceAdjusted) || 0;
+      const tdsRate = Math.max(0, Math.min(100, Math.abs(Number.parseFloat(tdsPercentage) || 0)));
+      const numTds = Math.max(0, Math.abs(tdsAmount == null ? (numGross * tdsRate / 100) : (Number(tdsAmount) || 0)));
+      const numAdv = Math.max(0, Math.abs(Number(advanceAdjusted) || 0));
       if (numGross <= 0) return res.status(400).json({ success: false, error: 'Invoice amount must be greater than zero.' });
-      if ([numGst, numTds, numAdv, numCgst, numSgst, numIgst].some((value) => value < 0) || tdsRate < 0 || tdsRate > 100) {
-        return res.status(400).json({ success: false, error: 'GST, TDS, and advance adjustment cannot be negative.' });
+      if ([numGst, numCgst, numSgst, numIgst].some((value) => value < 0)) {
+        return res.status(400).json({ success: false, error: 'GST cannot be negative.' });
       }
 
       const poRefs = [po.poNumber, po.sapPoNumber].filter(Boolean);
@@ -3242,9 +3242,9 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
       if (gstAmount !== undefined) invoice.gstAmount = Number(gstAmount);
       else if (calcGst > 0) invoice.gstAmount = calcGst;
 
-      if (tdsAmount !== undefined) invoice.tdsAmount = Number(tdsAmount);
-      if (tdsPercentage !== undefined) invoice.tdsPercentage = Number(tdsPercentage);
-      if (advanceAdjusted !== undefined) invoice.advanceAdjusted = Number(advanceAdjusted);
+      if (tdsAmount !== undefined) invoice.tdsAmount = Math.max(0, Math.abs(Number(tdsAmount) || 0));
+      if (tdsPercentage !== undefined) invoice.tdsPercentage = Math.max(0, Math.abs(Number(tdsPercentage) || 0));
+      if (advanceAdjusted !== undefined) invoice.advanceAdjusted = Math.max(0, Math.abs(Number(advanceAdjusted) || 0));
       if (grnNumber !== undefined) invoice.grnNumber = grnNumber.trim();
       if (remarks !== undefined) invoice.remarks = remarks.trim();
       if (approvalTo !== undefined) invoice.approvalTo = approvalTo;
@@ -3273,7 +3273,7 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
 
       invoice.netPayable = Math.max(0,
         (invoice.grossAmount || 0) + (invoice.gstAmount || 0)
-        - (invoice.tdsAmount || 0) - (invoice.advanceAdjusted || 0)
+        - Math.abs(invoice.tdsAmount || 0) - Math.abs(invoice.advanceAdjusted || 0)
       );
 
       // Resubmit for approval on edit
@@ -4402,15 +4402,21 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
           const quote = quotes.find((entry) => entry.quoteId === item.quoteId);
           const containers = Number(item.containers);
           if (!Number.isInteger(containers) || containers <= 0) throw new Error('Allocated containers must be positive whole numbers.');
+          const rate = Number(quote.totalInr) || 0;
+          const amount = rate * containers;
+          const remark = String(item.remark || item.remarks || '').trim();
           return {
             quoteId: quote.quoteId,
             vendorId: quote.vendorId,
             vendorName: quote.vendorName,
             vendorCode: quote.vendorId,
             containers,
-            ratePerContainer: Number(quote.totalInr) || 0,
-            allocationAmount: (Number(quote.totalInr) || 0) * containers,
-            remark: String(item.remark || '').trim()
+            ratePerContainer: rate,
+            ratePerContainerInr: rate,
+            allocationAmount: amount,
+            totalAmountInr: amount,
+            remark,
+            remarks: remark
           };
         });
 

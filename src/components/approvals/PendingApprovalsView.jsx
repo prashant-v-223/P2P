@@ -732,17 +732,17 @@ export default function PendingApprovalsView() {
                                 </div>
                                 <div>
                                   <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Rate / Container</span>
-                                  <span className="block font-mono font-bold text-slate-800">{formatCurrency(alloc.ratePerContainer)}</span>
+                                  <span className="block font-mono font-bold text-slate-800">{formatCurrency(alloc.ratePerContainer || alloc.ratePerContainerInr || 0)}</span>
                                 </div>
                                 <div>
                                   <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Allocation Amount</span>
-                                  <span className="block font-mono font-extrabold text-slate-900">{formatCurrency(alloc.allocationAmount)}</span>
+                                  <span className="block font-mono font-extrabold text-slate-900">{formatCurrency(alloc.allocationAmount || alloc.totalAmountInr || ((Number(alloc.ratePerContainer || alloc.ratePerContainerInr) || 0) * (Number(alloc.containers) || 0)))}</span>
                                 </div>
                               </div>
-                              {alloc.remark && (
+                              {(alloc.remark || alloc.remarks) && (
                                 <div className="border-t border-slate-100 pt-1">
                                   <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Remark</span>
-                                  <p className="mt-0.5 text-xs italic text-slate-600">{alloc.remark}</p>
+                                  <p className="mt-0.5 text-xs italic text-slate-600">{alloc.remark || alloc.remarks}</p>
                                 </div>
                               )}
                             </div>

@@ -181,7 +181,7 @@ export default function InvoicePaymentsView() {
           grossAmount: Number(formGross),
           gstAmount: Number(formGst),
           tdsAmount: Number(formTds),
-          advanceAdjusted: Number(formAdvAdj),
+          advanceAdjusted: Math.max(0, Math.abs(Number(formAdvAdj) || 0)),
           advanceIdAdjusted: 'ADV-' + Date.now().toString().slice(-6),
           poQuantity: Number(formPoQty),
           grnQuantity: Number(formGrnQty),
@@ -246,7 +246,7 @@ export default function InvoicePaymentsView() {
     }
   };
 
-  const netPayableCalc = Math.max(0, Number(formGross) + Number(formGst) - Number(formTds) - Number(formAdvAdj));
+  const netPayableCalc = Math.max(0, (Number(formGross) || 0) + (Number(formGst) || 0) - Math.abs(Number(formTds) || 0) - Math.abs(Number(formAdvAdj) || 0));
 
 const formatRoleName = (str) => {
   if (!str || str === '—') return '—';
@@ -461,7 +461,10 @@ const getInitials = (name) => {
 
                       {/* INVOICE AMT */}
                       <td className="py-3 px-3.5 text-right font-mono font-extrabold text-slate-900 whitespace-nowrap">
-                        {(inv.grossAmount || 0).toLocaleString(inv.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })} {inv.currency || 'INR'}
+                        <span className="block">{(inv.grossAmount || 0).toLocaleString(inv.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })} {inv.currency || 'INR'}</span>
+                        {inv.currency && inv.currency !== 'INR' && Number(inv.fxRate) > 0 && (
+                          <span className="mt-0.5 block text-[9px] font-semibold text-teal-700">1 {inv.currency} = ₹{Number(inv.fxRate).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</span>
+                        )}
                       </td>
 
                       {/* TDS */}
@@ -471,7 +474,10 @@ const getInitials = (name) => {
 
                       {/* NET PAYABLE */}
                       <td className="py-3 px-3.5 text-right font-mono font-extrabold text-slate-900 whitespace-nowrap">
-                        {(inv.netPayable || 0).toLocaleString(inv.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })} {inv.currency || 'INR'}
+                        <span className="block">{(inv.netPayable || 0).toLocaleString(inv.currency === 'USD' ? 'en-US' : 'en-IN', { minimumFractionDigits: 2 })} {inv.currency || 'INR'}</span>
+                        {inv.currency && inv.currency !== 'INR' && Number(inv.amountINR) > 0 && (
+                          <span className="mt-0.5 block text-[9px] font-semibold text-teal-700">≈ ₹{Number(inv.amountINR).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        )}
                       </td>
 
                       {/* 3-WAY MATCH */}
@@ -679,9 +685,29 @@ const getInitials = (name) => {
                 <div>
                   <label className="block font-bold text-slate-600 mb-1">Advance Knock-Off (₹)</label>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     value={formAdvAdj}
-                    onChange={(e) => setFormAdvAdj(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === '-' || e.key === 'Minus' || e.code === 'Minus' || e.code === 'NumpadSubtract') {
+                        e.preventDefault();
+                      }
+                    }}
+                    onPaste={(e) => {
+                      e.preventDefault();
+                      const pasteData = e.clipboardData?.getData('text') || '';
+                      const clean = pasteData.replace(/[^0-9.]/g, '');
+                      const parts = clean.split('.');
+                      const sanitized = parts.length > 2 ? parts[0] + '.' + parts.slice(1).join('') : clean;
+                      setFormAdvAdj(sanitized);
+                    }}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/[^0-9.]/g, '');
+                      const parts = val.split('.');
+                      const sanitized = parts.length > 2 ? parts[0] + '.' + parts.slice(1).join('') : val;
+                      setFormAdvAdj(sanitized);
+                    }}
+                    placeholder="0.00"
                     className="w-full px-3 py-1.5 border border-slate-300 rounded-lg outline-none font-bold text-amber-700 bg-white"
                   />
                 </div>

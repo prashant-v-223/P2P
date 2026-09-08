@@ -8,10 +8,12 @@ export default function AuthShell({ title, description, children }) {
         <div className="h-1 bg-teal-700" />
         <div className="px-6 pb-5 pt-6 sm:px-7">
           <div className="mb-5 text-center">
-            <div className="inline-flex flex-col items-center leading-none">
-              <span className="text-[30px] font-black tracking-[0.08em] text-teal-800">RAYZON</span>
-              <span className="mt-1 text-[11px] font-bold tracking-[0.48em] text-slate-500">SOLAR</span>
-            </div>
+           <img
+              alt="Rayzon Solar"
+              className="mx-auto h-14 w-auto max-w-[220px] object-contain"
+              src="/logo.png"
+              width="170"
+            />
           </div>
           <div className="mb-4">
             <h1 className="text-[22px] font-bold tracking-tight text-slate-950">{title}</h1>

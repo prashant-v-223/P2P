@@ -178,7 +178,7 @@ export default function InvoicePaymentFormView() {
   const grossTotal = invoiceAmountNum + totalGst;
   const tdsPctNum = parseFloat(tdsPercentage) || 0;
   const tdsDeduction = (invoiceAmountNum * tdsPctNum) / 100;
-  const advanceAdjNum = Number(advanceAdjust) || 0;
+  const advanceAdjNum = Math.max(0, Math.abs(Number(advanceAdjust) || 0));
   const netPayable = Math.max(0, grossTotal - tdsDeduction - advanceAdjNum);
 
   // Helper function to auto-compute GST based on standard percentage presets
@@ -309,7 +309,7 @@ export default function InvoicePaymentFormView() {
             }
             if (inv.threeWayMatch?.invoiceQuantity) setInvoiceQuantity(String(inv.threeWayMatch.invoiceQuantity));
             setTdsPercentage(`${inv.tdsPercentage || 0}%`);
-            setAdvanceAdjust(inv.advanceAdjusted || '0');
+            setAdvanceAdjust(String(Math.max(0, Math.abs(Number(inv.advanceAdjusted || 0)))));
             setSendApprovalTo(inv.approvalTo || '');
 
             // Load existing attached documents in Edit Mode
@@ -1210,11 +1210,28 @@ export default function InvoicePaymentFormView() {
                 Advance Adjustment
               </label>
               <input
-                type="number"
-                step="0.01"
-                min="0"
+                type="text"
+                inputMode="decimal"
                 value={advanceAdjust}
-                onChange={(e) => setAdvanceAdjust(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === '-' || e.key === 'Minus' || e.code === 'Minus' || e.code === 'NumpadSubtract') {
+                    e.preventDefault();
+                  }
+                }}
+                onPaste={(e) => {
+                  e.preventDefault();
+                  const pasteData = e.clipboardData?.getData('text') || '';
+                  const clean = pasteData.replace(/[^0-9.]/g, '');
+                  const parts = clean.split('.');
+                  const sanitized = parts.length > 2 ? parts[0] + '.' + parts.slice(1).join('') : clean;
+                  setAdvanceAdjust(sanitized);
+                }}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/[^0-9.]/g, '');
+                  const parts = val.split('.');
+                  const sanitized = parts.length > 2 ? parts[0] + '.' + parts.slice(1).join('') : val;
+                  setAdvanceAdjust(sanitized);
+                }}
                 placeholder="0.00"
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#0d7676] focus:bg-white font-mono font-bold"
               />
