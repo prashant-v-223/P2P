@@ -21,7 +21,9 @@ export function CustomFileUpload({
   const [uploadCount, setUploadCount] = useState(0);
 
   const actualValue = value !== undefined ? value : files;
-  const isMultiple = multiple || maxFiles > 1 || Array.isArray(actualValue);
+  // `maxFiles` is only a limit; it must not turn a single-file control into a
+  // multi-file control. In particular, BL invoices expect one uploaded object.
+  const isMultiple = multiple || Array.isArray(actualValue);
   const filesArray = isMultiple ? (Array.isArray(actualValue) ? actualValue : []) : (actualValue ? [actualValue] : []);
 
   const processUpload = async (rawFiles) => {
@@ -67,12 +69,24 @@ export function CustomFileUpload({
       const uploadedResults = isMultiple ? data.files : [data];
       const processedFiles = fileList.map((file, index) => {
         const uploaded = uploadedResults[index];
-        if (!uploaded?.fileUrl) return file;
-        file.fileUrl = uploaded.fileUrl;
-        file.s3Key = uploaded.fileName;
-        file.uploaded = true;
-        return file;
+        if (!uploaded?.fileUrl) throw new Error(`${file.name} was not stored. Please upload it again.`);
+        
+        // Create a new object instead of modifying the File object (which is immutable)
+        return {
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          lastModified: file.lastModified,
+          fileUrl: uploaded.fileUrl,
+          s3Key: uploaded.fileName || uploaded.key,
+          fileName: uploaded.fileName || uploaded.key || file.name,
+          originalName: uploaded.originalName || file.name,
+          uploaded: true,
+          storage: uploaded.storage || 's3'
+        };
       });
+
+      console.log('[FileUpload] Processed files:', processedFiles);
 
       const finalVal = isMultiple
         ? [...existingFiles, ...processedFiles].filter((file, index, filesArr) => (

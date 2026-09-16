@@ -175,7 +175,10 @@ export default function PurchaseOrderDetailView() {
         poDate: formatDate(found.documentDate || found.createdAt),
         delivery: formatDate(found.deliveryDate),
         paymentTerms: found.paymentTerms || '—',
-        type: found.poType || found.type || ((found.poNumber || '').startsWith('60') ? 'Import' : 'Domestic'),
+        type: (String(found.poType || found.type || found.vendorType || '').toUpperCase() === 'IMPORT' ||
+          (found.poNumber || '').startsWith('43') ||
+          (found.poNumber || '').startsWith('60') ||
+          ['USD', 'EUR', 'GBP', 'CNY', 'AED', 'SGD', 'CAD', 'CHF', 'JPY'].includes(String(found.currency || '').toUpperCase())) ? 'IMPORT' : 'DOMESTIC',
         poValue: Number(summary.poValue ?? found.totalAmount) || 0,
         currency: found.currency || 'INR',
         paidAmount: Number(summary.paidAmount) || 0,
@@ -241,7 +244,7 @@ export default function PurchaseOrderDetailView() {
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-extrabold text-slate-900 tracking-tight font-mono">{po.poNumber}</h1>
             <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
-              po.type === 'Import' ? 'bg-rose-50 text-rose-600 border-rose-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+              po.type === 'IMPORT' || po.type === 'Import' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'
             }`}>
               {po.type}
             </span>

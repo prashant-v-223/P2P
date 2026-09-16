@@ -32,6 +32,9 @@ const purchaseOrderSchema = new mongoose.Schema({
     default: 'open', 
     index: true 
   },
+  poType: { type: String, enum: ['DOMESTIC', 'IMPORT'], index: true },
+  documentType: { type: String, index: true },
+  isSto: { type: Boolean, default: false, index: true },
   items: [poItemSchema],
   sapUpdatedAt: Date,
   sapPayload: { type: mongoose.Schema.Types.Mixed, select: false },

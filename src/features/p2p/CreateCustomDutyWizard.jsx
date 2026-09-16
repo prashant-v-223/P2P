@@ -122,7 +122,14 @@ export default function CreateCustomDutyWizard() {
           portCode: portCode.trim() || selectedBl?.portCode || 'INNHAV (Nhava Sheva)',
           customAgentName: selectedBl?.vendorName || selectedBl?.customAgentName || 'Fast Forward Logistics India Privat',
           remarks,
-          documents: files.map(f => ({ name: f.name, size: f.size, storage: 's3' }))
+          documents: files.map(f => ({ 
+            name: f.name || f.fileName, 
+            fileName: f.name || f.fileName,
+            fileUrl: f.fileUrl || f.s3Key,
+            filePath: f.fileUrl || f.s3Key,
+            size: f.size, 
+            storage: f.storage || 's3' 
+          }))
         })
       });
 

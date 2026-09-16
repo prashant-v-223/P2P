@@ -3,11 +3,12 @@ import { useSelector } from 'react-redux';
 import {
   Network, List, Search, Loader2, RefreshCw, ChevronDown, ChevronRight,
   ShieldCheck, AlertCircle, Receipt, Building2, Clock, Calendar, Filter,
-  ArrowUpRight, FileText, CheckCircle2, DollarSign, Wallet
+  ArrowUpRight, FileText, CheckCircle2, DollarSign, Wallet, Download, ArrowUpDown, ArrowUp, ArrowDown
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../ui/toast';
 import { isFinanceRole } from '../../lib/permissions';
+import { exportUpcomingPaymentsCsv } from '../../utils/exportCsv';
 
 
 function TreeNode({ node, level = 0 }) {
@@ -119,7 +120,18 @@ export default function HierarchicalReportView() {
   const [selectedTypeFilter, setSelectedTypeFilter] = useState('All');
   const [selectedUrgencyFilter, setSelectedUrgencyFilter] = useState('upcoming');
   const [selectedUserRecords, setSelectedUserRecords] = useState(null);
+  const [sortBy, setSortBy] = useState('dueDate');
+  const [sortDirection, setSortDirection] = useState('asc');
   const { showToast } = useToast();
+
+  const handleSort = (key) => {
+    if (sortBy === key) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(key);
+      setSortDirection('asc');
+    }
+  };
 
   const loadReportData = async (isRefresh = false) => {
     isRefresh ? setRefreshing(true) : setLoading(true);
@@ -185,6 +197,31 @@ export default function HierarchicalReportView() {
       ? true
       : item.urgency === selectedUrgencyFilter;
     return matchSearch && matchType && matchUrgency;
+  }).sort((a, b) => {
+    let aVal = a[sortBy];
+    let bVal = b[sortBy];
+
+    if (sortBy === 'dueDate') {
+      aVal = a.dueDate ? new Date(a.dueDate).getTime() : (sortDirection === 'asc' ? Infinity : -Infinity);
+      bVal = b.dueDate ? new Date(b.dueDate).getTime() : (sortDirection === 'asc' ? Infinity : -Infinity);
+    } else if (sortBy === 'urgency') {
+      const urgencyRank = { overdue: 1, today: 2, urgent: 3, upcoming: 4 };
+      aVal = urgencyRank[a.urgency] || 5;
+      bVal = urgencyRank[b.urgency] || 5;
+    } else if (sortBy === 'amountINR') {
+      aVal = Number(a.amountINR || a.netPayable || 0);
+      bVal = Number(b.amountINR || b.netPayable || 0);
+    } else if (sortBy === 'amount') {
+      aVal = Number(a.amount || 0);
+      bVal = Number(b.amount || 0);
+    } else {
+      aVal = String(aVal || '').toLowerCase();
+      bVal = String(bVal || '').toLowerCase();
+    }
+
+    if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+    if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+    return 0;
   });
 
   const overdueOrTodayCount = upcomingFinancePayments.filter(i => i.urgency === 'overdue' || i.urgency === 'today').length;
@@ -235,6 +272,22 @@ export default function HierarchicalReportView() {
           >
             <RefreshCw className={`h-3.5 w-3.5 text-[#0d7676] ${refreshing ? 'animate-spin' : ''}`} />
             <span>{refreshing ? 'Refreshing...' : 'Refresh'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (filteredUpcomingPayments.length === 0) {
+                showToast({ type: 'warning', title: 'Export Empty', description: 'No upcoming payments match current filters.' });
+              } else {
+                exportUpcomingPaymentsCsv(filteredUpcomingPayments);
+                showToast({ type: 'success', title: 'Export Successful', description: `Exported ${filteredUpcomingPayments.length} upcoming payments to CSV.` });
+              }
+            }}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-extrabold text-slate-700 hover:bg-slate-50 shadow-2xs transition active:scale-95 shrink-0"
+          >
+            <Download className="h-3.5 w-3.5 text-[#0d7676]" />
+            <span>Export CSV</span>
           </button>
         </div>
       </div>
@@ -302,13 +355,97 @@ export default function HierarchicalReportView() {
               <table className="w-full text-left text-xs border-collapse">
                 <thead className="sticky top-0 bg-slate-100/90 backdrop-blur-xs text-[10px] font-black uppercase tracking-wider text-slate-500 border-b border-slate-200 z-10">
                   <tr>
-                    <th className="px-4 py-3.5">Urgency & Due Date</th>
-                    <th className="px-4 py-3.5">Reference ID & Type</th>
-                    <th className="px-4 py-3.5">Vendor & SAP PO</th>
-                    <th className="px-4 py-3.5">Requested By</th>
-                    <th className="px-4 py-3.5 text-right">Amount (Original)</th>
-                    <th className="px-4 py-3.5 text-right">Amount (INR)</th>
-                    <th className="px-4 py-3.5 text-center">Finance Status</th>
+                    <th
+                      className="px-4 py-3.5 cursor-pointer select-none hover:text-slate-800 transition"
+                      onClick={() => handleSort('dueDate')}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Urgency & Due Date</span>
+                        {sortBy === 'dueDate' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-[#0d7676]" /> : <ArrowDown className="w-3 h-3 text-[#0d7676]" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 opacity-40" />
+                        )}
+                      </div>
+                    </th>
+                    <th
+                      className="px-4 py-3.5 cursor-pointer select-none hover:text-slate-800 transition"
+                      onClick={() => handleSort('id')}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Reference ID & Type</span>
+                        {sortBy === 'id' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-[#0d7676]" /> : <ArrowDown className="w-3 h-3 text-[#0d7676]" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 opacity-40" />
+                        )}
+                      </div>
+                    </th>
+                    <th
+                      className="px-4 py-3.5 cursor-pointer select-none hover:text-slate-800 transition"
+                      onClick={() => handleSort('vendorName')}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Vendor & SAP PO</span>
+                        {sortBy === 'vendorName' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-[#0d7676]" /> : <ArrowDown className="w-3 h-3 text-[#0d7676]" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 opacity-40" />
+                        )}
+                      </div>
+                    </th>
+                    <th
+                      className="px-4 py-3.5 cursor-pointer select-none hover:text-slate-800 transition"
+                      onClick={() => handleSort('requestedBy')}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span>Requested By</span>
+                        {sortBy === 'requestedBy' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-[#0d7676]" /> : <ArrowDown className="w-3 h-3 text-[#0d7676]" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 opacity-40" />
+                        )}
+                      </div>
+                    </th>
+                    <th
+                      className="px-4 py-3.5 text-right cursor-pointer select-none hover:text-slate-800 transition"
+                      onClick={() => handleSort('amount')}
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        <span>Amount (Original)</span>
+                        {sortBy === 'amount' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-[#0d7676]" /> : <ArrowDown className="w-3 h-3 text-[#0d7676]" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 opacity-40" />
+                        )}
+                      </div>
+                    </th>
+                    <th
+                      className="px-4 py-3.5 text-right cursor-pointer select-none hover:text-slate-800 transition"
+                      onClick={() => handleSort('amountINR')}
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        <span>Amount (INR)</span>
+                        {sortBy === 'amountINR' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-[#0d7676]" /> : <ArrowDown className="w-3 h-3 text-[#0d7676]" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 opacity-40" />
+                        )}
+                      </div>
+                    </th>
+                    <th
+                      className="px-4 py-3.5 text-center cursor-pointer select-none hover:text-slate-800 transition"
+                      onClick={() => handleSort('status')}
+                    >
+                      <div className="flex items-center justify-center gap-1">
+                        <span>Finance Status</span>
+                        {sortBy === 'status' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-[#0d7676]" /> : <ArrowDown className="w-3 h-3 text-[#0d7676]" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 opacity-40" />
+                        )}
+                      </div>
+                    </th>
                     <th className="px-4 py-3.5 text-center">Action</th>
                   </tr>
                 </thead>

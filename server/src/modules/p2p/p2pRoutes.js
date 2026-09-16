@@ -452,7 +452,7 @@ function buildWorkflowResult(wf, rawSteps) {
 
 // ─── APPROVAL RECORD CREATION ──────────────────────────────────────────────
 
-async function createApprovalRecord({ referenceId, type, vendorName, amountFormatted, poRef, requestedBy, requestedById, requestId, transactionSnapshot = {}, wf }) {
+async function createApprovalRecord({ referenceId, type, vendorName, amountFormatted, poRef, requestedBy, requestedById, requestId, transactionSnapshot = {}, wf, skipAuditLog = false }) {
   // Get requester with full details
   const requester = requestedById ? await User.findOne({
     $or: [
@@ -635,29 +635,33 @@ async function createApprovalRecord({ referenceId, type, vendorName, amountForma
   });
 
   // Create audit log
-  await WorkflowAudit.record({
-    eventId: `wa-${crypto.randomUUID()}`,
-    eventType: 'APPROVAL_SUBMITTED',
-    actorId: requester?.id || requestedById || 'system',
-    actorName: requester?.name || requestedBy,
-    entityType: type,
-    entityId: referenceId,
-    workflowId: safeWf?.workflowId || safeWf?.id,
-    workflowVersion: safeWf?.workflowVersion || 1,
-    step: 1,
-    action: 'submit',
-    previousState: { status: 'draft' },
-    newState: {
-      status: initialStatus,
-      currentStep: 1,
-      assignedApprover: firstStep?.assignedApproverName
-    },
-    requestId,
-    metadata: {
-      hasConflict,
-      assignedTo: firstStep?.assignedApproverName
-    }
-  });
+  if (!skipAuditLog) {
+    await WorkflowAudit.record({
+      eventId: `wa-${crypto.randomUUID()}`,
+      eventType: 'APPROVAL_SUBMITTED',
+      actorId: requester?.id || requestedById || 'system',
+      actorName: requester?.name || requestedBy,
+      actorRole: requester?.role || 'Requester',
+      entityType: type,
+      entityId: referenceId,
+      workflowId: safeWf?.workflowId || safeWf?.id,
+      workflowVersion: safeWf?.workflowVersion || 1,
+      step: 1,
+      action: 'submit',
+      previousState: { status: 'draft' },
+      newState: {
+        status: initialStatus,
+        currentStep: 1,
+        assignedApprover: firstStep?.assignedApproverName
+      },
+      reason: `${type} submitted for approval.`,
+      requestId,
+      metadata: {
+        hasConflict,
+        assignedTo: firstStep?.assignedApproverName
+      }
+    });
+  }
 
   // Send notifications to all potential approvers (for admin requests)
   const allApprovers = finalSteps
@@ -784,29 +788,40 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
     const sortBy = poSortFields.has(req.query.sortBy) ? req.query.sortBy : 'createdAt';
     const sortDirection = req.query.sortOrder === 'asc' ? 1 : -1;
 
-    const filter = { isDeleted: { $ne: true } };
+    const isExport = req.query.export === 'true';
+    const filter = { isDeleted: { $ne: true }, isSto: { $ne: true } };
+
+    // Filter by poType (DOMESTIC or IMPORT only)
+    if (typeFilter.toLowerCase() === 'import') {
+      filter.poType = 'IMPORT';
+    } else if (typeFilter.toLowerCase() === 'domestic') {
+      filter.poType = 'DOMESTIC';
+    } else {
+      filter.poType = { $in: ['DOMESTIC', 'IMPORT'] };
+    }
 
     if (req.user?.role === 'Vendor') {
       const vendorCode = String(req.user.sapVendorCode || '');
       const vendorName = String(req.user.companyName || '');
-      filter.$and = [{
+      filter.$and = filter.$and || [];
+      filter.$and.push({
         $or: [
           ...(vendorCode ? [{ supplierId: new RegExp(`^${escapeRegex(vendorCode)}$`, 'i') }] : []),
           ...(vendorName ? [{ supplierName: new RegExp(`^${escapeRegex(vendorName)}$`, 'i') }] : [])
         ]
-      }];
+      });
     }
 
     // Build search filter
-    let searchFilter = {};
     if (search) {
       const regex = new RegExp(escapeRegex(search), 'i');
-      searchFilter = {
+      filter.$and = filter.$and || [];
+      filter.$and.push({
         $or: [
           { poNumber: regex }, { sapPoNumber: regex },
           { supplierName: regex }, { supplierId: regex }
         ]
-      };
+      });
     }
 
     // Build status filter
@@ -814,35 +829,17 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
       filter.status = statusFilter.toLowerCase();
     }
 
-    // Build type filter (fixed: preserve search filter)
-    let typeCondition = {};
-    if (typeFilter && typeFilter !== 'All Types' && typeFilter !== 'All') {
-      if (typeFilter === 'Import') {
-        typeCondition = {
-          $or: [{ poNumber: /^PO-43/i }, { poNumber: /^60/ }, { sapPoNumber: /^43/ }, { sapPoNumber: /^60/ }]
-        };
-      } else if (typeFilter === 'Domestic') {
-        typeCondition = {
-          $or: [{ poNumber: /^PO-41/i }, { poNumber: /^42/ }, { sapPoNumber: /^41/ }, { sapPoNumber: /^42/ }]
-        };
-      }
-    }
-
-    // Combine filters properly
-    if (Object.keys(searchFilter).length > 0 && Object.keys(typeCondition).length > 0) {
-      filter.$and = filter.$and || [];
-      filter.$and.push(searchFilter, typeCondition);
-    } else if (Object.keys(searchFilter).length > 0) {
-      filter.$or = searchFilter.$or;
-    } else if (Object.keys(typeCondition).length > 0) {
-      filter.$or = typeCondition.$or;
-    }
-
     const total = await PurchaseOrder.countDocuments(filter);
     const totalPages = Math.max(1, Math.ceil(total / size));
     const safePage = Math.min(page, totalPages);
-    const pos = await PurchaseOrder.find(filter)
-      .sort({ [sortBy]: sortDirection, _id: sortDirection }).skip((safePage - 1) * size).limit(size).lean();
+    
+    let query = PurchaseOrder.find(filter).sort({ [sortBy]: sortDirection, _id: sortDirection });
+    if (!isExport) {
+      query = query.skip((safePage - 1) * size).limit(size);
+    } else {
+      query = query.limit(10000);
+    }
+    const pos = await query.lean();
 
     const poRefs = pos.flatMap((po) => [po.poNumber, po.sapPoNumber]).filter(Boolean);
     const vendorKeys = pos.flatMap((po) => [po.supplierId, po.supplierName]).filter(Boolean);
@@ -903,11 +900,15 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
         sameValue(item.supplierId, po.supplierId) ||
         sameValue(item.companyName, po.supplierName)
       );
+      const resolvedPoType = po.poType || (['USD', 'EUR', 'GBP', 'CNY', 'AED', 'SGD', 'CAD', 'CHF', 'JPY'].includes(String(po.currency).toUpperCase()) || (po.poNumber || '').startsWith('43') || (po.poNumber || '').startsWith('60') ? 'IMPORT' : 'DOMESTIC');
       return {
         ...po,
+        poType: resolvedPoType,
+        type: resolvedPoType,
+        currency: po.currency || 'INR',
         paymentTerms: po.paymentTerms || vendor?.paymentTerms || (vendor?.creditDays ? `${vendor.creditDays} Days` : ''),
         creditDays: po.creditDays || vendor?.creditDays,
-        vendorType: vendor?.vendorType || '',
+        vendorType: resolvedPoType,
         vendorGstin: vendor?.gstin || '',
         vendorPan: vendor?.pan || '',
         invoicedAmount,
@@ -969,10 +970,15 @@ router.get('/purchase-orders/:id', authenticateToken, async (req, res) => {
     const inProgressAmount = enrichedAdvances.filter(isInProgress).reduce((s, r) => s + advanceValue(r), 0)
       + enrichedInvoices.filter(isInProgress).reduce((s, r) => s + invoiceValue(r), 0);
     const poValue = Number(po.totalAmount) || 0;
+    const resolvedPoType = po.poType || (['USD', 'EUR', 'GBP', 'CNY', 'AED', 'SGD', 'CAD', 'CHF', 'JPY'].includes(String(po.currency).toUpperCase()) || (po.poNumber || '').startsWith('43') || (po.poNumber || '').startsWith('60') ? 'IMPORT' : 'DOMESTIC');
 
     res.json({
       success: true, data: {
         ...po,
+        poType: resolvedPoType,
+        type: resolvedPoType,
+        currency: po.currency || 'INR',
+        vendorType: resolvedPoType,
         paymentTerms: po.paymentTerms || vendor?.paymentTerms || (vendor?.creditDays ? `${vendor.creditDays} Days` : 'Net 30'),
         creditDays: po.creditDays || vendor?.creditDays,
         vendorGstin: vendor?.gstin || '',
@@ -1274,16 +1280,16 @@ const getAdvancesHandler = async (req, res) => {
     // any descendant in their reporting tree.
     const linkedVendors = !canSeeAllAdvances
       ? await Vendor.find({
-          isDeleted: { $ne: true },
-          $or: [
-            { userId: { $in: allowedUserIds } },
-            { assignedPurchaseManagerId: { $in: allowedUserIds } },
-            { assignedPurchaseManager: { $in: allowedUserNames } },
-            { buyerId: { $in: allowedUserIds } },
-            { buyerName: { $in: allowedUserNames } },
-            { createdBy: { $in: [...allowedUserIds, ...allowedUserNames] } }
-          ]
-        }).select('id vendorId supplierId sapVendorCode companyName').lean().catch(() => [])
+        isDeleted: { $ne: true },
+        $or: [
+          { userId: { $in: allowedUserIds } },
+          { assignedPurchaseManagerId: { $in: allowedUserIds } },
+          { assignedPurchaseManager: { $in: allowedUserNames } },
+          { buyerId: { $in: allowedUserIds } },
+          { buyerName: { $in: allowedUserNames } },
+          { createdBy: { $in: [...allowedUserIds, ...allowedUserNames] } }
+        ]
+      }).select('id vendorId supplierId sapVendorCode companyName').lean().catch(() => [])
       : [];
     const linkedVendorRefs = [...new Set(linkedVendors
       .flatMap((vendor) => [vendor.id, vendor.vendorId, vendor.supplierId, vendor.sapVendorCode, vendor.companyName])
@@ -1398,7 +1404,7 @@ const getAdvancesHandler = async (req, res) => {
             const steps = typeof app.workflowSteps === 'string' ? JSON.parse(app.workflowSteps) : app.workflowSteps;
             const active = steps.find(s => Number(s.step || s.stepNumber) === Number(step));
             if (active) derivedRole = active.roleKey || active.assignedApproverRole || active.roleName || active.title;
-          } catch (_) {}
+          } catch (_) { }
         }
         if (!derivedRole || derivedRole === 'procurement' || derivedRole === 'procurement_manager') {
           derivedRole = step === 1 ? 'purchase_manager' : derivedRole;
@@ -1877,7 +1883,7 @@ router.get('/reports/hierarchy', authenticateToken, authorizePermission('reports
                 assignedRole = activeStepObj.assignedApproverRole || activeStepObj.roleName || activeStepObj.roleKey;
               }
             }
-          } catch (_) {}
+          } catch (_) { }
         }
       }
       if (!assignedRole) {
@@ -2160,7 +2166,7 @@ const updateAdvanceHandler = async (req, res) => {
   try {
     const adv = await AdvancePayment.findOne(buildAdvanceFilter(req.params.id));
     if (!adv) return res.status(404).json({ success: false, error: 'Advance payment not found' });
-    
+
     const statusLower = String(adv.status || '').toLowerCase();
     if (!['draft', 'returned', 'rejected'].includes(statusLower)) {
       return res.status(409).json({ success: false, error: 'Only draft, returned, or rejected advance payments can be edited.' });
@@ -2211,7 +2217,7 @@ const updateAdvanceHandler = async (req, res) => {
     const wf = await resolveWorkflowFromDB('Advance Payment', amountINR, { currency: poCurrency, vendorType: req.user?.vendorType, poType: '' });
 
     // Delete existing approval record for this advance if present before creating new one
-    await Approval.deleteOne({ id: adv.advanceId }).catch(() => {});
+    await Approval.deleteOne({ id: adv.advanceId }).catch(() => { });
 
     const approval = await createApprovalRecord({
       referenceId: adv.advanceId,
@@ -2839,51 +2845,51 @@ router.get('/invoices/check-unique', authenticateToken, async (req, res) => {
   }
 });
 
-  async function getNextGlobalAsnNumber() {
-    const year = new Date().getFullYear();
-    const regex = new RegExp(`^ASN-${year}-(\\d+)$`, 'i');
+async function getNextGlobalAsnNumber() {
+  const year = new Date().getFullYear();
+  const regex = new RegExp(`^ASN-${year}-(\\d+)$`, 'i');
 
-    const [invoices, blEntries] = await Promise.all([
-      InvoicePayment.find({ asnNumber: regex }).select('asnNumber').lean().catch(() => []),
-      RfqBlEntry.find({ $or: [{ asnNumber: regex }, { autoAsnNumber: regex }] }).select('asnNumber autoAsnNumber').lean().catch(() => [])
-    ]);
+  const [invoices, blEntries] = await Promise.all([
+    InvoicePayment.find({ asnNumber: regex }).select('asnNumber').lean().catch(() => []),
+    RfqBlEntry.find({ $or: [{ asnNumber: regex }, { autoAsnNumber: regex }] }).select('asnNumber autoAsnNumber').lean().catch(() => [])
+  ]);
 
-    let maxNum = 0;
-    for (const inv of invoices) {
-      if (inv.asnNumber) {
-        const match = String(inv.asnNumber).match(regex);
-        if (match) {
-          const val = parseInt(match[1], 10);
-          if (!isNaN(val) && val < 10000 && val > maxNum) maxNum = val;
-        }
-      }
-    }
-
-    for (const bl of blEntries) {
-      const num1 = bl.asnNumber ? String(bl.asnNumber).match(regex) : null;
-      if (num1) {
-        const val = parseInt(num1[1], 10);
-        if (!isNaN(val) && val < 10000 && val > maxNum) maxNum = val;
-      }
-      const num2 = bl.autoAsnNumber ? String(bl.autoAsnNumber).match(regex) : null;
-      if (num2) {
-        const val = parseInt(num2[1], 10);
+  let maxNum = 0;
+  for (const inv of invoices) {
+    if (inv.asnNumber) {
+      const match = String(inv.asnNumber).match(regex);
+      if (match) {
+        const val = parseInt(match[1], 10);
         if (!isNaN(val) && val < 10000 && val > maxNum) maxNum = val;
       }
     }
-
-    const next = maxNum + 1;
-    return `ASN-${year}-${String(next).padStart(4, '0')}`;
   }
 
-  router.get('/invoices/next-asn', authenticateToken, async (req, res) => {
-    try {
-      const asnNumber = await getNextGlobalAsnNumber();
-      return res.json({ success: true, data: { asnNumber } });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+  for (const bl of blEntries) {
+    const num1 = bl.asnNumber ? String(bl.asnNumber).match(regex) : null;
+    if (num1) {
+      const val = parseInt(num1[1], 10);
+      if (!isNaN(val) && val < 10000 && val > maxNum) maxNum = val;
     }
-  });
+    const num2 = bl.autoAsnNumber ? String(bl.autoAsnNumber).match(regex) : null;
+    if (num2) {
+      const val = parseInt(num2[1], 10);
+      if (!isNaN(val) && val < 10000 && val > maxNum) maxNum = val;
+    }
+  }
+
+  const next = maxNum + 1;
+  return `ASN-${year}-${String(next).padStart(4, '0')}`;
+}
+
+router.get('/invoices/next-asn', authenticateToken, async (req, res) => {
+  try {
+    const asnNumber = await getNextGlobalAsnNumber();
+    return res.json({ success: true, data: { asnNumber } });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 const parseFlexibleDate = (val) => {
   if (!val) return undefined;
@@ -2921,3230 +2927,3468 @@ router.get('/invoices/:id', authenticateToken, async (req, res) => {
 });
 
 router.post('/invoices/create', authenticateToken, async (req, res) => {
-    try {
-      const {
-        poNumber, invoiceNumber, grossAmount, gstAmount, tdsAmount, tdsPercentage,
-        advanceAdjusted, advanceIdAdjusted, poQuantity, grnQuantity, invoiceQuantity,
-        grnNumber, remarks, approvalTo, requestedBy, vendorId, vendorName, asnNumber: requestedAsnNumber,
-        invoiceDate, paymentDueDate, currency, supportingDocuments, blDate, blNumber,
-        boeDate, boeNumber
-      } = req.body;
+  try {
+    const {
+      poNumber, invoiceNumber, grossAmount, gstAmount, tdsAmount, tdsPercentage,
+      advanceAdjusted, advanceIdAdjusted, poQuantity, grnQuantity, invoiceQuantity,
+      grnNumber, remarks, approvalTo, requestedBy, vendorId, vendorName, asnNumber: requestedAsnNumber,
+      invoiceDate, paymentDueDate, currency, supportingDocuments, blDate, blNumber,
+      boeDate, boeNumber
+    } = req.body;
 
-      if (!poNumber) return res.status(400).json({ success: false, error: 'Purchase Order is required.' });
-      if (invoiceDate && Date.parse(invoiceDate) > Date.now()) {
-        return res.status(400).json({ success: false, error: 'Invoice date cannot be in the future.' });
-      }
-      const po = await PurchaseOrder.findOne({ $or: [{ poNumber }, { sapPoNumber: poNumber }] }).lean();
-      if (!po) return res.status(404).json({ success: false, error: 'Purchase Order not found.' });
-      if (!validateOpenPo(po)) {
-        return res.status(400).json({ success: false, error: `Invoices are not allowed for a ${po.status} Purchase Order.` });
-      }
-      if (!(await validateVendorOwnsPo(req, po))) {
-        return res.status(403).json({ success: false, error: 'This Purchase Order does not belong to the signed-in vendor.' });
-      }
+    if (!poNumber) return res.status(400).json({ success: false, error: 'Purchase Order is required.' });
+    if (invoiceDate && Date.parse(invoiceDate) > Date.now()) {
+      return res.status(400).json({ success: false, error: 'Invoice date cannot be in the future.' });
+    }
+    const po = await PurchaseOrder.findOne({ $or: [{ poNumber }, { sapPoNumber: poNumber }] }).lean();
+    if (!po) return res.status(404).json({ success: false, error: 'Purchase Order not found.' });
+    if (!validateOpenPo(po)) {
+      return res.status(400).json({ success: false, error: `Invoices are not allowed for a ${po.status} Purchase Order.` });
+    }
+    if (!(await validateVendorOwnsPo(req, po))) {
+      return res.status(403).json({ success: false, error: 'This Purchase Order does not belong to the signed-in vendor.' });
+    }
 
-      const poCurrency = String(po.currency || 'INR').toUpperCase();
-      const requestCurrency = String(currency || poCurrency).toUpperCase();
-      if (requestCurrency !== poCurrency) {
-        return res.status(400).json({ success: false, error: `Invoice currency must match the Purchase Order (${poCurrency}). Convert the invoice before submitting.` });
-      }
+    const poCurrency = String(po.currency || 'INR').toUpperCase();
+    const requestCurrency = String(currency || poCurrency).toUpperCase();
+    if (requestCurrency !== poCurrency) {
+      return res.status(400).json({ success: false, error: `Invoice currency must match the Purchase Order (${poCurrency}). Convert the invoice before submitting.` });
+    }
 
-      const vendorNameFinal = req.user?.role === 'Vendor' ? (req.user.companyName || po.supplierName) : (vendorName || requestedBy || po.supplierName || 'Vendor');
-      const vendorIdFinal = req.user?.role === 'Vendor' ? (req.user.sapVendorCode || po.supplierId) : (vendorId || po.supplierId || 'VEND-00000');
-      const poRef = po?.sapPoNumber || poNumber || '4300001510';
+    const vendorNameFinal = req.user?.role === 'Vendor' ? (req.user.companyName || po.supplierName) : (vendorName || requestedBy || po.supplierName || 'Vendor');
+    const vendorIdFinal = req.user?.role === 'Vendor' ? (req.user.sapVendorCode || po.supplierId) : (vendorId || po.supplierId || 'VEND-00000');
+    const poRef = po?.sapPoNumber || poNumber || '4300001510';
 
-      const numGross = Number(grossAmount) || 0;
-      const numCgst = Number(req.body.cgstAmount) || 0;
-      const numSgst = Number(req.body.sgstAmount) || 0;
-      const numIgst = Number(req.body.igstAmount) || 0;
-      const numGst = Number(gstAmount) || (numCgst + numSgst + numIgst) || 0;
-      const tdsRate = Math.max(0, Math.min(100, Math.abs(Number.parseFloat(tdsPercentage) || 0)));
-      const numTds = Math.max(0, Math.abs(tdsAmount == null ? (numGross * tdsRate / 100) : (Number(tdsAmount) || 0)));
-      const numAdv = Math.max(0, Math.abs(Number(advanceAdjusted) || 0));
-      if (numGross <= 0) return res.status(400).json({ success: false, error: 'Invoice amount must be greater than zero.' });
-      if ([numGst, numCgst, numSgst, numIgst].some((value) => value < 0)) {
-        return res.status(400).json({ success: false, error: 'GST cannot be negative.' });
-      }
+    const numGross = Number(grossAmount) || 0;
+    const numCgst = Number(req.body.cgstAmount) || 0;
+    const numSgst = Number(req.body.sgstAmount) || 0;
+    const numIgst = Number(req.body.igstAmount) || 0;
+    const numGst = Number(gstAmount) || (numCgst + numSgst + numIgst) || 0;
+    const tdsRate = Math.max(0, Math.min(100, Math.abs(Number.parseFloat(tdsPercentage) || 0)));
+    const numTds = Math.max(0, Math.abs(tdsAmount == null ? (numGross * tdsRate / 100) : (Number(tdsAmount) || 0)));
+    const numAdv = Math.max(0, Math.abs(Number(advanceAdjusted) || 0));
+    if (numGross <= 0) return res.status(400).json({ success: false, error: 'Invoice amount must be greater than zero.' });
+    if ([numGst, numCgst, numSgst, numIgst].some((value) => value < 0)) {
+      return res.status(400).json({ success: false, error: 'GST cannot be negative.' });
+    }
 
-      const poRefs = [po.poNumber, po.sapPoNumber].filter(Boolean);
-      const priorInvoices = await InvoicePayment.aggregate([
-        { $match: { $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }], status: { $in: activePaymentStatuses } } },
-        { $group: { _id: null, amount: { $sum: '$grossAmount' }, quantity: { $sum: '$threeWayMatch.invoiceQuantity' }, advanceAdjusted: { $sum: '$advanceAdjusted' } } }
+    const poRefs = [po.poNumber, po.sapPoNumber].filter(Boolean);
+    const priorInvoices = await InvoicePayment.aggregate([
+      { $match: { $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }], status: { $in: activePaymentStatuses } } },
+      { $group: { _id: null, amount: { $sum: '$grossAmount' }, quantity: { $sum: '$threeWayMatch.invoiceQuantity' }, advanceAdjusted: { $sum: '$advanceAdjusted' } } }
+    ]);
+    const committedInvoiceAmount = Number(priorInvoices[0]?.amount) || 0;
+    const remainingInvoiceAmount = Math.max(0, Number(po.totalAmount) - committedInvoiceAmount);
+    if (numGross > remainingInvoiceAmount) {
+      return res.status(400).json({
+        success: false,
+        error: `Invoice amount exceeds the remaining PO balance. Available: ${poCurrency} ${remainingInvoiceAmount.toLocaleString('en-IN')}.`
+      });
+    }
+
+    const poQty = getPoQuantity(po);
+    const invQty = invoiceQuantity ? Number(invoiceQuantity) : 0;
+    if (!Number.isFinite(invQty) || invQty < 0) {
+      return res.status(400).json({ success: false, error: 'Invoice quantity must be a valid number.' });
+    }
+    if (poQty > 0 && invQty <= 0) {
+      return res.status(400).json({ success: false, error: 'Invoice quantity is required and must be greater than zero.' });
+    }
+    const committedQuantity = Number(priorInvoices[0]?.quantity) || 0;
+    const remainingQuantity = Math.max(0, poQty - committedQuantity);
+    if (poQty > 0 && invQty > remainingQuantity) {
+      return res.status(400).json({ success: false, error: `Invoice quantity exceeds the remaining PO quantity. Available: ${remainingQuantity}.` });
+    }
+
+    if (numAdv > 0) {
+      const availableAdvances = await AdvancePayment.aggregate([
+        { $match: { $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }], status: { $in: ['approved', 'paid'] } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
       ]);
-      const committedInvoiceAmount = Number(priorInvoices[0]?.amount) || 0;
-      const remainingInvoiceAmount = Math.max(0, Number(po.totalAmount) - committedInvoiceAmount);
-      if (numGross > remainingInvoiceAmount) {
+      const totalAdvances = Number(availableAdvances[0]?.total) || 0;
+      const priorAdvanceAdjusted = Number(priorInvoices[0]?.advanceAdjusted) || 0;
+      const availableAdvanceAdjust = Math.max(0, totalAdvances - priorAdvanceAdjusted);
+      if (numAdv > availableAdvanceAdjust) {
         return res.status(400).json({
           success: false,
-          error: `Invoice amount exceeds the remaining PO balance. Available: ${poCurrency} ${remainingInvoiceAmount.toLocaleString('en-IN')}.`
+          error: `Advance adjustment (${numAdv}) exceeds available approved advance balance (${availableAdvanceAdjust}).`
         });
       }
-
-      const poQty = getPoQuantity(po);
-      const invQty = invoiceQuantity ? Number(invoiceQuantity) : 0;
-      if (!Number.isFinite(invQty) || invQty < 0) {
-        return res.status(400).json({ success: false, error: 'Invoice quantity must be a valid number.' });
-      }
-      if (poQty > 0 && invQty <= 0) {
-        return res.status(400).json({ success: false, error: 'Invoice quantity is required and must be greater than zero.' });
-      }
-      const committedQuantity = Number(priorInvoices[0]?.quantity) || 0;
-      const remainingQuantity = Math.max(0, poQty - committedQuantity);
-      if (poQty > 0 && invQty > remainingQuantity) {
-        return res.status(400).json({ success: false, error: `Invoice quantity exceeds the remaining PO quantity. Available: ${remainingQuantity}.` });
-      }
-
-      if (numAdv > 0) {
-        const availableAdvances = await AdvancePayment.aggregate([
-          { $match: { $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }], status: { $in: ['approved', 'paid'] } } },
-          { $group: { _id: null, total: { $sum: '$amount' } } }
-        ]);
-        const totalAdvances = Number(availableAdvances[0]?.total) || 0;
-        const priorAdvanceAdjusted = Number(priorInvoices[0]?.advanceAdjusted) || 0;
-        const availableAdvanceAdjust = Math.max(0, totalAdvances - priorAdvanceAdjusted);
-        if (numAdv > availableAdvanceAdjust) {
-          return res.status(400).json({
-            success: false,
-            error: `Advance adjustment (${numAdv}) exceeds available approved advance balance (${availableAdvanceAdjust}).`
-          });
-        }
-      }
-      const netPayable = Math.max(0, numGross + numGst - numTds - numAdv);
-
-      const finalInvoiceNumber = String(invoiceNumber || '').trim();
-      if (!finalInvoiceNumber) {
-        return res.status(400).json({ success: false, error: 'Vendor Invoice Number is required.' });
-      }
-      if (!/^[A-Za-z0-9][A-Za-z0-9/_-]{2,49}$/.test(finalInvoiceNumber)) {
-        return res.status(400).json({ success: false, error: 'Invoice Number must be 3–50 characters and may contain letters, numbers, /, _ and - only.' });
-      }
-      const existingInv = await InvoicePayment.findOne({ invoiceNumber: finalInvoiceNumber, vendorId: vendorIdFinal });
-      if (existingInv) {
-        return res.status(409).json({ success: false, error: 'This Invoice Number already exists for the vendor.' });
-      }
-
-      const invPaymentId = 'INV-PAY-' + Date.now().toString().slice(-6);
-
-      const vendor = await Vendor.findOne({
-        $or: [
-          { id: vendorIdFinal },
-          { sapVendorCode: vendorIdFinal },
-          { supplierId: vendorIdFinal }
-        ]
-      }).lean();
-
-      const isImportVendor = String(vendor?.vendorType || '').toLowerCase().includes('import');
-      let asnNumber = '';
-      if (isImportVendor) {
-        if (requestedAsnNumber && String(requestedAsnNumber).trim()) {
-          asnNumber = String(requestedAsnNumber).trim();
-        } else {
-          asnNumber = await getNextGlobalAsnNumber();
-        }
-      }
-
-      const normalizedSupportingDocuments = Array.isArray(supportingDocuments) ? supportingDocuments : [];
-      if (req.user?.role === 'Vendor' && normalizedSupportingDocuments.length === 0) {
-        return res.status(400).json({ success: false, error: 'At least one invoice supporting document is required.' });
-      }
-      if (normalizedSupportingDocuments.length > 10) {
-        return res.status(400).json({ success: false, error: 'A maximum of 10 supporting documents can be uploaded.' });
-      }
-      const allowedSupportingTypes = new Set(['application/pdf', 'image/jpeg', 'image/png']);
-      if (normalizedSupportingDocuments.some((document) => !document?.fileUrl || !document?.fileName)) {
-        return res.status(400).json({ success: false, error: 'Every supporting document must have a valid uploaded file.' });
-      }
-      if (normalizedSupportingDocuments.some((document) => document.mimeType && !allowedSupportingTypes.has(String(document.mimeType)))) {
-        return res.status(400).json({ success: false, error: 'Every supporting document must be a PDF, JPG, or PNG file.' });
-      }
-      if (normalizedSupportingDocuments.some((document) => Number(document.size) > 25 * 1024 * 1024)) {
-        return res.status(400).json({ success: false, error: 'Each supporting document must not exceed 25 MB.' });
-      }
-
-      const grnQty = grnQuantity && Number(grnQuantity) > 0 ? Number(grnQuantity) : (invQty > 0 ? invQty : poQty);
-      const isMatched = (poQty === grnQty) && (grnQty === invQty);
-
-      const newInvoice = await InvoicePayment.create({
-        invoicePaymentId: invPaymentId,
-        poId: po?.poNumber || poNumber || 'PO-4300001510',
-        sapPoNumber: poRef,
-        vendorId: vendorIdFinal,
-        vendorName: vendorNameFinal,
-        invoiceNumber: finalInvoiceNumber,
-        asnNumber: asnNumber,
-        blNumber: blNumber ? String(blNumber).trim() : '',
-        blDate: parseFlexibleDate(blDate),
-        boeNumber: boeNumber ? String(boeNumber).trim() : '',
-        boeDate: parseFlexibleDate(boeDate),
-        supportingDocuments: normalizedSupportingDocuments.map((document) => ({
-          fileName: String(document.fileName),
-          originalName: String(document.originalName || document.fileName),
-          fileUrl: String(document.fileUrl),
-          size: Number(document.size) || 0,
-          mimeType: String(document.mimeType || '')
-        })),
-        invoiceDate: invoiceDate && !Number.isNaN(Date.parse(invoiceDate)) ? new Date(invoiceDate) : new Date(),
-        paymentDueDate: (() => {
-          const rawDue = paymentDueDate || req.body.dueDate;
-          if (rawDue && !Number.isNaN(Date.parse(rawDue))) return new Date(rawDue);
-          const baseDate = parseFlexibleDate(blDate) || parseFlexibleDate(invoiceDate) || new Date();
-          const days = Number(req.body.dueDays) || 45;
-          const d = new Date(baseDate);
-          d.setDate(d.getDate() + days);
-          return d;
-        })(),
-        grossAmount: numGross,
-        currency: poCurrency,
-        invoiceType: req.body.invoiceType || (numGst > 0 ? 'With GST' : 'Without GST'),
-        gstSubtype: req.body.gstSubtype || (numIgst > 0 ? 'inter' : 'intra'),
-        cgstAmount: numCgst,
-        sgstAmount: numSgst,
-        igstAmount: numIgst,
-        gstAmount: numGst,
-        tdsAmount: numTds,
-        tdsPercentage: tdsRate,
-        advanceAdjusted: numAdv,
-        advanceIdAdjusted: advanceIdAdjusted || '',
-        grnNumber: grnNumber || '',
-        remarks: remarks || '',
-        approvalTo: approvalTo || '',
-        netPayable,
-        threeWayMatch: {
-          status: isMatched ? 'matched' : 'mismatch',
-          poQuantity: poQty,
-          grnQuantity: grnQty,
-          invoiceQuantity: invQty,
-          varianceAmount: isMatched ? 0 : Math.max(0, Math.abs((Number.isFinite(invQty) ? invQty : 0) - (Number.isFinite(grnQty) ? grnQty : 0))),
-          matchedAt: new Date()
-        },
-        status: 'pending',
-        createdBy: req.user?.name || req.user?.email || 'System User',
-        createdByType: req.user?.role === 'Vendor' ? 'vendor' : 'user',
-        createdByVendorId: req.user?.role === 'Vendor' ? vendorIdFinal : '',
-        requestedById: req.user?.id || req.user?.email || 'system',
-        userId: req.user?.id || req.user?.email || 'system',
-        requestedBy: req.user?.name || requestedBy || 'Finance Team'
-      });
-
-      const { amountINR, fxRate, amountFormatted } = await getFxConversion(netPayable, poCurrency, req.body.fxRate);
-      newInvoice.fxRate = fxRate;
-      newInvoice.amountINR = amountINR;
-      await newInvoice.save();
-      const wf = await resolveWorkflowFromDB('Invoice Payment', amountINR, { currency: poCurrency, vendorType: vendor?.vendorType, poType: po.poType || po.type });
-
-      const approval = await createApprovalRecord({
-        referenceId: invPaymentId,
-        type: 'Invoice Payment',
-        vendorName: vendorNameFinal,
-        amountFormatted,
-        poRef,
-        requestedBy: req.user?.name || requestedBy || 'Finance Team',
-        requestedById: req.user?.id || req.user?.email,
-        requestId: req.headers['x-request-id'],
-        transactionSnapshot: {
-          netPayable, amountINR, grossAmount: numGross, currency: poCurrency, fxRate,
-          poId: poRef, vendorId: vendorIdFinal, invoiceNumber: finalInvoiceNumber,
-          createdByType: req.user?.role === 'Vendor' ? 'vendor' : 'user',
-          createdByVendorId: req.user?.role === 'Vendor' ? vendorIdFinal : '',
-          paymentDueDate: newInvoice.paymentDueDate
-        },
-        wf
-      });
-
-      newInvoice.approvalInstanceId = approval._id.toString();
-      newInvoice.requestedByTeam = approval.requestedByTeam || null;
-      newInvoice.assignedApprover = approval.assignedApprover || null;
-      newInvoice.assignedApproverName = approval.assignedApproverName || null;
-      newInvoice.assignedApproverRole = approval.assignedApproverRole || null;
-      await newInvoice.save();
-
-      if (numAdv > 0) {
-        let remainingAdjustment = numAdv;
-        const advancesToAdjust = await AdvancePayment.find({
-          $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }],
-          status: { $in: ['approved', 'paid', 'adjusted'] }
-        }).sort({ createdAt: 1 });
-        for (const advance of advancesToAdjust) {
-          if (remainingAdjustment <= 0) break;
-          const available = Math.max(0, Number(advance.amount) - Number(advance.adjustedAmount || 0));
-          const applied = Math.min(available, remainingAdjustment);
-          if (applied <= 0) continue;
-          advance.adjustedAmount = Number(advance.adjustedAmount || 0) + applied;
-          advance.adjustmentInvoiceId = invPaymentId;
-          remainingAdjustment -= applied;
-          await advance.save();
-        }
-      }
-
-      try {
-        await WorkflowAudit.record({
-          eventId: `wa-${crypto.randomUUID()}`,
-          eventType: 'INVOICE_SUBMITTED',
-          entityType: 'InvoicePayment',
-          entityId: invPaymentId,
-          referenceNumber: finalInvoiceNumber,
-          poReference: poRef,
-          action: 'submit',
-          actorId: req.user?.id || req.user?.email || 'system',
-          actorName: req.user?.name || req.user?.email || requestedBy || 'Finance Team',
-          actorRole: req.user?.role || 'Requester',
-          remarks: `Invoice Payment "${invPaymentId}" (${finalInvoiceNumber}) submitted for approval. Net Payable: ₹${netPayable.toLocaleString('en-IN')}`,
-          occurredAt: new Date()
-        });
-      } catch (_) { }
-
-      return res.json({ success: true, data: newInvoice, workflow: wf });
-    } catch (err) {
-      console.error('[Create Invoice]', err);
-      res.status(500).json({ success: false, error: err.message });
     }
-  });
+    const netPayable = Math.max(0, numGross + numGst - numTds - numAdv);
 
-  // ─── PUT Update Invoice ───────────────────────────────────────────────────────
+    const finalInvoiceNumber = String(invoiceNumber || '').trim();
+    if (!finalInvoiceNumber) {
+      return res.status(400).json({ success: false, error: 'Vendor Invoice Number is required.' });
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9/_-]{2,49}$/.test(finalInvoiceNumber)) {
+      return res.status(400).json({ success: false, error: 'Invoice Number must be 3–50 characters and may contain letters, numbers, /, _ and - only.' });
+    }
+    const existingInv = await InvoicePayment.findOne({ invoiceNumber: finalInvoiceNumber, vendorId: vendorIdFinal });
+    if (existingInv) {
+      return res.status(409).json({ success: false, error: 'This Invoice Number already exists for the vendor.' });
+    }
 
-  router.put('/invoices/:id', authenticateToken, async (req, res) => {
-    try {
-      const invoice = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
-      if (!invoice) return res.status(404).json({ success: false, error: 'Invoice payment not found' });
+    const invPaymentId = 'INV-PAY-' + Date.now().toString().slice(-6);
 
-      if (['approved', 'paid'].includes(String(invoice.status || '').toLowerCase())) {
-        return res.status(400).json({ success: false, error: 'Approved or paid invoices cannot be edited.' });
+    const vendor = await Vendor.findOne({
+      $or: [
+        { id: vendorIdFinal },
+        { sapVendorCode: vendorIdFinal },
+        { supplierId: vendorIdFinal }
+      ]
+    }).lean();
+
+    const isImportVendor = String(vendor?.vendorType || '').toLowerCase().includes('import');
+    let asnNumber = '';
+    if (isImportVendor) {
+      if (requestedAsnNumber && String(requestedAsnNumber).trim()) {
+        asnNumber = String(requestedAsnNumber).trim();
+      } else {
+        asnNumber = await getNextGlobalAsnNumber();
       }
+    }
 
-      const { poNumber, invoiceNumber, grossAmount, gstAmount, tdsAmount,
-        tdsPercentage, advanceAdjusted, grnNumber, remarks, approvalTo, asnNumber,
-        blNumber, blDate, boeNumber, boeDate,
-        invoiceType, gstSubtype, cgstAmount, sgstAmount, igstAmount, supportingDocuments } = req.body;
+    const normalizedSupportingDocuments = Array.isArray(supportingDocuments) ? supportingDocuments : [];
+    if (req.user?.role === 'Vendor' && normalizedSupportingDocuments.length === 0) {
+      return res.status(400).json({ success: false, error: 'At least one invoice supporting document is required.' });
+    }
+    if (normalizedSupportingDocuments.length > 10) {
+      return res.status(400).json({ success: false, error: 'A maximum of 10 supporting documents can be uploaded.' });
+    }
+    const allowedSupportingTypes = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+    if (normalizedSupportingDocuments.some((document) => !document?.fileUrl || !document?.fileName)) {
+      return res.status(400).json({ success: false, error: 'Every supporting document must have a valid uploaded file.' });
+    }
+    if (normalizedSupportingDocuments.some((document) => document.mimeType && !allowedSupportingTypes.has(String(document.mimeType)))) {
+      return res.status(400).json({ success: false, error: 'Every supporting document must be a PDF, JPG, or PNG file.' });
+    }
+    if (normalizedSupportingDocuments.some((document) => Number(document.size) > 25 * 1024 * 1024)) {
+      return res.status(400).json({ success: false, error: 'Each supporting document must not exceed 25 MB.' });
+    }
 
-      if (invoiceNumber) invoice.invoiceNumber = invoiceNumber.trim();
-      if (asnNumber !== undefined) invoice.asnNumber = asnNumber.trim();
-      if (blNumber !== undefined) invoice.blNumber = String(blNumber).trim();
-      if (blDate !== undefined) invoice.blDate = parseFlexibleDate(blDate);
-      if (boeNumber !== undefined) invoice.boeNumber = String(boeNumber).trim();
-      const rawDue = req.body.paymentDueDate || req.body.dueDate;
-      if (rawDue && !Number.isNaN(Date.parse(rawDue))) {
-        invoice.paymentDueDate = new Date(rawDue);
-      } else if (blDate !== undefined || req.body.invoiceDate !== undefined || req.body.dueDays !== undefined) {
-        const baseDate = parseFlexibleDate(req.body.blDate ?? invoice.blDate) || parseFlexibleDate(req.body.invoiceDate ?? invoice.invoiceDate) || new Date();
-        const days = Number(req.body.dueDays ?? invoice.dueDays) || 45;
+    const grnQty = grnQuantity && Number(grnQuantity) > 0 ? Number(grnQuantity) : (invQty > 0 ? invQty : poQty);
+    const isMatched = (poQty === grnQty) && (grnQty === invQty);
+
+    const newInvoice = await InvoicePayment.create({
+      invoicePaymentId: invPaymentId,
+      poId: po?.poNumber || poNumber || 'PO-4300001510',
+      sapPoNumber: poRef,
+      vendorId: vendorIdFinal,
+      vendorName: vendorNameFinal,
+      invoiceNumber: finalInvoiceNumber,
+      asnNumber: asnNumber,
+      blNumber: blNumber ? String(blNumber).trim() : '',
+      blDate: parseFlexibleDate(blDate),
+      boeNumber: boeNumber ? String(boeNumber).trim() : '',
+      boeDate: parseFlexibleDate(boeDate),
+      supportingDocuments: normalizedSupportingDocuments.map((document) => ({
+        fileName: String(document.fileName),
+        originalName: String(document.originalName || document.fileName),
+        fileUrl: String(document.fileUrl),
+        size: Number(document.size) || 0,
+        mimeType: String(document.mimeType || '')
+      })),
+      invoiceDate: invoiceDate && !Number.isNaN(Date.parse(invoiceDate)) ? new Date(invoiceDate) : new Date(),
+      paymentDueDate: (() => {
+        const rawDue = paymentDueDate || req.body.dueDate;
+        if (rawDue && !Number.isNaN(Date.parse(rawDue))) return new Date(rawDue);
+        const baseDate = parseFlexibleDate(blDate) || parseFlexibleDate(invoiceDate) || new Date();
+        const days = Number(req.body.dueDays) || 45;
         const d = new Date(baseDate);
         d.setDate(d.getDate() + days);
-        invoice.paymentDueDate = d;
+        return d;
+      })(),
+      grossAmount: numGross,
+      currency: poCurrency,
+      invoiceType: req.body.invoiceType || (numGst > 0 ? 'With GST' : 'Without GST'),
+      gstSubtype: req.body.gstSubtype || (numIgst > 0 ? 'inter' : 'intra'),
+      cgstAmount: numCgst,
+      sgstAmount: numSgst,
+      igstAmount: numIgst,
+      gstAmount: numGst,
+      tdsAmount: numTds,
+      tdsPercentage: tdsRate,
+      advanceAdjusted: numAdv,
+      advanceIdAdjusted: advanceIdAdjusted || '',
+      grnNumber: grnNumber || '',
+      remarks: remarks || '',
+      approvalTo: approvalTo || '',
+      netPayable,
+      threeWayMatch: {
+        status: isMatched ? 'matched' : 'mismatch',
+        poQuantity: poQty,
+        grnQuantity: grnQty,
+        invoiceQuantity: invQty,
+        varianceAmount: isMatched ? 0 : Math.max(0, Math.abs((Number.isFinite(invQty) ? invQty : 0) - (Number.isFinite(grnQty) ? grnQty : 0))),
+        matchedAt: new Date()
+      },
+      status: 'pending',
+      createdBy: req.user?.name || req.user?.email || 'System User',
+      createdByType: req.user?.role === 'Vendor' ? 'vendor' : 'user',
+      createdByVendorId: req.user?.role === 'Vendor' ? vendorIdFinal : '',
+      requestedById: req.user?.id || req.user?.email || 'system',
+      userId: req.user?.id || req.user?.email || 'system',
+      requestedBy: req.user?.name || requestedBy || 'Finance Team'
+    });
+
+    const { amountINR, fxRate, amountFormatted } = await getFxConversion(netPayable, poCurrency, req.body.fxRate);
+    newInvoice.fxRate = fxRate;
+    newInvoice.amountINR = amountINR;
+    await newInvoice.save();
+    const wf = await resolveWorkflowFromDB('Invoice Payment', amountINR, { currency: poCurrency, vendorType: vendor?.vendorType, poType: po.poType || po.type });
+
+    const approval = await createApprovalRecord({
+      referenceId: invPaymentId,
+      type: 'Invoice Payment',
+      vendorName: vendorNameFinal,
+      amountFormatted,
+      poRef,
+      requestedBy: req.user?.name || requestedBy || 'Finance Team',
+      requestedById: req.user?.id || req.user?.email,
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: {
+        netPayable, amountINR, grossAmount: numGross, currency: poCurrency, fxRate,
+        poId: poRef, vendorId: vendorIdFinal, invoiceNumber: finalInvoiceNumber,
+        createdByType: req.user?.role === 'Vendor' ? 'vendor' : 'user',
+        createdByVendorId: req.user?.role === 'Vendor' ? vendorIdFinal : '',
+        paymentDueDate: newInvoice.paymentDueDate
+      },
+      wf
+    });
+
+    newInvoice.approvalInstanceId = approval._id.toString();
+    newInvoice.requestedByTeam = approval.requestedByTeam || null;
+    newInvoice.assignedApprover = approval.assignedApprover || null;
+    newInvoice.assignedApproverName = approval.assignedApproverName || null;
+    newInvoice.assignedApproverRole = approval.assignedApproverRole || null;
+    await newInvoice.save();
+
+    if (numAdv > 0) {
+      let remainingAdjustment = numAdv;
+      const advancesToAdjust = await AdvancePayment.find({
+        $or: [{ poId: { $in: poRefs } }, { sapPoNumber: { $in: poRefs } }],
+        status: { $in: ['approved', 'paid', 'adjusted'] }
+      }).sort({ createdAt: 1 });
+      for (const advance of advancesToAdjust) {
+        if (remainingAdjustment <= 0) break;
+        const available = Math.max(0, Number(advance.amount) - Number(advance.adjustedAmount || 0));
+        const applied = Math.min(available, remainingAdjustment);
+        if (applied <= 0) continue;
+        advance.adjustedAmount = Number(advance.adjustedAmount || 0) + applied;
+        advance.adjustmentInvoiceId = invPaymentId;
+        remainingAdjustment -= applied;
+        await advance.save();
       }
-      if (grossAmount !== undefined) invoice.grossAmount = Number(grossAmount);
-      if (invoiceType !== undefined) invoice.invoiceType = invoiceType;
-      if (gstSubtype !== undefined) invoice.gstSubtype = gstSubtype;
-      if (cgstAmount !== undefined) invoice.cgstAmount = Number(cgstAmount);
-      if (sgstAmount !== undefined) invoice.sgstAmount = Number(sgstAmount);
-      if (igstAmount !== undefined) invoice.igstAmount = Number(igstAmount);
+    }
 
-      const calcGst = (invoice.cgstAmount || 0) + (invoice.sgstAmount || 0) + (invoice.igstAmount || 0);
-      if (gstAmount !== undefined) invoice.gstAmount = Number(gstAmount);
-      else if (calcGst > 0) invoice.gstAmount = calcGst;
-
-      if (tdsAmount !== undefined) invoice.tdsAmount = Math.max(0, Math.abs(Number(tdsAmount) || 0));
-      if (tdsPercentage !== undefined) invoice.tdsPercentage = Math.max(0, Math.abs(Number(tdsPercentage) || 0));
-      if (advanceAdjusted !== undefined) invoice.advanceAdjusted = Math.max(0, Math.abs(Number(advanceAdjusted) || 0));
-      if (grnNumber !== undefined) invoice.grnNumber = grnNumber.trim();
-      if (remarks !== undefined) invoice.remarks = remarks.trim();
-      if (approvalTo !== undefined) invoice.approvalTo = approvalTo;
-      if (Array.isArray(supportingDocuments)) {
-        invoice.supportingDocuments = supportingDocuments;
-
-        // Clean up Document collection records for removed files
-        const keepIds = supportingDocuments.map(d => d.documentId).filter(Boolean);
-        const keepUrls = supportingDocuments.map(d => d.fileUrl).filter(Boolean);
-        const invRefs = [invoice.invoicePaymentId, invoice.invoiceNumber, invoice.id, invoice._id?.toString()].filter(Boolean);
-
-        const filterCond = {
-          documentableType: 'InvoicePayment',
-          documentableId: { $in: invRefs }
-        };
-
-        if (keepIds.length > 0 || keepUrls.length > 0) {
-          filterCond.$and = [
-            { documentId: { $nin: keepIds } },
-            { fileUrl: { $nin: keepUrls } }
-          ];
-        }
-
-        await Document.deleteMany(filterCond).catch(() => { });
-      }
-
-      invoice.netPayable = Math.max(0,
-        (invoice.grossAmount || 0) + (invoice.gstAmount || 0)
-        - Math.abs(invoice.tdsAmount || 0) - Math.abs(invoice.advanceAdjusted || 0)
-      );
-
-      // Resubmit for approval on edit
-      invoice.status = 'pending';
-
-      const numGross = Number(invoice.grossAmount) || 0;
-      const invCurrency = invoice.currency || 'INR';
-      const poRef = invoice.sapPoNumber || invoice.poId || '';
-      const vendorNameFinal = invoice.vendorName || '';
-
-      const { amountINR, fxRate, amountFormatted } = await getFxConversion(numGross, invCurrency, invoice.fxRate || 1);
-
-      const wf = await resolveWorkflowFromDB('Invoice Payment', amountINR, { currency: invCurrency, vendorType: req.user?.vendorType, poType: '' });
-
-      await Approval.deleteOne({ id: invoice.invoicePaymentId }).catch(() => {});
-
-      const approval = await createApprovalRecord({
-        referenceId: invoice.invoicePaymentId,
-        type: 'Invoice Payment',
-        vendorName: vendorNameFinal,
-        amountFormatted,
-        poRef,
-        requestedBy: req.user?.name || invoice.requestedBy || 'Finance Team',
-        requestedById: req.user?.id || req.user?.email || invoice.requestedById,
-        requestId: req.headers['x-request-id'],
-        transactionSnapshot: {
-          amount: numGross, amountINR, currency: invCurrency, fxRate, poId: poRef, vendorId: invoice.vendorId,
-          createdByType: invoice.createdByType || 'user', createdByVendorId: invoice.createdByVendorId || '',
-          paymentDueDate: invoice.paymentDueDate
-        },
-        wf
+    try {
+      await WorkflowAudit.record({
+        eventId: `wa-${crypto.randomUUID()}`,
+        eventType: 'INVOICE_SUBMITTED',
+        entityType: 'InvoicePayment',
+        entityId: invPaymentId,
+        referenceNumber: finalInvoiceNumber,
+        poReference: poRef,
+        action: 'submit',
+        actorId: req.user?.id || req.user?.email || 'system',
+        actorName: req.user?.name || req.user?.email || requestedBy || 'Finance Team',
+        actorRole: req.user?.role || 'Requester',
+        remarks: `Invoice Payment "${invPaymentId}" (${finalInvoiceNumber}) submitted for approval. Net Payable: ₹${netPayable.toLocaleString('en-IN')}`,
+        occurredAt: new Date()
       });
+    } catch (_) { }
 
-      invoice.approvalInstanceId = approval._id.toString();
-      invoice.requestedByTeam = approval.requestedByTeam || null;
-      invoice.assignedApprover = approval.assignedApprover || null;
-      invoice.assignedApproverName = approval.assignedApproverName || null;
-      invoice.assignedApproverRole = approval.assignedApproverRole || null;
+    return res.json({ success: true, data: newInvoice, workflow: wf });
+  } catch (err) {
+    console.error('[Create Invoice]', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-      await invoice.save();
+// ─── PUT Update Invoice ───────────────────────────────────────────────────────
 
-      try {
-        await WorkflowAudit.record({
-          eventId: `wa-${crypto.randomUUID()}`,
-          eventType: 'INVOICE_RESUBMITTED',
-          entityType: 'InvoicePayment',
-          entityId: invoice.invoicePaymentId,
-          referenceNumber: invoice.invoiceNumber,
-          poReference: invoice.sapPoNumber || invoice.poId,
-          action: 'resubmit',
-          actorId: req.user?.id || req.user?.email || 'admin@rayzon.one',
-          actorName: req.user?.name || req.user?.companyName || req.user?.email || 'System Admin',
-          actorRole: req.user?.role || 'System Admin',
-          remarks: `Invoice Payment "${invoice.invoicePaymentId}" details updated and resent for approval (Gross Amount: ${invoice.grossAmount}, GRN: ${invoice.grnNumber || 'N/A'}).`,
-          occurredAt: new Date()
-        });
-      } catch (_) { }
+router.put('/invoices/:id', authenticateToken, async (req, res) => {
+  try {
+    const invoice = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
+    if (!invoice) return res.status(404).json({ success: false, error: 'Invoice payment not found' });
 
-      return res.json({ success: true, message: 'Invoice payment updated and resent for approval.', data: invoice });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+    if (['approved', 'paid'].includes(String(invoice.status || '').toLowerCase())) {
+      return res.status(400).json({ success: false, error: 'Approved or paid invoices cannot be edited.' });
     }
-  });
 
-  // ─── PUT Update Invoice Status ────────────────────────────────────────────────
+    const { poNumber, invoiceNumber, grossAmount, gstAmount, tdsAmount,
+      tdsPercentage, advanceAdjusted, grnNumber, remarks, approvalTo, asnNumber,
+      blNumber, blDate, boeNumber, boeDate,
+      invoiceType, gstSubtype, cgstAmount, sgstAmount, igstAmount, supportingDocuments } = req.body;
 
-  router.put('/invoices/:id/status', authenticateToken, async (req, res) => {
-    try {
-      const { status } = req.body;
-      const validStatuses = ['pending'];
-      if (!validStatuses.includes(status)) {
-        return res.status(400).json({ success: false, error: 'Invalid status value.' });
-      }
-
-      const invoice = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
-      if (invoice) {
-        if (!['draft', 'returned'].includes(invoice.status)) return res.status(409).json({ success: false, error: 'Only a draft or returned invoice can be submitted.' });
-        if (!(await canMutateOwnPayment(req, invoice))) return res.status(403).json({ success: false, error: 'Only the requester can submit this invoice.' });
-        invoice.status = status;
-        await invoice.save();
-
-        const approval = await Approval.findOne({
-          $or: [{ id: invoice.invoicePaymentId }, { id: req.params.id }]
-        });
-        if (approval) {
-          if (status === 'approved') approval.status = 'Approved & Dispatched';
-          else if (status === 'rejected') approval.status = 'Rejected';
-          else if (status === 'returned') approval.status = 'Returned for changes';
-          else if (status === 'pending') {
-            let wfSteps = [];
-            try { wfSteps = JSON.parse(approval.workflowSteps || '[]'); } catch (_) { }
-            const nextStepObj = wfSteps.find(s => s.step === 2);
-            approval.status = nextStepObj?.statusKey || 'Pending Finance Lead Approval';
-            approval.currentStep = 2;
-          }
-          await approval.save();
-        }
-      }
-
-      res.json({ success: true, status });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+    if (invoiceNumber) invoice.invoiceNumber = invoiceNumber.trim();
+    if (asnNumber !== undefined) invoice.asnNumber = asnNumber.trim();
+    if (blNumber !== undefined) invoice.blNumber = String(blNumber).trim();
+    if (blDate !== undefined) invoice.blDate = parseFlexibleDate(blDate);
+    if (boeNumber !== undefined) invoice.boeNumber = String(boeNumber).trim();
+    const rawDue = req.body.paymentDueDate || req.body.dueDate;
+    if (rawDue && !Number.isNaN(Date.parse(rawDue))) {
+      invoice.paymentDueDate = new Date(rawDue);
+    } else if (blDate !== undefined || req.body.invoiceDate !== undefined || req.body.dueDays !== undefined) {
+      const baseDate = parseFlexibleDate(req.body.blDate ?? invoice.blDate) || parseFlexibleDate(req.body.invoiceDate ?? invoice.invoiceDate) || new Date();
+      const days = Number(req.body.dueDays ?? invoice.dueDays) || 45;
+      const d = new Date(baseDate);
+      d.setDate(d.getDate() + days);
+      invoice.paymentDueDate = d;
     }
-  });
+    if (grossAmount !== undefined) invoice.grossAmount = Number(grossAmount);
+    if (invoiceType !== undefined) invoice.invoiceType = invoiceType;
+    if (gstSubtype !== undefined) invoice.gstSubtype = gstSubtype;
+    if (cgstAmount !== undefined) invoice.cgstAmount = Number(cgstAmount);
+    if (sgstAmount !== undefined) invoice.sgstAmount = Number(sgstAmount);
+    if (igstAmount !== undefined) invoice.igstAmount = Number(igstAmount);
 
-  // ─── POST Record Invoice Payout ───────────────────────────────────────────────
+    const calcGst = (invoice.cgstAmount || 0) + (invoice.sgstAmount || 0) + (invoice.igstAmount || 0);
+    if (gstAmount !== undefined) invoice.gstAmount = Number(gstAmount);
+    else if (calcGst > 0) invoice.gstAmount = calcGst;
 
-  router.post('/invoices/:id/payout', authenticateToken, authorizePermission('invoice-payments', 'mark-paid'), async (req, res) => {
-    try {
-      const { utrNumber, paymentMode, remarks, paymentRemarks, disbursementDate } = req.body;
-      const cleanUtr = String(utrNumber || '').trim();
+    if (tdsAmount !== undefined) invoice.tdsAmount = Math.max(0, Math.abs(Number(tdsAmount) || 0));
+    if (tdsPercentage !== undefined) invoice.tdsPercentage = Math.max(0, Math.abs(Number(tdsPercentage) || 0));
+    if (advanceAdjusted !== undefined) invoice.advanceAdjusted = Math.max(0, Math.abs(Number(advanceAdjusted) || 0));
+    if (grnNumber !== undefined) invoice.grnNumber = grnNumber.trim();
+    if (remarks !== undefined) invoice.remarks = remarks.trim();
+    if (approvalTo !== undefined) invoice.approvalTo = approvalTo;
+    if (Array.isArray(supportingDocuments)) {
+      invoice.supportingDocuments = supportingDocuments;
 
-      const invoice = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
-      if (!invoice) return res.status(404).json({ success: false, error: 'Invoice payment not found' });
-      if (String(invoice.status || '').toLowerCase() !== 'approved') {
-        return res.status(409).json({ success: false, error: `Only an approved invoice can be marked paid (current status: ${invoice.status}).` });
+      // Clean up Document collection records for removed files
+      const keepIds = supportingDocuments.map(d => d.documentId).filter(Boolean);
+      const keepUrls = supportingDocuments.map(d => d.fileUrl).filter(Boolean);
+      const invRefs = [invoice.invoicePaymentId, invoice.invoiceNumber, invoice.id, invoice._id?.toString()].filter(Boolean);
+
+      const filterCond = {
+        documentableType: 'InvoicePayment',
+        documentableId: { $in: invRefs }
+      };
+
+      if (keepIds.length > 0 || keepUrls.length > 0) {
+        filterCond.$and = [
+          { documentId: { $nin: keepIds } },
+          { fileUrl: { $nin: keepUrls } }
+        ];
       }
 
-      if (cleanUtr) invoice.utrNumber = cleanUtr;
-      invoice.status = 'paid';
-      invoice.paidAt = disbursementDate ? new Date(disbursementDate) : new Date();
-      if (paymentMode) invoice.paymentMode = paymentMode;
-      if (remarks || paymentRemarks) invoice.remarks = remarks || paymentRemarks;
+      await Document.deleteMany(filterCond).catch(() => { });
+    }
+
+    invoice.netPayable = Math.max(0,
+      (invoice.grossAmount || 0) + (invoice.gstAmount || 0)
+      - Math.abs(invoice.tdsAmount || 0) - Math.abs(invoice.advanceAdjusted || 0)
+    );
+
+    // Resubmit for approval on edit
+    invoice.status = 'pending';
+
+    const numGross = Number(invoice.grossAmount) || 0;
+    const invCurrency = invoice.currency || 'INR';
+    const poRef = invoice.sapPoNumber || invoice.poId || '';
+    const vendorNameFinal = invoice.vendorName || '';
+
+    const { amountINR, fxRate, amountFormatted } = await getFxConversion(numGross, invCurrency, invoice.fxRate || 1);
+
+    const wf = await resolveWorkflowFromDB('Invoice Payment', amountINR, { currency: invCurrency, vendorType: req.user?.vendorType, poType: '' });
+
+    await Approval.deleteOne({ id: invoice.invoicePaymentId }).catch(() => { });
+
+    const approval = await createApprovalRecord({
+      referenceId: invoice.invoicePaymentId,
+      type: 'Invoice Payment',
+      vendorName: vendorNameFinal,
+      amountFormatted,
+      poRef,
+      requestedBy: req.user?.name || invoice.requestedBy || 'Finance Team',
+      requestedById: req.user?.id || req.user?.email || invoice.requestedById,
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: {
+        amount: numGross, amountINR, currency: invCurrency, fxRate, poId: poRef, vendorId: invoice.vendorId,
+        createdByType: invoice.createdByType || 'user', createdByVendorId: invoice.createdByVendorId || '',
+        paymentDueDate: invoice.paymentDueDate
+      },
+      wf
+    });
+
+    invoice.approvalInstanceId = approval._id.toString();
+    invoice.requestedByTeam = approval.requestedByTeam || null;
+    invoice.assignedApprover = approval.assignedApprover || null;
+    invoice.assignedApproverName = approval.assignedApproverName || null;
+    invoice.assignedApproverRole = approval.assignedApproverRole || null;
+
+    await invoice.save();
+
+    try {
+      await WorkflowAudit.record({
+        eventId: `wa-${crypto.randomUUID()}`,
+        eventType: 'INVOICE_RESUBMITTED',
+        entityType: 'InvoicePayment',
+        entityId: invoice.invoicePaymentId,
+        referenceNumber: invoice.invoiceNumber,
+        poReference: invoice.sapPoNumber || invoice.poId,
+        action: 'resubmit',
+        actorId: req.user?.id || req.user?.email || 'admin@rayzon.one',
+        actorName: req.user?.name || req.user?.companyName || req.user?.email || 'System Admin',
+        actorRole: req.user?.role || 'System Admin',
+        remarks: `Invoice Payment "${invoice.invoicePaymentId}" details updated and resent for approval (Gross Amount: ${invoice.grossAmount}, GRN: ${invoice.grnNumber || 'N/A'}).`,
+        occurredAt: new Date()
+      });
+    } catch (_) { }
+
+    return res.json({ success: true, message: 'Invoice payment updated and resent for approval.', data: invoice });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── PUT Update Invoice Status ────────────────────────────────────────────────
+
+router.put('/invoices/:id/status', authenticateToken, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const validStatuses = ['pending'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, error: 'Invalid status value.' });
+    }
+
+    const invoice = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
+    if (invoice) {
+      if (!['draft', 'returned'].includes(invoice.status)) return res.status(409).json({ success: false, error: 'Only a draft or returned invoice can be submitted.' });
+      if (!(await canMutateOwnPayment(req, invoice))) return res.status(403).json({ success: false, error: 'Only the requester can submit this invoice.' });
+      invoice.status = status;
       await invoice.save();
 
       const approval = await Approval.findOne({
         $or: [{ id: invoice.invoicePaymentId }, { id: req.params.id }]
       });
       if (approval) {
-        approval.status = 'Approved & Dispatched';
+        if (status === 'approved') approval.status = 'Approved & Dispatched';
+        else if (status === 'rejected') approval.status = 'Rejected';
+        else if (status === 'returned') approval.status = 'Returned for changes';
+        else if (status === 'pending') {
+          let wfSteps = [];
+          try { wfSteps = JSON.parse(approval.workflowSteps || '[]'); } catch (_) { }
+          const nextStepObj = wfSteps.find(s => s.step === 2);
+          approval.status = nextStepObj?.statusKey || 'Pending Finance Lead Approval';
+          approval.currentStep = 2;
+        }
         await approval.save();
       }
-
-      const paidAmt = Number(invoice.netPayable || invoice.totalAmount || invoice.grossAmount) || 0;
-      await PaymentLedger.create({
-        paymentId: 'LEDGER-' + Date.now().toString().slice(-6) + '-' + Math.floor(Math.random() * 1000),
-        payableType: 'InvoicePayment',
-        payableId: String(invoice._id || invoice.invoicePaymentId),
-        referenceNumber: invoice.sapPoNumber || invoice.poNumber || invoice.poId,
-        vendorId: invoice.vendorId || invoice.supplierId || 'VEND-MASTER',
-        vendorName: invoice.vendorName || 'Vendor',
-        grossAmount: invoice.grossAmount || paidAmt,
-        tdsAmount: invoice.tdsAmount || 0,
-        netAmount: paidAmt,
-        paymentMode: ['NEFT', 'RTGS', 'Cheque', 'SWIFT', 'ICEGATE'].includes(paymentMode) ? paymentMode : 'NEFT',
-        bankName: invoice.bankName || 'HDFC Bank - Main Corporate',
-        bankAccountNumber: invoice.bankAccountNumber || '50200049281745',
-        utrNumber: cleanUtr || null,
-        status: 'processed',
-        paidAt: invoice.paidAt || new Date()
-      }).catch(e => console.error('[Ledger error]', e.message));
-
-      return res.json({ success: true, message: 'Invoice payment marked as paid.', data: invoice });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
     }
+
+    res.json({ success: true, status });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── POST Record Invoice Payout ───────────────────────────────────────────────
+
+router.post('/invoices/:id/payout', authenticateToken, authorizePermission('invoice-payments', 'mark-paid'), async (req, res) => {
+  try {
+    const { utrNumber, paymentMode, remarks, paymentRemarks, disbursementDate } = req.body;
+    const cleanUtr = String(utrNumber || '').trim();
+
+    const invoice = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
+    if (!invoice) return res.status(404).json({ success: false, error: 'Invoice payment not found' });
+    if (String(invoice.status || '').toLowerCase() !== 'approved') {
+      return res.status(409).json({ success: false, error: `Only an approved invoice can be marked paid (current status: ${invoice.status}).` });
+    }
+
+    if (cleanUtr) invoice.utrNumber = cleanUtr;
+    invoice.status = 'paid';
+    invoice.paidAt = disbursementDate ? new Date(disbursementDate) : new Date();
+    if (paymentMode) invoice.paymentMode = paymentMode;
+    if (remarks || paymentRemarks) invoice.remarks = remarks || paymentRemarks;
+    await invoice.save();
+
+    const approval = await Approval.findOne({
+      $or: [{ id: invoice.invoicePaymentId }, { id: req.params.id }]
+    });
+    if (approval) {
+      approval.status = 'Approved & Dispatched';
+      await approval.save();
+    }
+
+    const paidAmt = Number(invoice.netPayable || invoice.totalAmount || invoice.grossAmount) || 0;
+    await PaymentLedger.create({
+      paymentId: 'LEDGER-' + Date.now().toString().slice(-6) + '-' + Math.floor(Math.random() * 1000),
+      payableType: 'InvoicePayment',
+      payableId: String(invoice._id || invoice.invoicePaymentId),
+      referenceNumber: invoice.sapPoNumber || invoice.poNumber || invoice.poId,
+      vendorId: invoice.vendorId || invoice.supplierId || 'VEND-MASTER',
+      vendorName: invoice.vendorName || 'Vendor',
+      grossAmount: invoice.grossAmount || paidAmt,
+      tdsAmount: invoice.tdsAmount || 0,
+      netAmount: paidAmt,
+      paymentMode: ['NEFT', 'RTGS', 'Cheque', 'SWIFT', 'ICEGATE'].includes(paymentMode) ? paymentMode : 'NEFT',
+      bankName: invoice.bankName || 'HDFC Bank - Main Corporate',
+      bankAccountNumber: invoice.bankAccountNumber || '50200049281745',
+      utrNumber: cleanUtr || null,
+      status: 'processed',
+      paidAt: invoice.paidAt || new Date()
+    }).catch(e => console.error('[Ledger error]', e.message));
+
+    return res.json({ success: true, message: 'Invoice payment marked as paid.', data: invoice });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── DELETE Invoice Payment ───────────────────────────────────────────────────
+
+router.delete('/invoices/:id', authenticateToken, authorizePermission('invoice-payments', 'delete'), async (req, res) => {
+  try {
+    const inv = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
+    if (inv) {
+      if (!['draft', 'returned'].includes(inv.status)) return res.status(409).json({ success: false, error: 'Only a draft or returned invoice can be deleted.' });
+      await InvoicePayment.deleteOne({ _id: inv._id });
+      await Approval.deleteOne({ id: inv.invoicePaymentId }).catch(() => { });
+    }
+    res.json({ success: true, message: 'Invoice payment deleted' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RFQ ROUTES
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Helper functions for RFQ
+async function nextRfqNumber() {
+  const year = new Date().getFullYear();
+  const latest = await RfqHeader.findOne({ rfqNumber: new RegExp(`^RFQ-${year}-`) }).sort({ rfqNumber: -1 }).select('rfqNumber').lean();
+  const sequence = Math.max(0, Number(String(latest?.rfqNumber || '').split('-').pop()) || 0) + 1;
+  return `RFQ-${year}-${String(sequence).padStart(4, '0')}`;
+}
+
+function validateRfqPayload(body, { partial = false } = {}) {
+  const required = ['title', 'linkedPoId', 'closingDate', 'shippingTerms', 'cargoType', 'portOfLoading', 'portOfDischarge', 'containerType'];
+  if (!partial) {
+    const missing = required.filter((key) => !String(body[key] || '').trim());
+    if (missing.length) return `Missing required RFQ details: ${missing.join(', ')}.`;
+  }
+  const count = Number(body.containerCount);
+  if (body.containerCount !== undefined && (!Number.isInteger(count) || count <= 0)) return 'Number of containers must be a positive whole number.';
+  const weight = Number(body.weightPerContainer);
+  if (body.weightPerContainer !== undefined && body.weightPerContainer !== '' && (!Number.isFinite(weight) || weight <= 0)) return 'Weight per container must be greater than zero.';
+  if (body.portOfLoading && body.portOfDischarge && sameValue(body.portOfLoading, body.portOfDischarge)) return 'Port of loading and port of discharge must be different.';
+  if (body.closingDate) {
+    const closing = new Date(body.closingDate);
+    if (Number.isNaN(closing.getTime())) return 'Enter a valid RFQ closing date and time.';
+    if (closing <= new Date()) return 'RFQ closing date must be in the future.';
+  }
+  if (body.estimatedReadinessDate && Number.isNaN(new Date(body.estimatedReadinessDate).getTime())) return 'Enter a valid estimated readiness date.';
+  if (!partial && (!Array.isArray(body.invitedVendors) || !body.invitedVendors.length)) return 'Invite at least one active Freight Forwarder.';
+  if (Array.isArray(body.invitedVendors)) {
+    const inviteIds = body.invitedVendors.map((vendor) => normaliseInviteValue(vendor?.vendorId || vendor?.sapVendorCode)).filter(Boolean);
+    if (inviteIds.length !== body.invitedVendors.length) return 'Every invited Freight Forwarder must have a valid vendor identifier.';
+    if (new Set(inviteIds).size !== inviteIds.length) return 'The same Freight Forwarder cannot be invited more than once.';
+  }
+  return '';
+}
+
+function validateOpenPo(po) {
+  const status = String(po?.status || '').trim().toLowerCase();
+  return Boolean(po && Number(po.totalAmount) > 0 && !['closed', 'cancelled', 'canceled', 'blocked'].includes(status));
+}
+
+function requireInternalRfqUser(req, res, next) {
+  if (String(req.user?.role || '').trim().toLowerCase() === 'vendor') {
+    return res.status(403).json({ success: false, error: 'Use the vendor RFQ portal for vendor RFQ access.' });
+  }
+  return next();
+}
+
+function isRfqClosed(closingDate) {
+  if (!closingDate) return false;
+  const deadline = new Date(closingDate);
+  const isUtcMidnight = deadline.getUTCHours() === 0 && deadline.getUTCMinutes() === 0 && deadline.getUTCSeconds() === 0;
+  const isLocalMidnight = deadline.getHours() === 0 && deadline.getMinutes() === 0 && deadline.getSeconds() === 0;
+  if (isLocalMidnight) {
+    deadline.setHours(23, 59, 59, 999);
+  } else if (isUtcMidnight) {
+    deadline.setUTCHours(23, 59, 59, 999);
+  }
+  return deadline < new Date();
+}
+
+async function getFreightVendorFromRequest(req) {
+  const keys = [req.user?.id, req.user?.sapVendorCode].filter(Boolean);
+  if (!keys.length || req.user?.role !== 'Vendor') return null;
+  const freightType = /(freight|forwarder|logistics|shipping)/i;
+  return Vendor.findOne({
+    $and: [
+      { $or: keys.flatMap((key) => [{ id: key }, { sapVendorCode: key }, { supplierId: key }]) },
+      { $or: [{ vendorType: freightType }, { category: freightType }] }
+    ]
+  }).sort({ updatedAt: -1 }).lean();
+}
+
+function normaliseInviteValue(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isFreightVendorInvited(rfq, vendor) {
+  const vendorKeys = new Set([
+    vendor.id, vendor.sapVendorCode, vendor.supplierId, vendor.companyName
+  ].map(normaliseInviteValue).filter(Boolean));
+  const invitationValues = [
+    ...(Array.isArray(rfq.invitedVendorIds) ? rfq.invitedVendorIds : []),
+    ...(Array.isArray(rfq.invitedVendors) ? rfq.invitedVendors.flatMap((invite) => {
+      if (typeof invite === 'string' || typeof invite === 'number') return [invite];
+      return [invite?.vendorId, invite?.sapVendorCode, invite?.supplierId, invite?.id, invite?.companyName];
+    }) : [])
+  ];
+  return invitationValues.some((value) => vendorKeys.has(normaliseInviteValue(value)));
+}
+
+function freightVendorKeys(vendor) {
+  return [vendor?.id, vendor?.sapVendorCode, vendor?.supplierId, vendor?.companyName]
+    .map(normaliseInviteValue).filter(Boolean);
+}
+
+function getVendorAward(rfq, vendor) {
+  const keys = new Set(freightVendorKeys(vendor));
+  const allocations = Array.isArray(rfq.awardAllocations) ? rfq.awardAllocations : [];
+  const allocation = allocations.find((item) =>
+    [item.vendorId, item.vendorCode, item.vendorName].map(normaliseInviteValue).some((key) => keys.has(key))
+  );
+  if (allocation) return { ...allocation, containers: Number(allocation.containers) || 0 };
+  const legacyMatch = [rfq.awardedVendorId, rfq.awardedVendorName]
+    .map(normaliseInviteValue).some((key) => keys.has(key));
+  if (!legacyMatch) return null;
+  return {
+    vendorId: rfq.awardedVendorId,
+    vendorName: rfq.awardedVendorName,
+    containers: Number(rfq.allocatedQuantity) || Number(rfq.cargoDetails?.containerCount) || Number(rfq.totalQuantity) || 0
+  };
+}
+
+async function syncRfqAwardStatus(rfq) {
+  if (!rfq) return rfq;
+  const plainRfq = typeof rfq.toObject === 'function' ? rfq.toObject() : rfq;
+  if (!plainRfq.awardApprovalId) return rfq;
+
+  const approval = await Approval.findOne({ id: plainRfq.awardApprovalId }).lean();
+  if (!approval || approval.status !== 'Approved & Dispatched') return rfq;
+
+  const allocations = Array.isArray(plainRfq.awardAllocations) ? plainRfq.awardAllocations : [];
+  let needsSave = false;
+
+  const updatedAllocations = allocations.map((alloc) => {
+    if (alloc.approved !== true) {
+      needsSave = true;
+      return { ...alloc, approved: true };
+    }
+    return alloc;
   });
 
-  // ─── DELETE Invoice Payment ───────────────────────────────────────────────────
+  const totalQty = Number(plainRfq.totalQuantity) || Number(plainRfq.cargoDetails?.containerCount) || 1;
+  const totalAllocated = updatedAllocations.filter((a) => a.approved === true).reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
+  const expectedStatus = totalAllocated >= totalQty ? 'awarded' : totalAllocated > 0 ? 'partially_awarded' : plainRfq.status;
 
-  router.delete('/invoices/:id', authenticateToken, authorizePermission('invoice-payments', 'delete'), async (req, res) => {
-    try {
-      const inv = await InvoicePayment.findOne(buildInvoiceFilter(req.params.id));
-      if (inv) {
-        if (!['draft', 'returned'].includes(inv.status)) return res.status(409).json({ success: false, error: 'Only a draft or returned invoice can be deleted.' });
-        await InvoicePayment.deleteOne({ _id: inv._id });
-        await Approval.deleteOne({ id: inv.invoicePaymentId }).catch(() => { });
-      }
-      res.json({ success: true, message: 'Invoice payment deleted' });
-    } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
+  if (plainRfq.status !== expectedStatus) needsSave = true;
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // RFQ ROUTES
-  // ─────────────────────────────────────────────────────────────────────────────
+  if (needsSave) {
+    const awardedVendorId = updatedAllocations.filter(a => a.approved).map(a => a.vendorId).join(',');
+    const awardedVendorName = updatedAllocations.filter(a => a.approved).map(a => a.vendorName).join(', ');
+    const awardedQuoteId = updatedAllocations.filter(a => a.approved).map(a => a.quoteId).join(',');
 
-  // Helper functions for RFQ
-  async function nextRfqNumber() {
-    const year = new Date().getFullYear();
-    const latest = await RfqHeader.findOne({ rfqNumber: new RegExp(`^RFQ-${year}-`) }).sort({ rfqNumber: -1 }).select('rfqNumber').lean();
-    const sequence = Math.max(0, Number(String(latest?.rfqNumber || '').split('-').pop()) || 0) + 1;
-    return `RFQ-${year}-${String(sequence).padStart(4, '0')}`;
-  }
-
-  function validateRfqPayload(body, { partial = false } = {}) {
-    const required = ['title', 'linkedPoId', 'closingDate', 'shippingTerms', 'cargoType', 'portOfLoading', 'portOfDischarge', 'containerType'];
-    if (!partial) {
-      const missing = required.filter((key) => !String(body[key] || '').trim());
-      if (missing.length) return `Missing required RFQ details: ${missing.join(', ')}.`;
-    }
-    const count = Number(body.containerCount);
-    if (body.containerCount !== undefined && (!Number.isInteger(count) || count <= 0)) return 'Number of containers must be a positive whole number.';
-    const weight = Number(body.weightPerContainer);
-    if (body.weightPerContainer !== undefined && body.weightPerContainer !== '' && (!Number.isFinite(weight) || weight <= 0)) return 'Weight per container must be greater than zero.';
-    if (body.portOfLoading && body.portOfDischarge && sameValue(body.portOfLoading, body.portOfDischarge)) return 'Port of loading and port of discharge must be different.';
-    if (body.closingDate) {
-      const closing = new Date(body.closingDate);
-      if (Number.isNaN(closing.getTime())) return 'Enter a valid RFQ closing date and time.';
-      if (closing <= new Date()) return 'RFQ closing date must be in the future.';
-    }
-    if (body.estimatedReadinessDate && Number.isNaN(new Date(body.estimatedReadinessDate).getTime())) return 'Enter a valid estimated readiness date.';
-    if (!partial && (!Array.isArray(body.invitedVendors) || !body.invitedVendors.length)) return 'Invite at least one active Freight Forwarder.';
-    if (Array.isArray(body.invitedVendors)) {
-      const inviteIds = body.invitedVendors.map((vendor) => normaliseInviteValue(vendor?.vendorId || vendor?.sapVendorCode)).filter(Boolean);
-      if (inviteIds.length !== body.invitedVendors.length) return 'Every invited Freight Forwarder must have a valid vendor identifier.';
-      if (new Set(inviteIds).size !== inviteIds.length) return 'The same Freight Forwarder cannot be invited more than once.';
-    }
-    return '';
-  }
-
-  function validateOpenPo(po) {
-    const status = String(po?.status || '').trim().toLowerCase();
-    return Boolean(po && Number(po.totalAmount) > 0 && !['closed', 'cancelled', 'canceled', 'blocked'].includes(status));
-  }
-
-  function requireInternalRfqUser(req, res, next) {
-    if (String(req.user?.role || '').trim().toLowerCase() === 'vendor') {
-      return res.status(403).json({ success: false, error: 'Use the vendor RFQ portal for vendor RFQ access.' });
-    }
-    return next();
-  }
-
-  function isRfqClosed(closingDate) {
-    if (!closingDate) return false;
-    const deadline = new Date(closingDate);
-    const isUtcMidnight = deadline.getUTCHours() === 0 && deadline.getUTCMinutes() === 0 && deadline.getUTCSeconds() === 0;
-    const isLocalMidnight = deadline.getHours() === 0 && deadline.getMinutes() === 0 && deadline.getSeconds() === 0;
-    if (isLocalMidnight) {
-      deadline.setHours(23, 59, 59, 999);
-    } else if (isUtcMidnight) {
-      deadline.setUTCHours(23, 59, 59, 999);
-    }
-    return deadline < new Date();
-  }
-
-  async function getFreightVendorFromRequest(req) {
-    const keys = [req.user?.id, req.user?.sapVendorCode].filter(Boolean);
-    if (!keys.length || req.user?.role !== 'Vendor') return null;
-    const freightType = /(freight|forwarder|logistics|shipping)/i;
-    return Vendor.findOne({
-      $and: [
-        { $or: keys.flatMap((key) => [{ id: key }, { sapVendorCode: key }, { supplierId: key }]) },
-        { $or: [{ vendorType: freightType }, { category: freightType }] }
-      ]
-    }).sort({ updatedAt: -1 }).lean();
-  }
-
-  function normaliseInviteValue(value) {
-    return String(value || '').trim().toLowerCase();
-  }
-
-  function isFreightVendorInvited(rfq, vendor) {
-    const vendorKeys = new Set([
-      vendor.id, vendor.sapVendorCode, vendor.supplierId, vendor.companyName
-    ].map(normaliseInviteValue).filter(Boolean));
-    const invitationValues = [
-      ...(Array.isArray(rfq.invitedVendorIds) ? rfq.invitedVendorIds : []),
-      ...(Array.isArray(rfq.invitedVendors) ? rfq.invitedVendors.flatMap((invite) => {
-        if (typeof invite === 'string' || typeof invite === 'number') return [invite];
-        return [invite?.vendorId, invite?.sapVendorCode, invite?.supplierId, invite?.id, invite?.companyName];
-      }) : [])
-    ];
-    return invitationValues.some((value) => vendorKeys.has(normaliseInviteValue(value)));
-  }
-
-  function freightVendorKeys(vendor) {
-    return [vendor?.id, vendor?.sapVendorCode, vendor?.supplierId, vendor?.companyName]
-      .map(normaliseInviteValue).filter(Boolean);
-  }
-
-  function getVendorAward(rfq, vendor) {
-    const keys = new Set(freightVendorKeys(vendor));
-    const allocations = Array.isArray(rfq.awardAllocations) ? rfq.awardAllocations : [];
-    const allocation = allocations.find((item) =>
-      [item.vendorId, item.vendorCode, item.vendorName].map(normaliseInviteValue).some((key) => keys.has(key))
-    );
-    if (allocation) return { ...allocation, containers: Number(allocation.containers) || 0 };
-    const legacyMatch = [rfq.awardedVendorId, rfq.awardedVendorName]
-      .map(normaliseInviteValue).some((key) => keys.has(key));
-    if (!legacyMatch) return null;
-    return {
-      vendorId: rfq.awardedVendorId,
-      vendorName: rfq.awardedVendorName,
-      containers: Number(rfq.allocatedQuantity) || Number(rfq.cargoDetails?.containerCount) || Number(rfq.totalQuantity) || 0
+    const updateData = {
+      awardAllocations: updatedAllocations,
+      allocatedQuantity: totalAllocated,
+      pendingAllocation: Math.max(0, totalQty - totalAllocated),
+      status: expectedStatus,
+      ...(awardedVendorId ? { awardedVendorId, awardedVendorName, awardedQuoteId } : {})
     };
+
+    if (typeof rfq.save === 'function') {
+      rfq.set(updateData);
+      await rfq.save();
+      return rfq;
+    } else {
+      await RfqHeader.updateOne({ _id: plainRfq._id }, { $set: updateData });
+      return { ...plainRfq, ...updateData };
+    }
   }
 
-  async function syncRfqAwardStatus(rfq) {
-    if (!rfq) return rfq;
-    const plainRfq = typeof rfq.toObject === 'function' ? rfq.toObject() : rfq;
-    if (!plainRfq.awardApprovalId) return rfq;
+  return rfq;
+}
 
-    const approval = await Approval.findOne({ id: plainRfq.awardApprovalId }).lean();
-    if (!approval || approval.status !== 'Approved & Dispatched') return rfq;
+async function getRfqAwardApproval(rfq) {
+  if (!rfq) return { required: false, approval: null, approved: false };
+  const plainRfq = typeof rfq.toObject === 'function' ? rfq.toObject() : rfq;
 
-    const allocations = Array.isArray(plainRfq.awardAllocations) ? plainRfq.awardAllocations : [];
-    let needsSave = false;
+  let approval = null;
+  const queryOrs = [];
+  if (plainRfq.awardApprovalId) queryOrs.push({ id: plainRfq.awardApprovalId });
+  if (plainRfq.rfqNumber) queryOrs.push({ id: plainRfq.rfqNumber }, { referenceId: plainRfq.rfqNumber });
+  if (plainRfq.rfqId) queryOrs.push({ id: plainRfq.rfqId }, { referenceId: plainRfq.rfqId }, { 'transactionSnapshot.rfqId': plainRfq.rfqId });
 
-    const updatedAllocations = allocations.map((alloc) => {
-      if (alloc.approved !== true) {
-        needsSave = true;
-        return { ...alloc, approved: true };
+  if (queryOrs.length > 0) {
+    approval = await Approval.findOne({ $or: queryOrs }).sort({ createdAt: -1 }).lean();
+  }
+
+  const required = Boolean(approval || plainRfq.awardApprovalId || String(plainRfq.status).toLowerCase() === 'pending_approval');
+  const approved = Boolean(approval && approval.status === 'Approved & Dispatched');
+
+  return {
+    required,
+    approval,
+    approved
+  };
+}
+
+async function resolveVendorAwardedRfq(req) {
+  const vendor = await getFreightVendorFromRequest(req);
+  if (!vendor) return { error: 'Freight Forwarder access is required.', status: 403 };
+  let rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
+  if (!rfq || !isFreightVendorInvited(rfq.toObject ? rfq.toObject() : rfq, vendor)) return { error: 'Assigned RFQ not found.', status: 404 };
+
+  rfq = await syncRfqAwardStatus(rfq);
+  const plainRfq = typeof rfq.toObject === 'function' ? rfq.toObject() : rfq;
+
+  const awardApproval = await getRfqAwardApproval(plainRfq);
+  const allocation = getVendorAward(plainRfq, vendor);
+  const allocationAlreadyApproved = allocation?.approved === true || (awardApproval.approved && allocation?.approved !== false);
+
+  if (!allocationAlreadyApproved && !awardApproval.approved) {
+    return { error: `Bill of Lading access is locked until the RFQ award approval is completed. Current approval status: ${awardApproval.approval?.status || 'Pending'}.`, status: 403 };
+  }
+  if ((!['pending_approval', 'partially_awarded', 'awarded'].includes(String(plainRfq.status).toLowerCase()) && !awardApproval.approved) || !allocation || allocation.approved === false) {
+    return { error: 'Only a vendor with an approved RFQ allocation can manage Bill of Lading entries.', status: 403 };
+  }
+  return { vendor, rfq, allocation };
+}
+
+// ─── GET /api/p2p/rfqs ────────────────────────────────────────────────────────
+
+router.get('/rfqs', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'view'), async (req, res) => {
+  try {
+    const search = String(req.query.q || req.query.search || '').trim();
+    const statusFilter = String(req.query.status || '').trim();
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number.parseInt(req.query.pageSize || req.query.size, 10) || 10));
+
+    const filter = { isDeleted: { $ne: true } };
+    if (search) {
+      const rx = new RegExp(escapeRegex(search), 'i');
+      filter.$or = [{ rfqNumber: rx }, { title: rx }, { poId: rx }, { sapPoNumber: rx }];
+    }
+    if (statusFilter && statusFilter !== 'All Status' && statusFilter !== 'All') {
+      if (statusFilter.toLowerCase() === 'expired') {
+        filter.closingDate = { $lt: new Date() };
+        filter.status = 'published';
+      } else filter.status = statusFilter.toLowerCase().replace(/\s+/g, '_');
+    }
+
+    const total = await RfqHeader.countDocuments(filter);
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(page, totalPages);
+    const rfqs = await RfqHeader.find(filter)
+      .sort({ createdAt: -1, _id: -1 })
+      .skip((safePage - 1) * pageSize)
+      .limit(pageSize)
+      .lean();
+
+    const rfqIds = rfqs.map((rfq) => rfq.rfqId).filter(Boolean);
+    const approvalIds = rfqs.map((rfq) => rfq.awardApprovalId).filter(Boolean);
+    const [quoteCounts, approvals] = await Promise.all([
+      RfqQuote.aggregate([
+        { $match: { rfqId: { $in: rfqIds } } },
+        { $group: { _id: '$rfqId', count: { $sum: 1 } } }
+      ]),
+      Approval.find({
+        $or: [
+          { id: { $in: [...approvalIds, ...rfqIds] } },
+          { referenceId: { $in: rfqIds } },
+          { 'transactionSnapshot.rfqId': { $in: rfqIds } }
+        ]
+      }).sort({ createdAt: -1 }).lean()
+    ]);
+    const quoteCountByRfq = new Map(quoteCounts.map((entry) => [entry._id, entry.count]));
+    const approvalByKey = new Map();
+    approvals.forEach((approval) => {
+      [approval.id, approval.referenceId, approval.transactionSnapshot?.rfqId].filter(Boolean)
+        .forEach((key) => { if (!approvalByKey.has(String(key))) approvalByKey.set(String(key), approval); });
+    });
+    const statusRepairs = [];
+    const enriched = rfqs.map((r) => {
+      let currentStatus = r.status || 'published';
+      const app = approvalByKey.get(String(r.awardApprovalId || r.rfqId));
+      if (app?.status === 'Approved & Dispatched') {
+        const totalQuantity = Number(r.totalQuantity) || Number(r.cargoDetails?.containerCount) || 0;
+        const approvedQuantity = (Array.isArray(r.awardAllocations) ? r.awardAllocations : [])
+          .filter((allocation) => allocation.approved === true)
+          .reduce((sum, allocation) => sum + (Number(allocation.containers) || 0), 0);
+        currentStatus = totalQuantity > 0 && approvedQuantity >= totalQuantity ? 'awarded' : approvedQuantity > 0 ? 'partially_awarded' : r.status;
       }
-      return alloc;
+      else if (app?.status === 'Rejected' && r.status === 'pending_approval') currentStatus = 'published';
+      if (currentStatus !== r.status || (!r.awardApprovalId && app?.id)) {
+        statusRepairs.push({
+          updateOne: {
+            filter: { _id: r._id },
+            update: { $set: { status: currentStatus, ...(app?.id ? { awardApprovalId: app.id } : {}) } }
+          }
+        });
+      }
+      const invitedCount = (r.invitedVendors && Array.isArray(r.invitedVendors)) ? r.invitedVendors.length : 0;
+      return {
+        ...r,
+        status: currentStatus,
+        closingDateFormatted: r.closingDate ? new Date(r.closingDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Not set',
+        deadlinePassed: Boolean(r.closingDate && new Date(r.closingDate) < new Date()),
+        invitedVendorsCount: invitedCount,
+        quotesCount: quoteCountByRfq.get(r.rfqId) || 0
+      };
+    });
+    if (statusRepairs.length) await RfqHeader.bulkWrite(statusRepairs, { ordered: false });
+
+    return res.json({
+      success: true, data: enriched, total, page: safePage, pageSize, totalPages,
+      hasPrevious: safePage > 1, hasNext: safePage < totalPages
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── LOGISTICS PROVIDERS CRUD API ───────────────────────────────────────────
+
+router.get('/logistics-providers', authenticateToken, authorizePermission('logistics-providers', 'view'), async (req, res) => {
+  try {
+    const providers = await LogisticsProvider.find().sort({ createdAt: -1 }).lean().catch(() => []);
+
+    // Fetch logistics payments to calculate paymentsCount per provider dynamically
+    const payments = await LogisticsPayment.find().lean().catch(() => []);
+    const countMap = {};
+    payments.forEach(p => {
+      const key1 = (p.vendorId || '').toLowerCase();
+      const key2 = (p.vendorName || '').toLowerCase();
+      if (key1) countMap[key1] = (countMap[key1] || 0) + 1;
+      if (key2) countMap[key2] = (countMap[key2] || 0) + 1;
     });
 
-    const totalQty = Number(plainRfq.totalQuantity) || Number(plainRfq.cargoDetails?.containerCount) || 1;
-    const totalAllocated = updatedAllocations.filter((a) => a.approved === true).reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
-    const expectedStatus = totalAllocated >= totalQty ? 'awarded' : totalAllocated > 0 ? 'partially_awarded' : plainRfq.status;
+    const normalized = providers.map(p => {
+      const pid = (p.providerId || '').toLowerCase();
+      const pname = (p.name || p.companyName || '').toLowerCase();
+      const count = (countMap[pid] || 0) + (countMap[pname] || 0);
 
-    if (plainRfq.status !== expectedStatus) needsSave = true;
-
-    if (needsSave) {
-      const awardedVendorId = updatedAllocations.filter(a => a.approved).map(a => a.vendorId).join(',');
-      const awardedVendorName = updatedAllocations.filter(a => a.approved).map(a => a.vendorName).join(', ');
-      const awardedQuoteId = updatedAllocations.filter(a => a.approved).map(a => a.quoteId).join(',');
-      
-      const updateData = {
-        awardAllocations: updatedAllocations,
-        allocatedQuantity: totalAllocated,
-        pendingAllocation: Math.max(0, totalQty - totalAllocated),
-        status: expectedStatus,
-        ...(awardedVendorId ? { awardedVendorId, awardedVendorName, awardedQuoteId } : {})
+      return {
+        ...p,
+        name: p.name || p.companyName || 'Logistics Provider',
+        companyName: p.name || p.companyName || 'Logistics Provider',
+        paymentsCount: count || p.paymentsCount || 0
       };
+    });
 
-      if (typeof rfq.save === 'function') {
-        rfq.set(updateData);
-        await rfq.save();
-        return rfq;
-      } else {
-        await RfqHeader.updateOne({ _id: plainRfq._id }, { $set: updateData });
-        return { ...plainRfq, ...updateData };
-      }
-    }
-
-    return rfq;
+    return res.json({ success: true, count: normalized.length, providers: normalized });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
   }
+});
 
-  async function getRfqAwardApproval(rfq) {
-    if (!rfq) return { required: false, approval: null, approved: false };
-    const plainRfq = typeof rfq.toObject === 'function' ? rfq.toObject() : rfq;
-
-    let approval = null;
-    const queryOrs = [];
-    if (plainRfq.awardApprovalId) queryOrs.push({ id: plainRfq.awardApprovalId });
-    if (plainRfq.rfqNumber) queryOrs.push({ id: plainRfq.rfqNumber }, { referenceId: plainRfq.rfqNumber });
-    if (plainRfq.rfqId) queryOrs.push({ id: plainRfq.rfqId }, { referenceId: plainRfq.rfqId }, { 'transactionSnapshot.rfqId': plainRfq.rfqId });
-
-    if (queryOrs.length > 0) {
-      approval = await Approval.findOne({ $or: queryOrs }).sort({ createdAt: -1 }).lean();
+router.get('/logistics-providers/:id', authenticateToken, authorizePermission('logistics-providers', 'view'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const filter = [{ providerId: id }];
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      filter.push({ _id: id });
     }
 
-    const required = Boolean(approval || plainRfq.awardApprovalId || String(plainRfq.status).toLowerCase() === 'pending_approval');
-    const approved = Boolean(approval && approval.status === 'Approved & Dispatched');
+    const provider = await LogisticsProvider.findOne({ $or: filter }).lean();
 
-    return {
-      required,
-      approval,
-      approved
-    };
+    if (!provider) {
+      return res.status(404).json({ success: false, error: 'Provider not found.' });
+    }
+
+    return res.json({
+      success: true,
+      provider: {
+        ...provider,
+        companyName: provider.name || provider.companyName,
+        name: provider.name || provider.companyName
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
   }
+});
 
-  async function resolveVendorAwardedRfq(req) {
-    const vendor = await getFreightVendorFromRequest(req);
-    if (!vendor) return { error: 'Freight Forwarder access is required.', status: 403 };
-    let rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
-    if (!rfq || !isFreightVendorInvited(rfq.toObject ? rfq.toObject() : rfq, vendor)) return { error: 'Assigned RFQ not found.', status: 404 };
+router.post('/logistics-providers', authenticateToken, authorizePermission('logistics-providers', 'manage'), async (req, res) => {
+  try {
+    const {
+      name, companyName, contactPerson, phone, email, status,
+      gstin, pan, bankName, bankBranch, accountNumber, ifscCode, serviceType
+    } = req.body;
 
-    rfq = await syncRfqAwardStatus(rfq);
-    const plainRfq = typeof rfq.toObject === 'function' ? rfq.toObject() : rfq;
-
-    const awardApproval = await getRfqAwardApproval(plainRfq);
-    const allocation = getVendorAward(plainRfq, vendor);
-    const allocationAlreadyApproved = allocation?.approved === true || (awardApproval.approved && allocation?.approved !== false);
-
-    if (!allocationAlreadyApproved && !awardApproval.approved) {
-      return { error: `Bill of Lading access is locked until the RFQ award approval is completed. Current approval status: ${awardApproval.approval?.status || 'Pending'}.`, status: 403 };
+    const finalName = (name || companyName || '').trim();
+    if (!finalName) {
+      return res.status(400).json({ success: false, error: 'Company Name is required.' });
     }
-    if ((!['pending_approval', 'partially_awarded', 'awarded'].includes(String(plainRfq.status).toLowerCase()) && !awardApproval.approved) || !allocation || allocation.approved === false) {
-      return { error: 'Only a vendor with an approved RFQ allocation can manage Bill of Lading entries.', status: 403 };
-    }
-    return { vendor, rfq, allocation };
+
+    const providerId = `LP-${Date.now().toString().slice(-6)}`;
+    const newProvider = await LogisticsProvider.create({
+      providerId,
+      name: finalName,
+      contactPerson: contactPerson || '',
+      phone: phone || '',
+      email: email || '',
+      status: status || 'Active',
+      serviceType: serviceType || 'Freight Forwarder',
+      gstin: gstin || '',
+      pan: pan || '',
+      bankName: bankName || '',
+      bankBranch: bankBranch || '',
+      accountNumber: accountNumber || '',
+      ifscCode: ifscCode || '',
+      paymentsCount: 0
+    });
+
+    const obj = newProvider.toObject();
+    return res.status(201).json({
+      success: true,
+      message: 'Provider created successfully',
+      provider: {
+        ...obj,
+        companyName: finalName
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
   }
+});
 
-  // ─── GET /api/p2p/rfqs ────────────────────────────────────────────────────────
+router.put('/logistics-providers/:id', authenticateToken, authorizePermission('logistics-providers', 'manage'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = { ...req.body };
+    delete updates.providerId;
+    delete updates._id;
 
-  router.get('/rfqs', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'view'), async (req, res) => {
-    try {
-      const search = String(req.query.q || req.query.search || '').trim();
-      const statusFilter = String(req.query.status || '').trim();
-      const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
-      const pageSize = Math.min(100, Math.max(1, Number.parseInt(req.query.pageSize || req.query.size, 10) || 10));
-
-      const filter = { isDeleted: { $ne: true } };
-      if (search) {
-        const rx = new RegExp(escapeRegex(search), 'i');
-        filter.$or = [{ rfqNumber: rx }, { title: rx }, { poId: rx }, { sapPoNumber: rx }];
-      }
-      if (statusFilter && statusFilter !== 'All Status' && statusFilter !== 'All') {
-        if (statusFilter.toLowerCase() === 'expired') {
-          filter.closingDate = { $lt: new Date() };
-          filter.status = 'published';
-        } else filter.status = statusFilter.toLowerCase().replace(/\s+/g, '_');
-      }
-
-      const total = await RfqHeader.countDocuments(filter);
-      const totalPages = Math.max(1, Math.ceil(total / pageSize));
-      const safePage = Math.min(page, totalPages);
-      const rfqs = await RfqHeader.find(filter)
-        .sort({ createdAt: -1, _id: -1 })
-        .skip((safePage - 1) * pageSize)
-        .limit(pageSize)
-        .lean();
-
-      const rfqIds = rfqs.map((rfq) => rfq.rfqId).filter(Boolean);
-      const approvalIds = rfqs.map((rfq) => rfq.awardApprovalId).filter(Boolean);
-      const [quoteCounts, approvals] = await Promise.all([
-        RfqQuote.aggregate([
-          { $match: { rfqId: { $in: rfqIds } } },
-          { $group: { _id: '$rfqId', count: { $sum: 1 } } }
-        ]),
-        Approval.find({
-          $or: [
-            { id: { $in: [...approvalIds, ...rfqIds] } },
-            { referenceId: { $in: rfqIds } },
-            { 'transactionSnapshot.rfqId': { $in: rfqIds } }
-          ]
-        }).sort({ createdAt: -1 }).lean()
-      ]);
-      const quoteCountByRfq = new Map(quoteCounts.map((entry) => [entry._id, entry.count]));
-      const approvalByKey = new Map();
-      approvals.forEach((approval) => {
-        [approval.id, approval.referenceId, approval.transactionSnapshot?.rfqId].filter(Boolean)
-          .forEach((key) => { if (!approvalByKey.has(String(key))) approvalByKey.set(String(key), approval); });
-      });
-      const statusRepairs = [];
-      const enriched = rfqs.map((r) => {
-        let currentStatus = r.status || 'published';
-        const app = approvalByKey.get(String(r.awardApprovalId || r.rfqId));
-        if (app?.status === 'Approved & Dispatched') {
-          const totalQuantity = Number(r.totalQuantity) || Number(r.cargoDetails?.containerCount) || 0;
-          const approvedQuantity = (Array.isArray(r.awardAllocations) ? r.awardAllocations : [])
-            .filter((allocation) => allocation.approved === true)
-            .reduce((sum, allocation) => sum + (Number(allocation.containers) || 0), 0);
-          currentStatus = totalQuantity > 0 && approvedQuantity >= totalQuantity ? 'awarded' : approvedQuantity > 0 ? 'partially_awarded' : r.status;
-        }
-        else if (app?.status === 'Rejected' && r.status === 'pending_approval') currentStatus = 'published';
-        if (currentStatus !== r.status || (!r.awardApprovalId && app?.id)) {
-          statusRepairs.push({
-            updateOne: {
-              filter: { _id: r._id },
-              update: { $set: { status: currentStatus, ...(app?.id ? { awardApprovalId: app.id } : {}) } }
-            }
-          });
-        }
-        const invitedCount = (r.invitedVendors && Array.isArray(r.invitedVendors)) ? r.invitedVendors.length : 0;
-        return {
-          ...r,
-          status: currentStatus,
-          closingDateFormatted: r.closingDate ? new Date(r.closingDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Not set',
-          deadlinePassed: Boolean(r.closingDate && new Date(r.closingDate) < new Date()),
-          invitedVendorsCount: invitedCount,
-          quotesCount: quoteCountByRfq.get(r.rfqId) || 0
-        };
-      });
-      if (statusRepairs.length) await RfqHeader.bulkWrite(statusRepairs, { ordered: false });
-
-      return res.json({
-        success: true, data: enriched, total, page: safePage, pageSize, totalPages,
-        hasPrevious: safePage > 1, hasNext: safePage < totalPages
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+    if (updates.companyName || updates.name) {
+      updates.name = (updates.name || updates.companyName || '').trim();
     }
-  });
-
-  // ─── LOGISTICS PROVIDERS CRUD API ───────────────────────────────────────────
-
-  router.get('/logistics-providers', authenticateToken, authorizePermission('logistics-providers', 'view'), async (req, res) => {
-    try {
-      const providers = await LogisticsProvider.find().sort({ createdAt: -1 }).lean().catch(() => []);
-
-      // Fetch logistics payments to calculate paymentsCount per provider dynamically
-      const payments = await LogisticsPayment.find().lean().catch(() => []);
-      const countMap = {};
-      payments.forEach(p => {
-        const key1 = (p.vendorId || '').toLowerCase();
-        const key2 = (p.vendorName || '').toLowerCase();
-        if (key1) countMap[key1] = (countMap[key1] || 0) + 1;
-        if (key2) countMap[key2] = (countMap[key2] || 0) + 1;
-      });
-
-      const normalized = providers.map(p => {
-        const pid = (p.providerId || '').toLowerCase();
-        const pname = (p.name || p.companyName || '').toLowerCase();
-        const count = (countMap[pid] || 0) + (countMap[pname] || 0);
-
-        return {
-          ...p,
-          name: p.name || p.companyName || 'Logistics Provider',
-          companyName: p.name || p.companyName || 'Logistics Provider',
-          paymentsCount: count || p.paymentsCount || 0
-        };
-      });
-
-      return res.json({ success: true, count: normalized.length, providers: normalized });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+    if (updates.bankBranch || updates.branch) {
+      updates.bankBranch = updates.bankBranch || updates.branch || '';
     }
-  });
 
-  router.get('/logistics-providers/:id', authenticateToken, authorizePermission('logistics-providers', 'view'), async (req, res) => {
-    try {
-      const { id } = req.params;
-      const filter = [{ providerId: id }];
-      if (mongoose.Types.ObjectId.isValid(id)) {
-        filter.push({ _id: id });
-      }
-
-      const provider = await LogisticsProvider.findOne({ $or: filter }).lean();
-
-      if (!provider) {
-        return res.status(404).json({ success: false, error: 'Provider not found.' });
-      }
-
-      return res.json({
-        success: true,
-        provider: {
-          ...provider,
-          companyName: provider.name || provider.companyName,
-          name: provider.name || provider.companyName
-        }
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+    const filter = [{ providerId: id }];
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      filter.push({ _id: id });
     }
-  });
 
-  router.post('/logistics-providers', authenticateToken, authorizePermission('logistics-providers', 'manage'), async (req, res) => {
-    try {
-      const {
-        name, companyName, contactPerson, phone, email, status,
-        gstin, pan, bankName, bankBranch, accountNumber, ifscCode, serviceType
-      } = req.body;
+    const updated = await LogisticsProvider.findOneAndUpdate(
+      { $or: filter },
+      { $set: updates },
+      { new: true }
+    );
 
-      const finalName = (name || companyName || '').trim();
-      if (!finalName) {
-        return res.status(400).json({ success: false, error: 'Company Name is required.' });
-      }
-
-      const providerId = `LP-${Date.now().toString().slice(-6)}`;
-      const newProvider = await LogisticsProvider.create({
-        providerId,
-        name: finalName,
-        contactPerson: contactPerson || '',
-        phone: phone || '',
-        email: email || '',
-        status: status || 'Active',
-        serviceType: serviceType || 'Freight Forwarder',
-        gstin: gstin || '',
-        pan: pan || '',
-        bankName: bankName || '',
-        bankBranch: bankBranch || '',
-        accountNumber: accountNumber || '',
-        ifscCode: ifscCode || '',
-        paymentsCount: 0
-      });
-
-      const obj = newProvider.toObject();
-      return res.status(201).json({
-        success: true,
-        message: 'Provider created successfully',
-        provider: {
-          ...obj,
-          companyName: finalName
-        }
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+    if (!updated) {
+      return res.status(404).json({ success: false, error: 'Provider not found.' });
     }
-  });
 
-  router.put('/logistics-providers/:id', authenticateToken, authorizePermission('logistics-providers', 'manage'), async (req, res) => {
-    try {
-      const { id } = req.params;
-      const updates = { ...req.body };
-      delete updates.providerId;
-      delete updates._id;
-
-      if (updates.companyName || updates.name) {
-        updates.name = (updates.name || updates.companyName || '').trim();
+    const obj = updated.toObject ? updated.toObject() : updated;
+    return res.json({
+      success: true,
+      message: 'Provider updated successfully',
+      provider: {
+        ...obj,
+        companyName: obj.name
       }
-      if (updates.bankBranch || updates.branch) {
-        updates.bankBranch = updates.bankBranch || updates.branch || '';
-      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-      const filter = [{ providerId: id }];
-      if (mongoose.Types.ObjectId.isValid(id)) {
-        filter.push({ _id: id });
-      }
-
-      const updated = await LogisticsProvider.findOneAndUpdate(
-        { $or: filter },
-        { $set: updates },
-        { new: true }
-      );
-
-      if (!updated) {
-        return res.status(404).json({ success: false, error: 'Provider not found.' });
-      }
-
-      const obj = updated.toObject ? updated.toObject() : updated;
-      return res.json({
-        success: true,
-        message: 'Provider updated successfully',
-        provider: {
-          ...obj,
-          companyName: obj.name
-        }
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+router.delete('/logistics-providers/:id', authenticateToken, authorizePermission('logistics-providers', 'manage'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const filter = [{ providerId: id }];
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      filter.push({ _id: id });
     }
-  });
 
-  router.delete('/logistics-providers/:id', authenticateToken, authorizePermission('logistics-providers', 'manage'), async (req, res) => {
-    try {
-      const { id } = req.params;
-      const filter = [{ providerId: id }];
-      if (mongoose.Types.ObjectId.isValid(id)) {
-        filter.push({ _id: id });
+    await LogisticsProvider.findOneAndDelete({ $or: filter });
+    return res.json({ success: true, message: 'Provider deleted successfully', deletedId: id });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── GET Freight Forwarders / Shipping Lines Vendor List ──────────────────────
+
+router.get('/rfqs/logistics-vendors', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'view'), async (req, res) => {
+  try {
+    const statusRegex = /active/i;
+    const catRegex = /logistics|freight|forwarder|shipping/i;
+
+    const [realVendors] = await Promise.all([
+      Vendor.find({
+        status: statusRegex,
+        $or: [{ vendorType: catRegex }, { category: catRegex }]
+      }).lean().catch(() => [])
+    ]);
+
+    const combinedList = [];
+    const seenIds = new Set();
+
+
+    for (const v of realVendors) {
+      const id = String(v.id || v._id);
+      if (id && !seenIds.has(id)) {
+        seenIds.add(id);
+        combinedList.push({
+          id,
+          sapVendorCode: v.sapVendorCode || v.supplierId || v.id,
+          companyName: v.companyName || v.name,
+          vendorType: v.vendorType || 'Freight Forwarder',
+          category: v.category || 'Logistics',
+          email: v.email || '',
+          phone: v.phone || ''
+        });
       }
-
-      await LogisticsProvider.findOneAndDelete({ $or: filter });
-      return res.json({ success: true, message: 'Provider deleted successfully', deletedId: id });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
     }
-  });
 
-  // ─── GET Freight Forwarders / Shipping Lines Vendor List ──────────────────────
+    return res.json({
+      success: true,
+      data: combinedList,
+      total: combinedList.length
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-  router.get('/rfqs/logistics-vendors', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'view'), async (req, res) => {
-    try {
-      const statusRegex = /active/i;
-      const catRegex = /logistics|freight|forwarder|shipping/i;
+// ─── POST Create RFQ ─────────────────────────────────────────────────────────
 
-      const [realVendors] = await Promise.all([
-        Vendor.find({
-          status: statusRegex,
-          $or: [{ vendorType: catRegex }, { category: catRegex }]
-        }).lean().catch(() => [])
-      ]);
+router.post('/rfqs/demo-workflow', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
+  try {
+    if (req.user?.role === 'Vendor') return res.status(403).json({ success: false, error: 'Only procurement users can create RFQ test workflows.' });
+    const poCandidates = await PurchaseOrder.find().sort({ createdAt: -1 }).limit(50).lean();
+    const po = poCandidates.find(validateOpenPo);
+    if (!po) return res.status(409).json({ success: false, error: 'Create or sync an open purchase order before generating an RFQ workflow.' });
+    const vendors = await Vendor.find({ status: 'Active', $or: [{ category: { $in: ['Logistics', 'Freight Forwarder', 'Shipping Line'] } }, { vendorType: { $in: ['Freight Forwarder', 'Shipping Line', 'Logistics Provider'] } }] }).limit(3).lean();
+    if (!vendors.length) return res.status(409).json({ success: false, error: 'Create at least one active Freight Forwarder before generating an RFQ workflow.' });
+    const rfqNumber = await nextRfqNumber();
+    const poNumber = po.poId || po.sapPoNumber || po.poNumber;
+    const containerCount = 5;
+    const rfq = await RfqHeader.create({ rfqId: rfqNumber, rfqNumber, title: `Freight sourcing test — ${poNumber}`, poId: poNumber, sapPoNumber: poNumber, description: 'Controlled RFQ workflow test: quotation, full award allocation, BL, EXIM, customs clearance, and logistics invoice.', cargoDetails: { shippingTerms: 'FOB', cargoType: 'SOLAR MATERIAL', containerType: '40 HC', containerCount, portOfOrigin: 'SHANGHAI', portOfDestination: 'NHAVA SHEVA', weightPerContainer: 24, estimatedReadinessDate: new Date(Date.now() + 3 * 86400000) }, invitedVendors: vendors.map((vendor) => ({ vendorId: vendor.id || String(vendor._id), sapVendorCode: vendor.sapVendorCode || vendor.supplierId, companyName: vendor.companyName })), closingDate: new Date(Date.now() + 7 * 86400000), status: 'published', totalQuantity: containerCount, allocatedQuantity: 0, pendingAllocation: containerCount, isDemoWorkflow: true, createdBy: req.user?.id || req.user?.email });
+    broadcastEvent('RFQ_INVITED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, title: rfq.title, closingDate: rfq.closingDate, vendorIds: vendors.flatMap((vendor) => [vendor.id, vendor.sapVendorCode]).filter(Boolean), demo: true });
+    return res.status(201).json({ success: true, message: 'RFQ test workflow created without sending email.', data: rfq, nextStep: 'Sign in as an invited Freight Forwarder and submit a quotation.' });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
 
-      const combinedList = [];
-      const seenIds = new Set();
+router.post('/rfqs', authenticateToken, authorizePermission('rfq', 'create'), async (req, res) => {
+  try {
+    const {
+      title, linkedPoId, closingDate, description,
+      shippingTerms, cargoType, portOfLoading, portOfDischarge,
+      containerType, containerCount, weightPerContainer, estimatedReadinessDate,
+      invitedVendors
+    } = req.body;
 
+    const validationError = validateRfqPayload(req.body);
+    if (validationError) return res.status(400).json({ success: false, error: validationError });
+    const po = await PurchaseOrder.findOne({ $or: [{ poId: linkedPoId }, { sapPoNumber: linkedPoId }, { poNumber: linkedPoId }] }).lean();
+    if (!validateOpenPo(po)) return res.status(400).json({ success: false, error: 'Linked purchase order does not exist or is not open.' });
+    const vendorKeys = invitedVendors.flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).filter(Boolean);
+    const activeVendors = await Vendor.find({
+      status: /active/i,
+      $and: [
+        { $or: [{ id: { $in: vendorKeys } }, { sapVendorCode: { $in: vendorKeys } }, { supplierId: { $in: vendorKeys } }] },
+        { $or: [{ vendorType: /logistics|freight|forwarder|shipping/i }, { category: /logistics|freight|forwarder|shipping/i }] }
+      ]
+    }).select('id sapVendorCode supplierId companyName').lean();
+    const matchedInviteCount = invitedVendors.filter((invite) => activeVendors.some((vendor) =>
+      [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean).some((key) =>
+        [invite.vendorId, invite.sapVendorCode].filter(Boolean).some((value) => sameValue(key, value))
+      )
+    )).length;
+    if (matchedInviteCount !== invitedVendors.length) return res.status(400).json({ success: false, error: 'One or more invited Freight Forwarders are invalid, inactive, or not logistics vendors.' });
+    const rfqNumber = await nextRfqNumber();
 
-      for (const v of realVendors) {
-        const id = String(v.id || v._id);
-        if (id && !seenIds.has(id)) {
-          seenIds.add(id);
-          combinedList.push({
-            id,
-            sapVendorCode: v.sapVendorCode || v.supplierId || v.id,
-            companyName: v.companyName || v.name,
-            vendorType: v.vendorType || 'Freight Forwarder',
-            category: v.category || 'Logistics',
-            email: v.email || '',
-            phone: v.phone || ''
-          });
+    const newRfq = await RfqHeader.create({
+      rfqId: rfqNumber,
+      rfqNumber,
+      title: title.trim(),
+      poId: linkedPoId,
+      sapPoNumber: linkedPoId,
+      description: String(description || '').trim(),
+      cargoDetails: {
+        containerType,
+        containerCount: Number(containerCount),
+        portOfOrigin: portOfLoading,
+        portOfDestination: portOfDischarge,
+        cargoType: cargoType,
+        shippingTerms,
+        weightPerContainer: weightPerContainer === '' ? undefined : Number(weightPerContainer),
+        estimatedReadinessDate: estimatedReadinessDate || undefined
+      },
+      totalQuantity: Number(containerCount) || 1,
+      allocatedQuantity: 0,
+      pendingAllocation: Number(containerCount) || 1,
+      closingDate: new Date(closingDate),
+      status: 'published',
+      invitedVendors: Array.isArray(invitedVendors) ? invitedVendors : []
+    });
+
+    const inviteKeys = (newRfq.invitedVendors || []).flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).filter(Boolean);
+    const invitedVendorDocs = inviteKeys.length ? await Vendor.find({
+      $or: [{ id: { $in: inviteKeys } }, { sapVendorCode: { $in: inviteKeys } }, { supplierId: { $in: inviteKeys } }]
+    }).select('id sapVendorCode supplierId companyName email').lean() : [];
+
+    broadcastEvent('RFQ_INVITED', {
+      rfqId: newRfq.rfqId,
+      rfqNumber: newRfq.rfqNumber,
+      title: newRfq.title,
+      closingDate: newRfq.closingDate,
+      vendorIds: inviteKeys
+    });
+    Promise.allSettled(invitedVendorDocs.filter((vendor) => vendor.email).map((vendor) =>
+      sendRfqInvitationEmail({
+        to: vendor.email,
+        vendorName: vendor.companyName,
+        rfqNumber: newRfq.rfqNumber,
+        title: newRfq.title,
+        closingDate: newRfq.closingDate
+      })
+    )).catch(() => { });
+
+    return res.status(201).json({ success: true, data: newRfq });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── GET Single RFQ Details ──────────────────────────────────────────────────
+
+router.get('/rfqs/:id', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'view'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    let rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }, { awardApprovalId: id }] }).lean();
+
+    if (!rfq) {
+      const app = await Approval.findOne({ $or: [{ id }, { referenceId: id }] }).lean();
+      if (app && app.transactionSnapshot?.rfqId) {
+        const targetId = app.transactionSnapshot.rfqId;
+        rfq = await RfqHeader.findOne({ $or: [{ rfqId: targetId }, { rfqNumber: targetId }] }).lean();
+      }
+    }
+
+    if (!rfq) {
+      return res.status(404).json({ success: false, error: 'RFQ not found' });
+    }
+
+    // Imported timestamps are kept separately because Mongoose timestamps make
+    // createdAt immutable on an existing document. Present the source date to
+    // users while retaining Mongo's audit timestamp internally.
+    if (rfq.sourceCreatedAt) rfq.createdAt = rfq.sourceCreatedAt;
+    if (rfq.sourceUpdatedAt) rfq.updatedAt = rfq.sourceUpdatedAt;
+
+    const quotes = (await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 }).lean())
+      .map((quote, index) => ({ ...quote, rank: `L${index + 1}` }));
+    const blEntries = await RfqBlEntry.find({ rfqId: rfq.rfqId }).lean();
+
+    // Get approval if exists (should be unique by id)
+    const approval = await Approval.findOne({
+      $or: [
+        ...(rfq.awardApprovalId ? [{ id: rfq.awardApprovalId }] : []),
+        { id: rfq.rfqNumber },
+        { referenceId: rfq.rfqNumber }
+      ]
+    }).lean();
+    if (approval && !rfq.awardApprovalId) rfq.awardApprovalId = approval.id;
+
+    let approvalProgress = null;
+    if (approval) {
+      let steps = [];
+      try { steps = JSON.parse(approval.workflowSteps || '[]'); } catch (_) { }
+      steps = steps.sort((left, right) => Number(left.step) - Number(right.step));
+      const approvedSteps = new Set((approval.actionHistory || []).filter((item) => item.action === 'approve').map((item) => Number(item.step)));
+      const terminalApproved = approval.status === 'Approved & Dispatched';
+      const terminalRejected = approval.status === 'Rejected';
+      const activeStep = steps.find((step) => Number(step.step) === Number(approval.currentStep || 1));
+      const requesterValues = [approval.requestedById, approval.requestedBy].filter(Boolean).map((value) => String(value).trim().toLowerCase());
+      const userValues = [req.user?.id, req.user?.userId, req.user?.email, req.user?.name].filter(Boolean).map((value) => String(value).trim().toLowerCase());
+      const isOwnRequest = requesterValues.some((value) => userValues.includes(value));
+      const requiredRole = activeStep?.roleName || activeStep?.roleKey || '';
+
+      const userRoles = [req.user?.role].filter(Boolean);
+      if (req.user?.id) {
+        const delegators = await User.find({ parentUserId: req.user.id, status: 'Active' }, { role: 1 }).lean();
+        for (const d of delegators) {
+          if (d.role && !userRoles.includes(d.role)) userRoles.push(d.role);
         }
       }
 
-      return res.json({
-        success: true,
-        data: combinedList,
-        total: combinedList.length
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+      const canAct = roleCanAct(userRoles, requiredRole);
+      const isAdmin = ['admin', 'system_admin', 'super_admin'].includes(String(req.user?.role || '').toLowerCase());
+
+      approvalProgress = {
+        id: approval.id,
+        status: approval.status,
+        slab: approval.currentSlab,
+        currentStep: Number(approval.currentStep || 1),
+        totalSteps: steps.length || Number(approval.totalSteps || 0),
+        requiredRole,
+        canCurrentUserAct: !terminalApproved && !terminalRejected && (isAdmin || (!isOwnRequest && canAct)),
+        blockedReason: terminalApproved ? 'Approval completed.' : terminalRejected ? 'Approval rejected.' : (!isAdmin && isOwnRequest) ? 'The requester cannot approve their own request.' : (isAdmin || canAct) ? '' : `Waiting for a user with the ${requiredRole || 'required'} role.`,
+        submittedAt: approval.submittedAt,
+        actionHistory: approval.actionHistory || [],
+        steps: steps.map((step) => ({
+          ...step,
+          state: terminalApproved || approvedSteps.has(Number(step.step)) ? 'completed' : terminalRejected && Number(step.step) === Number(approval.currentStep) ? 'rejected' : Number(step.step) === Number(approval.currentStep) ? 'current' : 'upcoming'
+        }))
+      };
     }
-  });
 
-  // ─── POST Create RFQ ─────────────────────────────────────────────────────────
+    return res.json({
+      success: true,
+      data: {
+        ...rfq,
+        quotes,
+        blEntries,
+        workflow: {
+          current: rfq.status,
+          deadlinePassed: Boolean(rfq.closingDate && new Date(rfq.closingDate) < new Date()),
+          invited: (rfq.invitedVendors || []).length,
+          quotes: quotes.length,
+          awardedContainers: Number(rfq.allocatedQuantity) || 0,
+          blContainers: blEntries.reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0),
+          customsClearedContainers: blEntries.filter((entry) => ['custom_cleared', 'invoice_pending', 'payment_requested', 'payment_approved', 'payment_paid', 'closed'].includes(entry.status)).reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0)
+        },
+        approvalProgress
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-  router.post('/rfqs/demo-workflow', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
-    try {
-      if (req.user?.role === 'Vendor') return res.status(403).json({ success: false, error: 'Only procurement users can create RFQ test workflows.' });
-      const poCandidates = await PurchaseOrder.find().sort({ createdAt: -1 }).limit(50).lean();
-      const po = poCandidates.find(validateOpenPo);
-      if (!po) return res.status(409).json({ success: false, error: 'Create or sync an open purchase order before generating an RFQ workflow.' });
-      const vendors = await Vendor.find({ status: 'Active', $or: [{ category: { $in: ['Logistics', 'Freight Forwarder', 'Shipping Line'] } }, { vendorType: { $in: ['Freight Forwarder', 'Shipping Line', 'Logistics Provider'] } }] }).limit(3).lean();
-      if (!vendors.length) return res.status(409).json({ success: false, error: 'Create at least one active Freight Forwarder before generating an RFQ workflow.' });
-      const rfqNumber = await nextRfqNumber();
-      const poNumber = po.poId || po.sapPoNumber || po.poNumber;
-      const containerCount = 5;
-      const rfq = await RfqHeader.create({ rfqId: rfqNumber, rfqNumber, title: `Freight sourcing test — ${poNumber}`, poId: poNumber, sapPoNumber: poNumber, description: 'Controlled RFQ workflow test: quotation, full award allocation, BL, EXIM, customs clearance, and logistics invoice.', cargoDetails: { shippingTerms: 'FOB', cargoType: 'SOLAR MATERIAL', containerType: '40 HC', containerCount, portOfOrigin: 'SHANGHAI', portOfDestination: 'NHAVA SHEVA', weightPerContainer: 24, estimatedReadinessDate: new Date(Date.now() + 3 * 86400000) }, invitedVendors: vendors.map((vendor) => ({ vendorId: vendor.id || String(vendor._id), sapVendorCode: vendor.sapVendorCode || vendor.supplierId, companyName: vendor.companyName })), closingDate: new Date(Date.now() + 7 * 86400000), status: 'published', totalQuantity: containerCount, allocatedQuantity: 0, pendingAllocation: containerCount, isDemoWorkflow: true, createdBy: req.user?.id || req.user?.email });
-      broadcastEvent('RFQ_INVITED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, title: rfq.title, closingDate: rfq.closingDate, vendorIds: vendors.flatMap((vendor) => [vendor.id, vendor.sapVendorCode]).filter(Boolean), demo: true });
-      return res.status(201).json({ success: true, message: 'RFQ test workflow created without sending email.', data: rfq, nextStep: 'Sign in as an invited Freight Forwarder and submit a quotation.' });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
+// ─── PUT Update RFQ ──────────────────────────────────────────────────────────
 
-  router.post('/rfqs', authenticateToken, authorizePermission('rfq', 'create'), async (req, res) => {
-    try {
-      const {
-        title, linkedPoId, closingDate, description,
-        shippingTerms, cargoType, portOfLoading, portOfDischarge,
-        containerType, containerCount, weightPerContainer, estimatedReadinessDate,
-        invitedVendors
-      } = req.body;
+router.put('/rfqs/:id', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      title, linkedPoId, closingDate, description,
+      shippingTerms, cargoType, portOfLoading, portOfDischarge,
+      containerType, containerCount, weightPerContainer, estimatedReadinessDate,
+      invitedVendors, status
+    } = req.body;
 
-      const validationError = validateRfqPayload(req.body);
-      if (validationError) return res.status(400).json({ success: false, error: validationError });
-      const po = await PurchaseOrder.findOne({ $or: [{ poId: linkedPoId }, { sapPoNumber: linkedPoId }, { poNumber: linkedPoId }] }).lean();
-      if (!validateOpenPo(po)) return res.status(400).json({ success: false, error: 'Linked purchase order does not exist or is not open.' });
-      const vendorKeys = invitedVendors.flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).filter(Boolean);
-      const activeVendors = await Vendor.find({
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
+    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
+    if (['pending_approval', 'awarded', 'closed', 'cancelled'].includes(rfq.status)) return res.status(409).json({ success: false, error: `An RFQ in ${rfq.status.replace('_', ' ')} status cannot be edited.` });
+    const validationError = validateRfqPayload(req.body, { partial: true });
+    if (validationError) return res.status(400).json({ success: false, error: validationError });
+
+    if (title) rfq.title = title.trim();
+    if (linkedPoId) {
+      const linkedPo = await PurchaseOrder.findOne({ $or: [{ poId: linkedPoId }, { sapPoNumber: linkedPoId }, { poNumber: linkedPoId }] }).lean();
+      if (!validateOpenPo(linkedPo)) return res.status(400).json({ success: false, error: 'Linked purchase order does not exist or is not open.' });
+      rfq.poId = linkedPoId;
+      rfq.sapPoNumber = linkedPoId;
+    }
+    if (description !== undefined) rfq.description = description;
+    if (closingDate) rfq.closingDate = new Date(closingDate);
+    if (status) {
+      const nextStatus = String(status).toLowerCase().replace(/\s+/g, '_');
+      if (!['draft', 'published', 'closed', 'cancelled'].includes(nextStatus)) return res.status(400).json({ success: false, error: 'This RFQ status transition is not allowed from the edit form.' });
+      rfq.status = nextStatus;
+    }
+
+    if (!rfq.cargoDetails) rfq.cargoDetails = {};
+    if (shippingTerms) rfq.cargoDetails.shippingTerms = shippingTerms;
+    if (cargoType) rfq.cargoDetails.cargoType = cargoType;
+    if (portOfLoading) rfq.cargoDetails.portOfOrigin = portOfLoading;
+    if (portOfDischarge) rfq.cargoDetails.portOfDestination = portOfDischarge;
+    if (containerType) rfq.cargoDetails.containerType = containerType;
+    if (containerCount !== undefined) {
+      const nextContainerCount = Number(containerCount);
+      if (!Number.isFinite(nextContainerCount) || nextContainerCount <= 0) {
+        return res.status(400).json({ success: false, error: 'Number of containers must be greater than zero.' });
+      }
+      rfq.cargoDetails.containerCount = nextContainerCount;
+      rfq.totalQuantity = nextContainerCount;
+      rfq.allocatedQuantity = Math.min(Number(rfq.allocatedQuantity) || 0, nextContainerCount);
+      rfq.pendingAllocation = Math.max(0, nextContainerCount - rfq.allocatedQuantity);
+    }
+    if (weightPerContainer !== undefined) rfq.cargoDetails.weightPerContainer = weightPerContainer;
+    if (estimatedReadinessDate) rfq.cargoDetails.estimatedReadinessDate = new Date(estimatedReadinessDate);
+
+    if (invitedVendors && Array.isArray(invitedVendors)) {
+      if (!invitedVendors.length) return res.status(400).json({ success: false, error: 'At least one Freight Forwarder must remain invited.' });
+      const inviteKeys = invitedVendors.flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).filter(Boolean);
+      const activeFreightVendors = await Vendor.find({
         status: /active/i,
         $and: [
-          { $or: [{ id: { $in: vendorKeys } }, { sapVendorCode: { $in: vendorKeys } }, { supplierId: { $in: vendorKeys } }] },
+          { $or: [{ id: { $in: inviteKeys } }, { sapVendorCode: { $in: inviteKeys } }, { supplierId: { $in: inviteKeys } }] },
           { $or: [{ vendorType: /logistics|freight|forwarder|shipping/i }, { category: /logistics|freight|forwarder|shipping/i }] }
         ]
-      }).select('id sapVendorCode supplierId companyName').lean();
-      const matchedInviteCount = invitedVendors.filter((invite) => activeVendors.some((vendor) =>
+      }).select('id sapVendorCode supplierId').lean();
+      const validInviteCount = invitedVendors.filter((invite) => activeFreightVendors.some((vendor) =>
         [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean).some((key) =>
           [invite.vendorId, invite.sapVendorCode].filter(Boolean).some((value) => sameValue(key, value))
         )
       )).length;
-      if (matchedInviteCount !== invitedVendors.length) return res.status(400).json({ success: false, error: 'One or more invited Freight Forwarders are invalid, inactive, or not logistics vendors.' });
-      const rfqNumber = await nextRfqNumber();
-
-      const newRfq = await RfqHeader.create({
-        rfqId: rfqNumber,
-        rfqNumber,
-        title: title.trim(),
-        poId: linkedPoId,
-        sapPoNumber: linkedPoId,
-        description: String(description || '').trim(),
-        cargoDetails: {
-          containerType,
-          containerCount: Number(containerCount),
-          portOfOrigin: portOfLoading,
-          portOfDestination: portOfDischarge,
-          cargoType: cargoType,
-          shippingTerms,
-          weightPerContainer: weightPerContainer === '' ? undefined : Number(weightPerContainer),
-          estimatedReadinessDate: estimatedReadinessDate || undefined
-        },
-        totalQuantity: Number(containerCount) || 1,
-        allocatedQuantity: 0,
-        pendingAllocation: Number(containerCount) || 1,
-        closingDate: new Date(closingDate),
-        status: 'published',
-        invitedVendors: Array.isArray(invitedVendors) ? invitedVendors : []
-      });
-
-      const inviteKeys = (newRfq.invitedVendors || []).flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).filter(Boolean);
-      const invitedVendorDocs = inviteKeys.length ? await Vendor.find({
-        $or: [{ id: { $in: inviteKeys } }, { sapVendorCode: { $in: inviteKeys } }, { supplierId: { $in: inviteKeys } }]
-      }).select('id sapVendorCode supplierId companyName email').lean() : [];
-
-      broadcastEvent('RFQ_INVITED', {
-        rfqId: newRfq.rfqId,
-        rfqNumber: newRfq.rfqNumber,
-        title: newRfq.title,
-        closingDate: newRfq.closingDate,
-        vendorIds: inviteKeys
-      });
-      Promise.allSettled(invitedVendorDocs.filter((vendor) => vendor.email).map((vendor) =>
-        sendRfqInvitationEmail({
-          to: vendor.email,
-          vendorName: vendor.companyName,
-          rfqNumber: newRfq.rfqNumber,
-          title: newRfq.title,
-          closingDate: newRfq.closingDate
-        })
-      )).catch(() => { });
-
-      return res.status(201).json({ success: true, data: newRfq });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // ─── GET Single RFQ Details ──────────────────────────────────────────────────
-
-  router.get('/rfqs/:id', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'view'), async (req, res) => {
-    try {
-      const { id } = req.params;
-      let rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }, { awardApprovalId: id }] }).lean();
-
-      if (!rfq) {
-        const app = await Approval.findOne({ $or: [{ id }, { referenceId: id }] }).lean();
-        if (app && app.transactionSnapshot?.rfqId) {
-          const targetId = app.transactionSnapshot.rfqId;
-          rfq = await RfqHeader.findOne({ $or: [{ rfqId: targetId }, { rfqNumber: targetId }] }).lean();
-        }
-      }
-
-      if (!rfq) {
-        return res.status(404).json({ success: false, error: 'RFQ not found' });
-      }
-
-      // Imported timestamps are kept separately because Mongoose timestamps make
-      // createdAt immutable on an existing document. Present the source date to
-      // users while retaining Mongo's audit timestamp internally.
-      if (rfq.sourceCreatedAt) rfq.createdAt = rfq.sourceCreatedAt;
-      if (rfq.sourceUpdatedAt) rfq.updatedAt = rfq.sourceUpdatedAt;
-
-      const quotes = (await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 }).lean())
-        .map((quote, index) => ({ ...quote, rank: `L${index + 1}` }));
-      const blEntries = await RfqBlEntry.find({ rfqId: rfq.rfqId }).lean();
-
-      // Get approval if exists (should be unique by id)
-      const approval = await Approval.findOne({
-        $or: [
-          ...(rfq.awardApprovalId ? [{ id: rfq.awardApprovalId }] : []),
-          { id: rfq.rfqNumber },
-          { referenceId: rfq.rfqNumber }
-        ]
-      }).lean();
-      if (approval && !rfq.awardApprovalId) rfq.awardApprovalId = approval.id;
-
-      let approvalProgress = null;
-      if (approval) {
-        let steps = [];
-        try { steps = JSON.parse(approval.workflowSteps || '[]'); } catch (_) { }
-        steps = steps.sort((left, right) => Number(left.step) - Number(right.step));
-        const approvedSteps = new Set((approval.actionHistory || []).filter((item) => item.action === 'approve').map((item) => Number(item.step)));
-        const terminalApproved = approval.status === 'Approved & Dispatched';
-        const terminalRejected = approval.status === 'Rejected';
-        const activeStep = steps.find((step) => Number(step.step) === Number(approval.currentStep || 1));
-        const requesterValues = [approval.requestedById, approval.requestedBy].filter(Boolean).map((value) => String(value).trim().toLowerCase());
-        const userValues = [req.user?.id, req.user?.userId, req.user?.email, req.user?.name].filter(Boolean).map((value) => String(value).trim().toLowerCase());
-        const isOwnRequest = requesterValues.some((value) => userValues.includes(value));
-        const requiredRole = activeStep?.roleName || activeStep?.roleKey || '';
-
-        const userRoles = [req.user?.role].filter(Boolean);
-        if (req.user?.id) {
-          const delegators = await User.find({ parentUserId: req.user.id, status: 'Active' }, { role: 1 }).lean();
-          for (const d of delegators) {
-            if (d.role && !userRoles.includes(d.role)) userRoles.push(d.role);
-          }
-        }
-
-        const canAct = roleCanAct(userRoles, requiredRole);
-        const isAdmin = ['admin', 'system_admin', 'super_admin'].includes(String(req.user?.role || '').toLowerCase());
-
-        approvalProgress = {
-          id: approval.id,
-          status: approval.status,
-          slab: approval.currentSlab,
-          currentStep: Number(approval.currentStep || 1),
-          totalSteps: steps.length || Number(approval.totalSteps || 0),
-          requiredRole,
-          canCurrentUserAct: !terminalApproved && !terminalRejected && (isAdmin || (!isOwnRequest && canAct)),
-          blockedReason: terminalApproved ? 'Approval completed.' : terminalRejected ? 'Approval rejected.' : (!isAdmin && isOwnRequest) ? 'The requester cannot approve their own request.' : (isAdmin || canAct) ? '' : `Waiting for a user with the ${requiredRole || 'required'} role.`,
-          submittedAt: approval.submittedAt,
-          actionHistory: approval.actionHistory || [],
-          steps: steps.map((step) => ({
-            ...step,
-            state: terminalApproved || approvedSteps.has(Number(step.step)) ? 'completed' : terminalRejected && Number(step.step) === Number(approval.currentStep) ? 'rejected' : Number(step.step) === Number(approval.currentStep) ? 'current' : 'upcoming'
-          }))
-        };
-      }
-
-      return res.json({
-        success: true,
-        data: {
-          ...rfq,
-          quotes,
-          blEntries,
-          workflow: {
-            current: rfq.status,
-            deadlinePassed: Boolean(rfq.closingDate && new Date(rfq.closingDate) < new Date()),
-            invited: (rfq.invitedVendors || []).length,
-            quotes: quotes.length,
-            awardedContainers: Number(rfq.allocatedQuantity) || 0,
-            blContainers: blEntries.reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0),
-            customsClearedContainers: blEntries.filter((entry) => ['custom_cleared', 'invoice_pending', 'payment_requested', 'payment_approved', 'payment_paid', 'closed'].includes(entry.status)).reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0)
-          },
-          approvalProgress
-        }
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // ─── PUT Update RFQ ──────────────────────────────────────────────────────────
-
-  router.put('/rfqs/:id', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
-    try {
-      const { id } = req.params;
-      const {
-        title, linkedPoId, closingDate, description,
-        shippingTerms, cargoType, portOfLoading, portOfDischarge,
-        containerType, containerCount, weightPerContainer, estimatedReadinessDate,
-        invitedVendors, status
-      } = req.body;
-
-      const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
-      if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
-      if (['pending_approval', 'awarded', 'closed', 'cancelled'].includes(rfq.status)) return res.status(409).json({ success: false, error: `An RFQ in ${rfq.status.replace('_', ' ')} status cannot be edited.` });
-      const validationError = validateRfqPayload(req.body, { partial: true });
-      if (validationError) return res.status(400).json({ success: false, error: validationError });
-
-      if (title) rfq.title = title.trim();
-      if (linkedPoId) {
-        const linkedPo = await PurchaseOrder.findOne({ $or: [{ poId: linkedPoId }, { sapPoNumber: linkedPoId }, { poNumber: linkedPoId }] }).lean();
-        if (!validateOpenPo(linkedPo)) return res.status(400).json({ success: false, error: 'Linked purchase order does not exist or is not open.' });
-        rfq.poId = linkedPoId;
-        rfq.sapPoNumber = linkedPoId;
-      }
-      if (description !== undefined) rfq.description = description;
-      if (closingDate) rfq.closingDate = new Date(closingDate);
-      if (status) {
-        const nextStatus = String(status).toLowerCase().replace(/\s+/g, '_');
-        if (!['draft', 'published', 'closed', 'cancelled'].includes(nextStatus)) return res.status(400).json({ success: false, error: 'This RFQ status transition is not allowed from the edit form.' });
-        rfq.status = nextStatus;
-      }
-
-      if (!rfq.cargoDetails) rfq.cargoDetails = {};
-      if (shippingTerms) rfq.cargoDetails.shippingTerms = shippingTerms;
-      if (cargoType) rfq.cargoDetails.cargoType = cargoType;
-      if (portOfLoading) rfq.cargoDetails.portOfOrigin = portOfLoading;
-      if (portOfDischarge) rfq.cargoDetails.portOfDestination = portOfDischarge;
-      if (containerType) rfq.cargoDetails.containerType = containerType;
-      if (containerCount !== undefined) {
-        const nextContainerCount = Number(containerCount);
-        if (!Number.isFinite(nextContainerCount) || nextContainerCount <= 0) {
-          return res.status(400).json({ success: false, error: 'Number of containers must be greater than zero.' });
-        }
-        rfq.cargoDetails.containerCount = nextContainerCount;
-        rfq.totalQuantity = nextContainerCount;
-        rfq.allocatedQuantity = Math.min(Number(rfq.allocatedQuantity) || 0, nextContainerCount);
-        rfq.pendingAllocation = Math.max(0, nextContainerCount - rfq.allocatedQuantity);
-      }
-      if (weightPerContainer !== undefined) rfq.cargoDetails.weightPerContainer = weightPerContainer;
-      if (estimatedReadinessDate) rfq.cargoDetails.estimatedReadinessDate = new Date(estimatedReadinessDate);
-
-      if (invitedVendors && Array.isArray(invitedVendors)) {
-        if (!invitedVendors.length) return res.status(400).json({ success: false, error: 'At least one Freight Forwarder must remain invited.' });
-        const inviteKeys = invitedVendors.flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).filter(Boolean);
-        const activeFreightVendors = await Vendor.find({
-          status: /active/i,
-          $and: [
-            { $or: [{ id: { $in: inviteKeys } }, { sapVendorCode: { $in: inviteKeys } }, { supplierId: { $in: inviteKeys } }] },
-            { $or: [{ vendorType: /logistics|freight|forwarder|shipping/i }, { category: /logistics|freight|forwarder|shipping/i }] }
-          ]
-        }).select('id sapVendorCode supplierId').lean();
-        const validInviteCount = invitedVendors.filter((invite) => activeFreightVendors.some((vendor) =>
-          [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean).some((key) =>
-            [invite.vendorId, invite.sapVendorCode].filter(Boolean).some((value) => sameValue(key, value))
-          )
-        )).length;
-        if (validInviteCount !== invitedVendors.length) return res.status(400).json({ success: false, error: 'Every invited vendor must be an active Freight Forwarder.' });
-        const submittedQuotes = await RfqQuote.find({ rfqId: rfq.rfqId }).select('vendorId vendorName').lean();
-        const retainsVendor = (quote) => invitedVendors.some((vendor) =>
-          [vendor.vendorId, vendor.sapVendorCode].filter(Boolean).map(normaliseInviteValue).includes(normaliseInviteValue(quote.vendorId)) ||
-          normaliseInviteValue(vendor.companyName) === normaliseInviteValue(quote.vendorName)
-        );
-        if (submittedQuotes.some((quote) => !retainsVendor(quote))) {
-          return res.status(400).json({ success: false, error: 'A vendor that already submitted a quote cannot be removed.' });
-        }
-        const previousKeys = new Set((rfq.invitedVendors || []).flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).map(normaliseInviteValue).filter(Boolean));
-        rfq.invitedVendors = invitedVendors;
-        const addedVendorIds = invitedVendors.flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).filter((value) => value && !previousKeys.has(normaliseInviteValue(value)));
-        if (addedVendorIds.length) broadcastEvent('RFQ_INVITED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, title: rfq.title, closingDate: rfq.closingDate, vendorIds: addedVendorIds });
-      }
-
-      await rfq.save();
-      return res.json({ success: true, message: 'RFQ updated successfully in MongoDB.', data: rfq });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // ─── DELETE RFQ ──────────────────────────────────────────────────────────────
-
-  router.delete('/rfqs/:id', authenticateToken, authorizePermission('rfq', 'delete'), async (req, res) => {
-    try {
-      const { id } = req.params;
-      const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
-      if (rfq) {
-        const [quoteCount, blCount] = await Promise.all([RfqQuote.countDocuments({ rfqId: rfq.rfqId }), RfqBlEntry.countDocuments({ rfqId: rfq.rfqId })]);
-        if (quoteCount || blCount || ['pending_approval', 'awarded', 'closed'].includes(rfq.status)) return res.status(409).json({ success: false, error: 'RFQ cannot be deleted after quotation, approval, award, or shipment activity has started.' });
-        await RfqHeader.deleteOne({ _id: rfq._id });
-        await RfqQuote.deleteMany({ rfqId: rfq.rfqId }).catch(() => { });
-      }
-      return res.json({ success: true, message: 'RFQ deleted from MongoDB.' });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // ─── POST Copy/Duplicate RFQ ──────────────────────────────────────────────────
-
-  router.post('/rfqs/:id/copy', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
-    try {
-      const { id } = req.params;
-      const sourceRfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] }).lean();
-      if (!sourceRfq) return res.status(404).json({ success: false, error: 'Source RFQ not found' });
-
-      const newRfqNumber = await nextRfqNumber();
-
-      const newRfq = {
-        ...sourceRfq,
-        _id: undefined,
-        rfqId: newRfqNumber,
-        rfqNumber: newRfqNumber,
-        title: `COPY - ${sourceRfq.title}`,
-        status: 'draft',
-        closingDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        totalQuantity: Number(sourceRfq.cargoDetails?.containerCount) || Number(sourceRfq.totalQuantity) || 1,
-        allocatedQuantity: 0,
-        pendingAllocation: Number(sourceRfq.cargoDetails?.containerCount) || Number(sourceRfq.totalQuantity) || 1,
-        awardedVendorId: undefined,
-        awardedVendorName: undefined,
-        awardedQuoteId: undefined,
-        awardAllocations: undefined,
-        awardApprovalId: undefined,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
-
-      return res.status(201).json({ success: true, message: 'RFQ copied successfully.', data: newRfq });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // ─── POST Submit Vendor Quote with Auto L1..L5 Ranking ────────────────────────
-
-  router.post('/rfqs/:id/quote', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { vendorId, vendorName, shippingLine, oceanFreightUsd, stChargesInr, otherChargesInr, transitDays } = req.body;
-
-      const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
-      if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
-      if (rfq.status !== 'published' || (rfq.closingDate && new Date(rfq.closingDate) < new Date())) return res.status(409).json({ success: false, error: 'Quotes can only be submitted to an open, published RFQ before its deadline.' });
-      if (!vendorId || !vendorName || !shippingLine) return res.status(400).json({ success: false, error: 'Vendor, shipping line, and quote amounts are required.' });
-
-      const invitedVendor = (rfq.invitedVendors || []).find((vendor) =>
-        [vendor.vendorId, vendor.sapVendorCode, vendor.companyName].some((value) => normaliseInviteValue(value) === normaliseInviteValue(vendorId)) ||
-        normaliseInviteValue(vendor.companyName) === normaliseInviteValue(vendorName)
+      if (validInviteCount !== invitedVendors.length) return res.status(400).json({ success: false, error: 'Every invited vendor must be an active Freight Forwarder.' });
+      const submittedQuotes = await RfqQuote.find({ rfqId: rfq.rfqId }).select('vendorId vendorName').lean();
+      const retainsVendor = (quote) => invitedVendors.some((vendor) =>
+        [vendor.vendorId, vendor.sapVendorCode].filter(Boolean).map(normaliseInviteValue).includes(normaliseInviteValue(quote.vendorId)) ||
+        normaliseInviteValue(vendor.companyName) === normaliseInviteValue(quote.vendorName)
       );
-      if (!invitedVendor) return res.status(403).json({ success: false, error: 'Only a vendor invited to this RFQ can submit a quote.' });
-      const existingQuote = await RfqQuote.findOne({
-        rfqId: rfq.rfqId,
-        $or: [
-          { vendorId: { $in: [vendorId, invitedVendor.vendorId, invitedVendor.sapVendorCode].filter(Boolean) } },
-          { vendorName: invitedVendor.companyName }
-        ]
-      }).lean();
-      if (existingQuote) return res.status(409).json({ success: false, error: 'This vendor has already submitted a quote. Update the existing vendor quote instead.' });
+      if (submittedQuotes.some((quote) => !retainsVendor(quote))) {
+        return res.status(400).json({ success: false, error: 'A vendor that already submitted a quote cannot be removed.' });
+      }
+      const previousKeys = new Set((rfq.invitedVendors || []).flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).map(normaliseInviteValue).filter(Boolean));
+      rfq.invitedVendors = invitedVendors;
+      const addedVendorIds = invitedVendors.flatMap((vendor) => [vendor.vendorId, vendor.sapVendorCode]).filter((value) => value && !previousKeys.has(normaliseInviteValue(value)));
+      if (addedVendorIds.length) broadcastEvent('RFQ_INVITED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, title: rfq.title, closingDate: rfq.closingDate, vendorIds: addedVendorIds });
+    }
 
-      const oceanUsd = Number(oceanFreightUsd);
-      const stInr = Number(stChargesInr);
-      const othInr = Number(otherChargesInr || 0);
-      const transit = Number(transitDays);
-      if (!(oceanUsd > 0) || !Number.isFinite(stInr) || stInr < 0 || !Number.isFinite(othInr) || othInr < 0 || !Number.isInteger(transit) || transit <= 0) return res.status(400).json({ success: false, error: 'Enter valid positive freight and transit values; INR charges may be zero but not negative.' });
-      const usdConversion = await getFxConversion(oceanUsd, 'USD');
-      const usdRate = usdConversion.fxRate;
-      const totalInr = Math.round(usdConversion.amountINR + stInr + othInr);
+    await rfq.save();
+    return res.json({ success: true, message: 'RFQ updated successfully in MongoDB.', data: rfq });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-      const quoteId = `Q-${Date.now().toString().slice(-6)}`;
-      await RfqQuote.create({
-        quoteId,
-        rfqId: rfq.rfqId,
-        vendorId: invitedVendor.vendorId || invitedVendor.sapVendorCode || vendorId,
-        vendorName: invitedVendor.companyName || vendorName,
-        shippingLine,
-        oceanFreightUsd: oceanUsd,
-        stChargesInr: stInr,
-        otherChargesInr: othInr,
-        exchangeRate: usdRate,
-        totalInr,
-        freightAmount: oceanUsd,
-        destinationCharges: stInr,
-        transitDays: transit,
-        status: 'submitted'
+// ─── DELETE RFQ ──────────────────────────────────────────────────────────────
+
+router.delete('/rfqs/:id', authenticateToken, authorizePermission('rfq', 'delete'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
+    if (rfq) {
+      const [quoteCount, blCount] = await Promise.all([RfqQuote.countDocuments({ rfqId: rfq.rfqId }), RfqBlEntry.countDocuments({ rfqId: rfq.rfqId })]);
+      if (quoteCount || blCount || ['pending_approval', 'awarded', 'closed'].includes(rfq.status)) return res.status(409).json({ success: false, error: 'RFQ cannot be deleted after quotation, approval, award, or shipment activity has started.' });
+      await RfqHeader.deleteOne({ _id: rfq._id });
+      await RfqQuote.deleteMany({ rfqId: rfq.rfqId }).catch(() => { });
+    }
+    return res.json({ success: true, message: 'RFQ deleted from MongoDB.' });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── POST Copy/Duplicate RFQ ──────────────────────────────────────────────────
+
+router.post('/rfqs/:id/copy', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const sourceRfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] }).lean();
+    if (!sourceRfq) return res.status(404).json({ success: false, error: 'Source RFQ not found' });
+
+    const newRfqNumber = await nextRfqNumber();
+
+    const newRfq = {
+      ...sourceRfq,
+      _id: undefined,
+      rfqId: newRfqNumber,
+      rfqNumber: newRfqNumber,
+      title: `COPY - ${sourceRfq.title}`,
+      status: 'draft',
+      closingDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      totalQuantity: Number(sourceRfq.cargoDetails?.containerCount) || Number(sourceRfq.totalQuantity) || 1,
+      allocatedQuantity: 0,
+      pendingAllocation: Number(sourceRfq.cargoDetails?.containerCount) || Number(sourceRfq.totalQuantity) || 1,
+      awardedVendorId: undefined,
+      awardedVendorName: undefined,
+      awardedQuoteId: undefined,
+      awardAllocations: undefined,
+      awardApprovalId: undefined,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    return res.status(201).json({ success: true, message: 'RFQ copied successfully.', data: newRfq });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── POST Submit Vendor Quote with Auto L1..L5 Ranking ────────────────────────
+
+router.post('/rfqs/:id/quote', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { vendorId, vendorName, shippingLine, oceanFreightUsd, stChargesInr, otherChargesInr, transitDays } = req.body;
+
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
+    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
+    if (rfq.status !== 'published' || (rfq.closingDate && new Date(rfq.closingDate) < new Date())) return res.status(409).json({ success: false, error: 'Quotes can only be submitted to an open, published RFQ before its deadline.' });
+    if (!vendorId || !vendorName || !shippingLine) return res.status(400).json({ success: false, error: 'Vendor, shipping line, and quote amounts are required.' });
+
+    const invitedVendor = (rfq.invitedVendors || []).find((vendor) =>
+      [vendor.vendorId, vendor.sapVendorCode, vendor.companyName].some((value) => normaliseInviteValue(value) === normaliseInviteValue(vendorId)) ||
+      normaliseInviteValue(vendor.companyName) === normaliseInviteValue(vendorName)
+    );
+    if (!invitedVendor) return res.status(403).json({ success: false, error: 'Only a vendor invited to this RFQ can submit a quote.' });
+    const existingQuote = await RfqQuote.findOne({
+      rfqId: rfq.rfqId,
+      $or: [
+        { vendorId: { $in: [vendorId, invitedVendor.vendorId, invitedVendor.sapVendorCode].filter(Boolean) } },
+        { vendorName: invitedVendor.companyName }
+      ]
+    }).lean();
+    if (existingQuote) return res.status(409).json({ success: false, error: 'This vendor has already submitted a quote. Update the existing vendor quote instead.' });
+
+    const oceanUsd = Number(oceanFreightUsd);
+    const stInr = Number(stChargesInr);
+    const othInr = Number(otherChargesInr || 0);
+    const transit = Number(transitDays);
+    if (!(oceanUsd > 0) || !Number.isFinite(stInr) || stInr < 0 || !Number.isFinite(othInr) || othInr < 0 || !Number.isInteger(transit) || transit <= 0) return res.status(400).json({ success: false, error: 'Enter valid positive freight and transit values; INR charges may be zero but not negative.' });
+    const usdConversion = await getFxConversion(oceanUsd, 'USD');
+    const usdRate = usdConversion.fxRate;
+    const totalInr = Math.round(usdConversion.amountINR + stInr + othInr);
+
+    const quoteId = `Q-${Date.now().toString().slice(-6)}`;
+    await RfqQuote.create({
+      quoteId,
+      rfqId: rfq.rfqId,
+      vendorId: invitedVendor.vendorId || invitedVendor.sapVendorCode || vendorId,
+      vendorName: invitedVendor.companyName || vendorName,
+      shippingLine,
+      oceanFreightUsd: oceanUsd,
+      stChargesInr: stInr,
+      otherChargesInr: othInr,
+      exchangeRate: usdRate,
+      totalInr,
+      freightAmount: oceanUsd,
+      destinationCharges: stInr,
+      transitDays: transit,
+      status: 'submitted'
+    });
+
+    const allQuotes = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 });
+    for (let i = 0; i < allQuotes.length; i++) {
+      const rankLabel = i < 50 ? `L${i + 1}` : 'N/A';
+      allQuotes[i].rank = rankLabel;
+      await allQuotes[i].save();
+    }
+
+    return res.json({ success: true, message: 'Vendor quote submitted and ranked in MongoDB.', quoteId });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── POST Award RFQ Quote ─────────────────────────────────────────────────────
+
+router.post('/rfqs/:id/award', authenticateToken, authorizePermission('rfq', 'award'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { quoteId, vendorId, vendorName, allocations, submitForApproval, isReassignment } = req.body;
+
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
+    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
+
+    const allowedStatuses = ['published', 'open', 'partially_awarded', 'awarded'];
+    if (!allowedStatuses.includes(rfq.status)) {
+      return res.status(409).json({ success: false, error: `RFQ cannot be awarded while it is ${rfq.status.replace('_', ' ')}.` });
+    }
+
+    if (submitForApproval && Array.isArray(allocations)) {
+      const totalContainers = Number(rfq.cargoDetails?.containerCount) || Number(rfq.totalQuantity) || 0;
+      if (!allocations.length) return res.status(400).json({ success: false, error: 'Add at least one vendor allocation.' });
+
+      const quoteIds = allocations.map((item) => item.quoteId).filter(Boolean);
+      const quotes = await RfqQuote.find({ rfqId: rfq.rfqId, quoteId: { $in: quoteIds } }).lean();
+      if (quotes.length !== new Set(quoteIds).size) return res.status(400).json({ success: false, error: 'Every allocation must use a valid quote from this RFQ.' });
+
+      const normalized = allocations.map((item) => {
+        const quote = quotes.find((entry) => entry.quoteId === item.quoteId);
+        const containers = Number(item.containers);
+        if (!Number.isInteger(containers) || containers <= 0) throw new Error('Allocated containers must be positive whole numbers.');
+        const rate = Number(quote.totalInr) || 0;
+        const amount = rate * containers;
+        const remark = String(item.remark || item.remarks || '').trim();
+        return {
+          quoteId: quote.quoteId,
+          vendorId: quote.vendorId,
+          vendorName: quote.vendorName,
+          vendorCode: quote.vendorId,
+          containers,
+          ratePerContainer: rate,
+          ratePerContainerInr: rate,
+          allocationAmount: amount,
+          totalAmountInr: amount,
+          remark,
+          remarks: remark
+        };
       });
 
-      const allQuotes = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 });
-      for (let i = 0; i < allQuotes.length; i++) {
-        const rankLabel = i < 50 ? `L${i + 1}` : 'N/A';
-        allQuotes[i].rank = rankLabel;
-        await allQuotes[i].save();
+      const allocated = normalized.reduce((sum, item) => sum + item.containers, 0);
+
+      const existingAwardAllocations = Array.isArray(rfq.awardAllocations) ? rfq.awardAllocations : [];
+      const approvedAllocationsList = existingAwardAllocations.filter(a => a.approved === true);
+      const currentApprovedQty = approvedAllocationsList.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
+      const openContainers = Math.max(0, totalContainers - currentApprovedQty);
+
+      let effectiveReassignment = Boolean(isReassignment);
+      if (!effectiveReassignment && currentApprovedQty > 0 && (allocated > openContainers || allocated === totalContainers)) {
+        effectiveReassignment = true;
       }
 
-      return res.json({ success: true, message: 'Vendor quote submitted and ranked in MongoDB.', quoteId });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
+      const previouslyApprovedAllocations = effectiveReassignment ? [] : approvedAllocationsList;
+      const previouslyAllocatedQty = previouslyApprovedAllocations.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
+      const remainingToAllocate = Math.max(0, totalContainers - previouslyAllocatedQty);
 
-  // ─── POST Award RFQ Quote ─────────────────────────────────────────────────────
-
-  router.post('/rfqs/:id/award', authenticateToken, authorizePermission('rfq', 'award'), async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { quoteId, vendorId, vendorName, allocations, submitForApproval, isReassignment } = req.body;
-
-      const rfq = await RfqHeader.findOne({ $or: [{ rfqId: id }, { rfqNumber: id }] });
-      if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found' });
-
-      const allowedStatuses = ['published', 'open', 'partially_awarded', 'awarded'];
-      if (!allowedStatuses.includes(rfq.status)) {
-        return res.status(409).json({ success: false, error: `RFQ cannot be awarded while it is ${rfq.status.replace('_', ' ')}.` });
-      }
-
-      if (submitForApproval && Array.isArray(allocations)) {
-        const totalContainers = Number(rfq.cargoDetails?.containerCount) || Number(rfq.totalQuantity) || 0;
-        if (!allocations.length) return res.status(400).json({ success: false, error: 'Add at least one vendor allocation.' });
-
-        const quoteIds = allocations.map((item) => item.quoteId).filter(Boolean);
-        const quotes = await RfqQuote.find({ rfqId: rfq.rfqId, quoteId: { $in: quoteIds } }).lean();
-        if (quotes.length !== new Set(quoteIds).size) return res.status(400).json({ success: false, error: 'Every allocation must use a valid quote from this RFQ.' });
-
-        const normalized = allocations.map((item) => {
-          const quote = quotes.find((entry) => entry.quoteId === item.quoteId);
-          const containers = Number(item.containers);
-          if (!Number.isInteger(containers) || containers <= 0) throw new Error('Allocated containers must be positive whole numbers.');
-          const rate = Number(quote.totalInr) || 0;
-          const amount = rate * containers;
-          const remark = String(item.remark || item.remarks || '').trim();
-          return {
-            quoteId: quote.quoteId,
-            vendorId: quote.vendorId,
-            vendorName: quote.vendorName,
-            vendorCode: quote.vendorId,
-            containers,
-            ratePerContainer: rate,
-            ratePerContainerInr: rate,
-            allocationAmount: amount,
-            totalAmountInr: amount,
-            remark,
-            remarks: remark
-          };
+      if (allocated <= 0 || allocated > remainingToAllocate) {
+        return res.status(400).json({
+          success: false,
+          error: `You must allocate between 1 and ${remainingToAllocate} container(s).`
         });
+      }
 
-        const allocated = normalized.reduce((sum, item) => sum + item.containers, 0);
+      if (new Set(normalized.map((item) => item.quoteId)).size !== normalized.length) {
+        return res.status(400).json({ success: false, error: 'A vendor quote can only be allocated once.' });
+      }
 
-        const existingAwardAllocations = Array.isArray(rfq.awardAllocations) ? rfq.awardAllocations : [];
-        const approvedAllocationsList = existingAwardAllocations.filter(a => a.approved === true);
-        const currentApprovedQty = approvedAllocationsList.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
-        const openContainers = Math.max(0, totalContainers - currentApprovedQty);
+      const totalAmount = normalized.reduce((sum, item) => sum + item.allocationAmount, 0);
 
-        let effectiveReassignment = Boolean(isReassignment);
-        if (!effectiveReassignment && currentApprovedQty > 0 && (allocated > openContainers || allocated === totalContainers)) {
-          effectiveReassignment = true;
-        }
+      const approvalIdPrefix = effectiveReassignment ? 'RFQ-REASSIGN' : 'RFQ-AWARD';
+      const approvalId = `${approvalIdPrefix}-${rfq.rfqNumber}-${Date.now().toString().slice(-5)}`;
 
-        const previouslyApprovedAllocations = effectiveReassignment ? [] : approvedAllocationsList;
-        const previouslyAllocatedQty = previouslyApprovedAllocations.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
-        const remainingToAllocate = Math.max(0, totalContainers - previouslyAllocatedQty);
+      const awardWorkflow = await resolveWorkflowFromDB('RFQ Vendor Award', totalAmount, { currency: 'INR', cargoType: rfq.cargoDetails?.cargoType });
 
-        if (allocated <= 0 || allocated > remainingToAllocate) {
-          return res.status(400).json({
-            success: false,
-            error: `You must allocate between 1 and ${remainingToAllocate} container(s).`
-          });
-        }
+      const previousAward = effectiveReassignment && ['awarded', 'partially_awarded'].includes(rfq.status) ? {
+        previousVendorId: rfq.awardedVendorId,
+        previousVendorName: rfq.awardedVendorName,
+        previousAllocatedQuantity: rfq.allocatedQuantity,
+        reassignedAt: new Date(),
+        reassignedBy: req.user?.name || req.user?.email || 'System Admin'
+      } : {};
 
-        if (new Set(normalized.map((item) => item.quoteId)).size !== normalized.length) {
-          return res.status(400).json({ success: false, error: 'A vendor quote can only be allocated once.' });
-        }
+      const approval = await createApprovalRecord({
+        referenceId: approvalId,
+        type: 'RFQ Vendor Award',
+        vendorName: normalized.map((item) => item.vendorName).join(', '),
+        amountFormatted: `INR ${totalAmount}`,
+        poRef: rfq.poId,
+        requestedBy: req.user?.name || req.user?.email || 'System Admin',
+        requestedById: req.user?.id || req.user?.email,
+        requestId: req.headers['x-request-id'],
+        transactionSnapshot: {
+          rfqId: rfq.rfqId,
+          containers: allocated,
+          allocations: normalized,
+          totalAmount,
+          isReassignment: effectiveReassignment,
+          ...previousAward
+        },
+        wf: awardWorkflow,
+        skipAuditLog: true
+      });
 
-        const totalAmount = normalized.reduce((sum, item) => sum + item.allocationAmount, 0);
+      approval.containersCount = allocated;
+      approval.allocations = normalized;
+      approval.remarks = effectiveReassignment
+        ? `Container reassignment for ${rfq.rfqNumber} (Previous: ${rfq.awardedVendorName || 'N/A'})`
+        : `Container allocation for ${rfq.rfqNumber}`;
+      await approval.save();
 
-        const approvalIdPrefix = effectiveReassignment ? 'RFQ-REASSIGN' : 'RFQ-AWARD';
-        const approvalId = `${approvalIdPrefix}-${rfq.rfqNumber}-${Date.now().toString().slice(-5)}`;
+      const isFullReassignment = Boolean(effectiveReassignment) && ['awarded', 'partially_awarded'].includes(rfq.status) && (Number(rfq.allocatedQuantity) >= totalContainers);
 
-        const awardWorkflow = await resolveWorkflowFromDB('RFQ Vendor Award', totalAmount, { currency: 'INR', cargoType: rfq.cargoDetails?.cargoType });
+      // Keep the current approved allocation active until a reassignment is approved.
+      // This also lets a rejection restore the previous award without data loss.
+      const updatedAllocatedQty = approvedAllocationsList.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
 
-        const previousAward = effectiveReassignment && ['awarded', 'partially_awarded'].includes(rfq.status) ? {
+      if (isFullReassignment) {
+        const reassignmentHistory = rfq.get('reassignmentHistory') || [];
+        reassignmentHistory.push({
+          reassignedAt: new Date(),
+          reassignedBy: req.user?.name || req.user?.email || 'System Admin',
           previousVendorId: rfq.awardedVendorId,
           previousVendorName: rfq.awardedVendorName,
+          previousAllocations: rfq.get('awardAllocations') || [],
           previousAllocatedQuantity: rfq.allocatedQuantity,
-          reassignedAt: new Date(),
-          reassignedBy: req.user?.name || req.user?.email || 'System Admin'
-        } : {};
-
-        const approval = await createApprovalRecord({
-          referenceId: approvalId,
-          type: 'RFQ Vendor Award',
-          vendorName: normalized.map((item) => item.vendorName).join(', '),
-          amountFormatted: `INR ${totalAmount}`,
-          poRef: rfq.poId,
-          requestedBy: req.user?.name || req.user?.email || 'System Admin',
-          requestedById: req.user?.id || req.user?.email,
-          requestId: req.headers['x-request-id'],
-          transactionSnapshot: {
-            rfqId: rfq.rfqId,
-            containers: allocated,
-            allocations: normalized,
-            totalAmount,
-            isReassignment: effectiveReassignment,
-            ...previousAward
-          },
-          wf: awardWorkflow
+          newAllocations: normalized,
+          newAllocatedQuantity: allocated,
+          approvalId
         });
-
-        approval.containersCount = allocated;
-        approval.allocations = normalized;
-        approval.remarks = effectiveReassignment
-          ? `Container reassignment for ${rfq.rfqNumber} (Previous: ${rfq.awardedVendorName || 'N/A'})`
-          : `Container allocation for ${rfq.rfqNumber}`;
-        await approval.save();
-
-        const isFullReassignment = Boolean(effectiveReassignment) && ['awarded', 'partially_awarded'].includes(rfq.status) && (Number(rfq.allocatedQuantity) >= totalContainers);
-
-        // Keep the current approved allocation active until a reassignment is approved.
-        // This also lets a rejection restore the previous award without data loss.
-        const updatedAllocatedQty = approvedAllocationsList.reduce((sum, a) => sum + (Number(a.containers) || 0), 0);
-
-        if (isFullReassignment) {
-          const reassignmentHistory = rfq.get('reassignmentHistory') || [];
-          reassignmentHistory.push({
-            reassignedAt: new Date(),
-            reassignedBy: req.user?.name || req.user?.email || 'System Admin',
-            previousVendorId: rfq.awardedVendorId,
-            previousVendorName: rfq.awardedVendorName,
-            previousAllocations: rfq.get('awardAllocations') || [],
-            previousAllocatedQuantity: rfq.allocatedQuantity,
-            newAllocations: normalized,
-            newAllocatedQuantity: allocated,
-            approvalId
-          });
-          rfq.set('reassignmentHistory', reassignmentHistory);
-        }
-
-        const pendingAllocations = normalized.map(a => ({ ...a, approved: false, cycleApprovalId: approvalId }));
-        const combinedAllocations = [
-          ...approvedAllocationsList,
-          ...pendingAllocations
-        ];
-
-        rfq.status = 'pending_approval';
-        rfq.totalQuantity = totalContainers;
-        rfq.allocatedQuantity = updatedAllocatedQty;
-        rfq.pendingAllocation = Math.max(0, totalContainers - updatedAllocatedQty);
-        rfq.set('awardAllocations', combinedAllocations);
-        rfq.set('awardApprovalId', approvalId);
-        await rfq.save();
-
-        const message = effectiveReassignment
-          ? 'Vendor reassignment submitted for approval.'
-          : 'Vendor allocations submitted for approval.';
-
-        return res.json({ success: true, message, data: rfq, approvalId, isReassignment });
+        rfq.set('reassignmentHistory', reassignmentHistory);
       }
 
-      return res.status(400).json({ success: false, error: 'RFQ awards must be submitted through the configured approval workflow.' });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+      const pendingAllocations = normalized.map(a => ({ ...a, approved: false, cycleApprovalId: approvalId }));
+      const combinedAllocations = [
+        ...approvedAllocationsList,
+        ...pendingAllocations
+      ];
+
+      rfq.status = 'pending_approval';
+      rfq.totalQuantity = totalContainers;
+      rfq.allocatedQuantity = updatedAllocatedQty;
+      rfq.pendingAllocation = Math.max(0, totalContainers - updatedAllocatedQty);
+      rfq.set('awardAllocations', combinedAllocations);
+      rfq.set('awardApprovalId', approvalId);
+      await rfq.save();
+
+      const message = effectiveReassignment
+        ? 'Vendor reassignment submitted for approval.'
+        : 'Vendor allocations submitted for approval.';
+
+      return res.json({ success: true, message, data: rfq, approvalId, isReassignment });
     }
-  });
 
-  // ─── RFQ Vendor Routes ──────────────────────────────────────────────────────
+    return res.status(400).json({ success: false, error: 'RFQ awards must be submitted through the configured approval workflow.' });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-  router.get('/vendor-rfqs', authenticateToken, async (req, res) => {
-    try {
-      const vendor = await getFreightVendorFromRequest(req);
-      if (!vendor) return res.status(403).json({ success: false, error: 'Freight Forwarder access is required.' });
-      const rawRfqs = await RfqHeader.find({}).sort({ createdAt: -1 });
-      const invitedRfqs = rawRfqs.filter((rfq) => isFreightVendorInvited(rfq.toObject ? rfq.toObject() : rfq, vendor));
-      
-      const rfqs = await Promise.all(invitedRfqs.map((rfq) => syncRfqAwardStatus(rfq)));
-      const plainRfqs = rfqs.map((r) => typeof r.toObject === 'function' ? r.toObject() : r);
+// ─── RFQ Vendor Routes ──────────────────────────────────────────────────────
 
-      const ids = [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean);
-      const quotes = await RfqQuote.find({ vendorId: { $in: ids } }).lean();
-      const approvalIds = plainRfqs.map((rfq) => rfq.awardApprovalId).filter(Boolean);
-      const approvals = approvalIds.length ? await Approval.find({ id: { $in: approvalIds } }).select('id status').lean() : [];
-      const approvalById = new Map(approvals.map((approval) => [approval.id, approval]));
-      return res.json({
-        success: true, data: plainRfqs.map((rfq) => {
-          const approval = rfq.awardApprovalId ? approvalById.get(rfq.awardApprovalId) : null;
-          const isApprovalApproved = Boolean(approval && approval.status === 'Approved & Dispatched');
-          const approvalPending = Boolean(rfq.awardApprovalId && approval && !['Approved & Dispatched', 'Rejected'].includes(approval.status));
-          const allocation = getVendorAward(rfq, vendor);
-          const isVendorAllocated = Boolean(allocation && (allocation.approved === true || (isApprovalApproved && allocation.approved !== false)));
-          const effectiveStatus = isApprovalApproved ? (['published', 'pending_approval'].includes(rfq.status) ? 'awarded' : rfq.status) : (approvalPending ? 'pending_approval' : rfq.status);
-          return { ...rfq, status: effectiveStatus, awardApprovalStatus: approval?.status || null, myQuote: quotes.find((q) => q.rfqId === rfq.rfqId) || null, myAllocation: isVendorAllocated ? allocation : null };
-        })
-      });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
+router.get('/vendor-rfqs', authenticateToken, async (req, res) => {
+  try {
+    const vendor = await getFreightVendorFromRequest(req);
+    if (!vendor) return res.status(403).json({ success: false, error: 'Freight Forwarder access is required.' });
+    const rawRfqs = await RfqHeader.find({}).sort({ createdAt: -1 });
+    const invitedRfqs = rawRfqs.filter((rfq) => isFreightVendorInvited(rfq.toObject ? rfq.toObject() : rfq, vendor));
 
-  router.get('/vendor-rfqs/:id', authenticateToken, async (req, res) => {
-    try {
-      const vendor = await getFreightVendorFromRequest(req);
-      if (!vendor) return res.status(403).json({ success: false, error: 'Freight Forwarder access is required.' });
-      let rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
-      if (!rfq || !isFreightVendorInvited(rfq.toObject ? rfq.toObject() : rfq, vendor)) return res.status(404).json({ success: false, error: 'Assigned RFQ not found.' });
+    const rfqs = await Promise.all(invitedRfqs.map((rfq) => syncRfqAwardStatus(rfq)));
+    const plainRfqs = rfqs.map((r) => typeof r.toObject === 'function' ? r.toObject() : r);
 
-      rfq = await syncRfqAwardStatus(rfq);
-      const plainRfq = typeof rfq.toObject === 'function' ? rfq.toObject() : rfq;
+    const ids = [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean);
+    const quotes = await RfqQuote.find({ vendorId: { $in: ids } }).lean();
+    const approvalIds = plainRfqs.map((rfq) => rfq.awardApprovalId).filter(Boolean);
+    const approvals = approvalIds.length ? await Approval.find({ id: { $in: approvalIds } }).select('id status').lean() : [];
+    const approvalById = new Map(approvals.map((approval) => [approval.id, approval]));
+    return res.json({
+      success: true, data: plainRfqs.map((rfq) => {
+        const approval = rfq.awardApprovalId ? approvalById.get(rfq.awardApprovalId) : null;
+        const isApprovalApproved = Boolean(approval && approval.status === 'Approved & Dispatched');
+        const approvalPending = Boolean(rfq.awardApprovalId && approval && !['Approved & Dispatched', 'Rejected'].includes(approval.status));
+        const allocation = getVendorAward(rfq, vendor);
+        const isVendorAllocated = Boolean(allocation && (allocation.approved === true || (isApprovalApproved && allocation.approved !== false)));
+        const effectiveStatus = isApprovalApproved ? (['published', 'pending_approval'].includes(rfq.status) ? 'awarded' : rfq.status) : (approvalPending ? 'pending_approval' : rfq.status);
+        return { ...rfq, status: effectiveStatus, awardApprovalStatus: approval?.status || null, myQuote: quotes.find((q) => q.rfqId === rfq.rfqId) || null, myAllocation: isVendorAllocated ? allocation : null };
+      })
+    });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
 
-      const ids = [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean);
-      const myQuote = await RfqQuote.findOne({ rfqId: plainRfq.rfqId, vendorId: { $in: ids } }).lean();
-      const awardApproval = await getRfqAwardApproval(plainRfq);
-      const allocation = getVendorAward(plainRfq, vendor);
-      const isVendorAllocated = Boolean(allocation && (allocation.approved === true || (awardApproval.approved && allocation.approved !== false)));
-      const approvalIsPending = awardApproval.required && awardApproval.approval && !['Approved & Dispatched', 'Rejected'].includes(awardApproval.approval.status);
-      const effectiveStatus = awardApproval.approved ? (['published', 'pending_approval'].includes(plainRfq.status) ? 'awarded' : plainRfq.status) : (approvalIsPending ? 'pending_approval' : plainRfq.status);
-      return res.json({ success: true, data: { ...plainRfq, status: effectiveStatus, myQuote, myAllocation: isVendorAllocated ? allocation : null, awardPending: Boolean(allocation && approvalIsPending), awardApprovalStatus: awardApproval.approval?.status || null } });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
+router.get('/vendor-rfqs/:id', authenticateToken, async (req, res) => {
+  try {
+    const vendor = await getFreightVendorFromRequest(req);
+    if (!vendor) return res.status(403).json({ success: false, error: 'Freight Forwarder access is required.' });
+    let rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
+    if (!rfq || !isFreightVendorInvited(rfq.toObject ? rfq.toObject() : rfq, vendor)) return res.status(404).json({ success: false, error: 'Assigned RFQ not found.' });
 
-  router.post('/vendor-rfqs/:id/quote', authenticateToken, async (req, res) => {
-    try {
-      const vendor = await getFreightVendorFromRequest(req);
-      if (!vendor) return res.status(403).json({ success: false, error: 'Freight Forwarder access is required.' });
-      const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
-      if (!rfq || !isFreightVendorInvited(rfq.toObject(), vendor)) return res.status(404).json({ success: false, error: 'Assigned RFQ not found.' });
-      if (String(rfq.status).toLowerCase() === 'closed' || String(rfq.status).toLowerCase() !== 'published' || isRfqClosed(rfq.closingDate)) {
-        return res.status(400).json({ success: false, error: 'This RFQ is closed. Quote submission deadline has passed.' });
-      }
-      const ocean = Number(req.body.oceanFreightUsd);
-      const shipping = Number(req.body.stChargesInr);
-      const other = Number(req.body.otherChargesInr) || 0;
-      const transitDays = Number(req.body.transitDays);
-      if (!String(req.body.shippingLine || '').trim() || !Number.isFinite(ocean) || ocean <= 0 || !Number.isFinite(shipping) || shipping < 0 || !Number.isFinite(other) || other < 0 || !Number.isInteger(transitDays) || transitDays <= 0) {
-        return res.status(400).json({ success: false, error: 'Shipping line, positive freight, valid charges, and transit days are required.' });
-      }
-      if (req.body.vesselEtd && req.body.vesselEta && new Date(req.body.vesselEta) < new Date(req.body.vesselEtd)) {
-        return res.status(400).json({ success: false, error: 'Vessel ETA cannot be earlier than Vessel ETD.' });
-      }
-      const vendorId = vendor.sapVendorCode || vendor.supplierId || vendor.id;
-      const usdConversion = await getFxConversion(ocean, 'USD');
-      const quote = await RfqQuote.findOneAndUpdate(
-        { rfqId: rfq.rfqId, vendorId },
-        {
-          $set: {
-            vendorName: vendor.companyName, shippingLine: String(req.body.shippingLine).trim(),
-            oceanFreightUsd: ocean, stChargesInr: shipping, otherChargesInr: other,
-            totalInr: Math.round(usdConversion.amountINR + shipping + other), exchangeRate: usdConversion.fxRate, freightAmount: ocean,
-            destinationCharges: shipping, transitDays, vesselRoute: req.body.vesselRoute || '',
-            cutoffDate: req.body.cutoffDate || null, vesselEtd: req.body.vesselEtd || null,
-            vesselEta: req.body.vesselEta || null, freeDays: req.body.freeDays || '',
-            rateValidity: req.body.rateValidity || '', costParticular: req.body.costParticular || '',
-            remarks: req.body.remarks || '', status: 'submitted'
-          }, $setOnInsert: { quoteId: `Q-${Date.now().toString().slice(-6)}` }
-        },
-        { new: true, upsert: true, runValidators: true }
-      );
-      const ranked = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 });
-      await Promise.all(ranked.map((item, index) => RfqQuote.updateOne({ _id: item._id }, { rank: index < 50 ? `L${index + 1}` : 'N/A' })));
-      broadcastEvent('RFQ_QUOTE_SUBMITTED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, vendorName: vendor.companyName, quoteId: quote.quoteId });
-      return res.json({ success: true, message: 'Freight quote submitted successfully.', data: quote });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
+    rfq = await syncRfqAwardStatus(rfq);
+    const plainRfq = typeof rfq.toObject === 'function' ? rfq.toObject() : rfq;
 
-  router.get('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) => {
-    try {
-      const context = await resolveVendorAwardedRfq(req);
-      if (context.error) return res.status(context.status).json({ success: false, error: context.error });
-      const vendorKeys = freightVendorKeys(context.vendor);
-      const entries = await RfqBlEntry.find({ rfqId: context.rfq.rfqId }).sort({ createdAt: -1 }).lean();
-      const mine = entries.filter((entry) => vendorKeys.includes(normaliseInviteValue(entry.vendorId)) || vendorKeys.includes(normaliseInviteValue(entry.vendorName)));
-      const usedContainers = mine.reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0);
-      const poRef = context.rfq.sapPoNumber || context.rfq.poId || context.rfq.poNumber;
-      const linkedPo = poRef ? await PurchaseOrder.findOne({ $or: [{ poNumber: poRef }, { sapPoNumber: poRef }] }).lean() : null;
-      const poNumberText = String(linkedPo?.sapPoNumber || linkedPo?.poNumber || poRef || '');
-      const requiresAsn = /^(43|60|PO-43)/i.test(poNumberText);
-      return res.json({ success: true, data: { rfq: context.rfq.toObject(), allocation: context.allocation, requiresAsn, usedContainers, remainingContainers: Math.max(0, context.allocation.containers - usedContainers), entries: mine } });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
+    const ids = [vendor.id, vendor.sapVendorCode, vendor.supplierId].filter(Boolean);
+    const myQuote = await RfqQuote.findOne({ rfqId: plainRfq.rfqId, vendorId: { $in: ids } }).lean();
+    const awardApproval = await getRfqAwardApproval(plainRfq);
+    const allocation = getVendorAward(plainRfq, vendor);
+    const isVendorAllocated = Boolean(allocation && (allocation.approved === true || (awardApproval.approved && allocation.approved !== false)));
+    const approvalIsPending = awardApproval.required && awardApproval.approval && !['Approved & Dispatched', 'Rejected'].includes(awardApproval.approval.status);
+    const effectiveStatus = awardApproval.approved ? (['published', 'pending_approval'].includes(plainRfq.status) ? 'awarded' : plainRfq.status) : (approvalIsPending ? 'pending_approval' : plainRfq.status);
+    return res.json({ success: true, data: { ...plainRfq, status: effectiveStatus, myQuote, myAllocation: isVendorAllocated ? allocation : null, awardPending: Boolean(allocation && approvalIsPending), awardApprovalStatus: awardApproval.approval?.status || null } });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
 
-  router.get('/validate-asn', authenticateToken, async (req, res) => {
-    try {
-      const asnNumber = String(req.query.asnNumber || '').trim().toUpperCase();
-      const rfqId = String(req.query.rfqId || '').trim();
-
-      if (req.user?.role === 'Vendor') {
-        const vendor = await getFreightVendorFromRequest(req);
-        if (!vendor || !rfqId) return res.status(403).json({ success: false, valid: false, error: 'A valid assigned RFQ is required for ASN validation.' });
-        const assignedRfq = await RfqHeader.findOne({ $or: [{ rfqId }, { rfqNumber: rfqId }] }).lean();
-        if (!assignedRfq || !isFreightVendorInvited(assignedRfq, vendor)) return res.status(404).json({ success: false, valid: false, error: 'Assigned RFQ not found.' });
-      }
-
-      if (!asnNumber) {
-        return res.status(400).json({ success: false, valid: false, error: 'ASN Number is required.' });
-      }
-      if (asnNumber.length < 3 || asnNumber.length > 30) {
-        return res.status(400).json({ success: false, valid: false, error: 'ASN Number must be between 3 and 30 characters.' });
-      }
-      if (!/^[A-Z0-9\-_/]+$/i.test(asnNumber)) {
-        return res.status(400).json({ success: false, valid: false, error: 'ASN Number can only contain letters, numbers, hyphens, and slashes.' });
-      }
-
-      const existsInBl = await RfqBlEntry.exists({ $or: [{ asnNumber }, { autoAsnNumber: asnNumber }] });
-      if (existsInBl) {
-        return res.json({ success: true, valid: false, error: `ASN Number "${asnNumber}" has already been used for a BL entry.` });
-      }
-
-      let matchingInvoice = null;
-      if (rfqId) {
-        const rfq = await RfqHeader.findOne({ $or: [{ rfqId }, { rfqNumber: rfqId }] }).lean();
-        const poKeys = rfq ? [rfq.poId, rfq.sapPoNumber, rfq.poNumber, rfq.rfqId, rfq.rfqNumber].filter(Boolean) : [rfqId];
-        matchingInvoice = await InvoicePayment.findOne({
-          $and: [
-            { asnNumber: { $regex: new RegExp(`^${asnNumber.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') } },
-            { $or: [{ poId: { $in: poKeys } }, { sapPoNumber: { $in: poKeys } }, { poNumber: { $in: poKeys } }] }
-          ]
-        }).lean();
-      } else {
-        matchingInvoice = await InvoicePayment.findOne({
-          asnNumber: { $regex: new RegExp(`^${asnNumber.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') }
-        }).lean();
-      }
-
-      if (!matchingInvoice) {
-        return res.json({
-          success: true,
-          valid: false,
-          error: `ASN Number "${asnNumber}" does not match any invoice record for the linked Purchase Order (PO).`
-        });
-      }
-
-      return res.json({ success: true, valid: true, message: `ASN Number "${asnNumber}" is valid and matched with Purchase Order (PO) invoice records.` });
-    } catch (err) {
-      return res.status(500).json({ success: false, valid: false, error: err.message });
+router.post('/vendor-rfqs/:id/quote', authenticateToken, async (req, res) => {
+  try {
+    const vendor = await getFreightVendorFromRequest(req);
+    if (!vendor) return res.status(403).json({ success: false, error: 'Freight Forwarder access is required.' });
+    const rfq = await RfqHeader.findOne({ $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] });
+    if (!rfq || !isFreightVendorInvited(rfq.toObject(), vendor)) return res.status(404).json({ success: false, error: 'Assigned RFQ not found.' });
+    if (String(rfq.status).toLowerCase() === 'closed' || String(rfq.status).toLowerCase() !== 'published' || isRfqClosed(rfq.closingDate)) {
+      return res.status(400).json({ success: false, error: 'This RFQ is closed. Quote submission deadline has passed.' });
     }
-  });
+    const ocean = Number(req.body.oceanFreightUsd);
+    const shipping = Number(req.body.stChargesInr);
+    const other = Number(req.body.otherChargesInr) || 0;
+    const transitDays = Number(req.body.transitDays);
+    if (!String(req.body.shippingLine || '').trim() || !Number.isFinite(ocean) || ocean <= 0 || !Number.isFinite(shipping) || shipping < 0 || !Number.isFinite(other) || other < 0 || !Number.isInteger(transitDays) || transitDays <= 0) {
+      return res.status(400).json({ success: false, error: 'Shipping line, positive freight, valid charges, and transit days are required.' });
+    }
+    if (req.body.vesselEtd && req.body.vesselEta && new Date(req.body.vesselEta) < new Date(req.body.vesselEtd)) {
+      return res.status(400).json({ success: false, error: 'Vessel ETA cannot be earlier than Vessel ETD.' });
+    }
+    const vendorId = vendor.sapVendorCode || vendor.supplierId || vendor.id;
+    const usdConversion = await getFxConversion(ocean, 'USD');
+    const quote = await RfqQuote.findOneAndUpdate(
+      { rfqId: rfq.rfqId, vendorId },
+      {
+        $set: {
+          vendorName: vendor.companyName, shippingLine: String(req.body.shippingLine).trim(),
+          oceanFreightUsd: ocean, stChargesInr: shipping, otherChargesInr: other,
+          totalInr: Math.round(usdConversion.amountINR + shipping + other), exchangeRate: usdConversion.fxRate, freightAmount: ocean,
+          destinationCharges: shipping, transitDays, vesselRoute: req.body.vesselRoute || '',
+          cutoffDate: req.body.cutoffDate || null, vesselEtd: req.body.vesselEtd || null,
+          vesselEta: req.body.vesselEta || null, freeDays: req.body.freeDays || '',
+          rateValidity: req.body.rateValidity || '', costParticular: req.body.costParticular || '',
+          remarks: req.body.remarks || '', status: 'submitted'
+        }, $setOnInsert: { quoteId: `Q-${Date.now().toString().slice(-6)}` }
+      },
+      { new: true, upsert: true, runValidators: true }
+    );
+    const ranked = await RfqQuote.find({ rfqId: rfq.rfqId }).sort({ totalInr: 1 });
+    await Promise.all(ranked.map((item, index) => RfqQuote.updateOne({ _id: item._id }, { rank: index < 50 ? `L${index + 1}` : 'N/A' })));
+    broadcastEvent('RFQ_QUOTE_SUBMITTED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, vendorName: vendor.companyName, quoteId: quote.quoteId });
+    return res.json({ success: true, message: 'Freight quote submitted successfully.', data: quote });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
 
-  router.post('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) => {
-    try {
-      const context = await resolveVendorAwardedRfq(req);
-      if (context.error) return res.status(context.status).json({ success: false, error: context.error });
-      const blNumber = String(req.body.blNumber || '').trim().toUpperCase();
-      if (!blNumber) {
-        return res.status(400).json({ success: false, error: 'BL Number is required.' });
-      }
-      if (!/^[A-Z0-9\-_/]{3,30}$/i.test(blNumber)) {
-        return res.status(400).json({ success: false, error: 'BL Number must be between 3 and 30 characters (letters, numbers, hyphens, slashes).' });
-      }
+router.get('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) => {
+  try {
+    const context = await resolveVendorAwardedRfq(req);
+    if (context.error) return res.status(context.status).json({ success: false, error: context.error });
+    const vendorKeys = freightVendorKeys(context.vendor);
+    const entries = await RfqBlEntry.find({ rfqId: context.rfq.rfqId }).sort({ createdAt: -1 }).lean();
+    const mine = entries.filter((entry) => vendorKeys.includes(normaliseInviteValue(entry.vendorId)) || vendorKeys.includes(normaliseInviteValue(entry.vendorName)));
+    const usedContainers = mine.reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0);
+    const poRef = context.rfq.sapPoNumber || context.rfq.poId || context.rfq.poNumber;
+    const linkedPo = poRef ? await PurchaseOrder.findOne({ $or: [{ poNumber: poRef }, { sapPoNumber: poRef }] }).lean() : null;
+    const poNumberText = String(linkedPo?.sapPoNumber || linkedPo?.poNumber || poRef || '');
+    const requiresAsn = /^(43|60|PO-43)/i.test(poNumberText);
+    return res.json({ success: true, data: { rfq: context.rfq.toObject(), allocation: context.allocation, requiresAsn, usedContainers, remainingContainers: Math.max(0, context.allocation.containers - usedContainers), entries: mine } });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
 
-      const asnNumber = String(req.body.asnNumber || '').trim().toUpperCase();
-      const poRef = context.rfq.sapPoNumber || context.rfq.poId || context.rfq.poNumber;
-      const linkedPo = poRef ? await PurchaseOrder.findOne({ $or: [{ poNumber: poRef }, { sapPoNumber: poRef }] }).lean() : null;
-      const requiresAsn = /^(43|60|PO-43)/i.test(String(linkedPo?.sapPoNumber || linkedPo?.poNumber || poRef || ''));
-      if (requiresAsn && !asnNumber) {
-        return res.status(400).json({ success: false, error: 'ASN Number (Advance Shipping Notice) is required to link with RFQ & PO records.' });
-      }
-      if (asnNumber && !/^[A-Z0-9\-_/]{3,30}$/i.test(asnNumber)) {
-        return res.status(400).json({ success: false, error: 'ASN Number must be between 3 and 30 characters (letters, numbers, hyphens, slashes).' });
-      }
+router.get('/validate-asn', authenticateToken, async (req, res) => {
+  try {
+    const asnNumber = String(req.query.asnNumber || '').trim().toUpperCase();
+    const rfqId = String(req.query.rfqId || '').trim();
 
-      const containerCount = Number(req.body.containerCount);
-      const duplicateBl = await RfqBlEntry.exists({ blNumber });
-      if (duplicateBl) {
-        return res.status(400).json({ success: false, error: `BL Number "${blNumber}" already exists in the system.` });
-      }
+    if (req.user?.role === 'Vendor') {
+      const vendor = await getFreightVendorFromRequest(req);
+      if (!vendor || !rfqId) return res.status(403).json({ success: false, valid: false, error: 'A valid assigned RFQ is required for ASN validation.' });
+      const assignedRfq = await RfqHeader.findOne({ $or: [{ rfqId }, { rfqNumber: rfqId }] }).lean();
+      if (!assignedRfq || !isFreightVendorInvited(assignedRfq, vendor)) return res.status(404).json({ success: false, valid: false, error: 'Assigned RFQ not found.' });
+    }
 
-      const duplicateAsn = asnNumber ? await RfqBlEntry.exists({ $or: [{ asnNumber }, { autoAsnNumber: asnNumber }] }) : false;
-      if (duplicateAsn) {
-        return res.status(400).json({ success: false, error: `ASN Number "${asnNumber}" has already been used for a BL entry.` });
-      }
+    if (!asnNumber) {
+      return res.status(400).json({ success: false, valid: false, error: 'ASN Number is required.' });
+    }
+    if (asnNumber.length < 3 || asnNumber.length > 30) {
+      return res.status(400).json({ success: false, valid: false, error: 'ASN Number must be between 3 and 30 characters.' });
+    }
+    if (!/^[A-Z0-9\-_/]+$/i.test(asnNumber)) {
+      return res.status(400).json({ success: false, valid: false, error: 'ASN Number can only contain letters, numbers, hyphens, and slashes.' });
+    }
 
-      const poKeys = [context.rfq?.poId, context.rfq?.sapPoNumber, context.rfq?.poNumber, context.rfq?.rfqId, context.rfq?.rfqNumber].filter(Boolean);
-      const matchingInvoice = asnNumber ? await InvoicePayment.findOne({
+    let matchingInvoice = null;
+    if (rfqId) {
+      const rfq = await RfqHeader.findOne({ $or: [{ rfqId }, { rfqNumber: rfqId }] }).lean();
+      const poKeys = rfq ? [rfq.poId, rfq.sapPoNumber, rfq.poNumber, rfq.rfqId, rfq.rfqNumber].filter(Boolean) : [rfqId];
+      matchingInvoice = await InvoicePayment.findOne({
         $and: [
           { asnNumber: { $regex: new RegExp(`^${asnNumber.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') } },
           { $or: [{ poId: { $in: poKeys } }, { sapPoNumber: { $in: poKeys } }, { poNumber: { $in: poKeys } }] }
         ]
-      }).lean() : null;
-
-      if (requiresAsn && !matchingInvoice) {
-        return res.status(400).json({
-          success: false,
-          error: `ASN Number "${asnNumber}" does not match any invoice record for the linked Purchase Order (PO).`
-        });
-      }
-      const vendorKeys = freightVendorKeys(context.vendor);
-      const existing = await RfqBlEntry.find({ rfqId: context.rfq.rfqId }).lean();
-      const used = existing.filter((entry) => vendorKeys.includes(normaliseInviteValue(entry.vendorId)) || vendorKeys.includes(normaliseInviteValue(entry.vendorName))).reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0);
-      const remaining = context.allocation.containers - used;
-      if (!Number.isInteger(containerCount) || containerCount <= 0) {
-        return res.status(400).json({ success: false, error: 'Container count must be a positive whole number.' });
-      }
-      if (containerCount > remaining) return res.status(400).json({ success: false, error: `Only ${Math.max(0, remaining)} awarded container(s) remain.` });
-      const documents = (Array.isArray(req.body.documents) ? req.body.documents : []).filter((doc) => doc?.fileName).map((doc) => ({ docType: doc.docType || 'Bill of Lading', fileUrl: String(doc.fileName), uploadedBy: context.vendor.companyName, uploadedAt: new Date() }));
-      if (!documents.length) return res.status(400).json({ success: false, error: 'At least one supporting document is required.' });
-      const entry = await RfqBlEntry.create({
-        blId: `BL-${Date.now().toString(36).toUpperCase()}`,
-        rfqId: context.rfq.rfqId, rfqNumber: context.rfq.rfqNumber,
-        blNumber, containerCount, vendorId: context.vendor.sapVendorCode || context.vendor.supplierId || context.vendor.id,
-        vendorName: context.vendor.companyName, remarks: String(req.body.remarks || '').trim(),
-        vesselName: context.rfq.title, shippingLine: context.rfq.awardedVendorName || context.vendor.companyName,
-        asnNumber, autoAsnNumber: asnNumber, status: 'submitted', documents
-      });
-      broadcastEvent('BL_SUBMITTED', { blId: entry.blId, blNumber, rfqId: context.rfq.rfqId, vendorName: context.vendor.companyName });
-      return res.status(201).json({ success: true, message: 'BL entry submitted for EXIM review.', data: entry });
-    } catch (err) { return res.status(500).json({ success: false, error: err.code === 11000 ? 'This BL Number already exists.' : err.message }); }
-  });
-
-  router.get('/vendor-rfqs/:id/bl-entries/:blId', authenticateToken, async (req, res) => {
-    try {
-      const context = await resolveVendorAwardedRfq(req);
-      if (context.error) return res.status(context.status).json({ success: false, error: context.error });
-      const entry = await RfqBlEntry.findOne({ rfqId: context.rfq.rfqId, $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] }).lean();
-      const keys = freightVendorKeys(context.vendor);
-      if (!entry || ![entry.vendorId, entry.vendorName].map(normaliseInviteValue).some((key) => keys.includes(key))) return res.status(404).json({ success: false, error: 'BL entry not found.' });
-      const blCollInvoices = await BlInvoice.find({ blId: entry.blId }).sort({ createdAt: -1 }).lean();
-      const legacyInvoices = await LogisticsPayment.find({ blId: entry.blId }).sort({ createdAt: -1 }).lean();
-      const rawInvoices = [...blCollInvoices, ...legacyInvoices];
-      const seenDocuments = new Set();
-      const documents = (entry.documents || []).filter((doc) => {
-        const key = `${doc.docType || ''}|${doc.fileUrl || ''}`.toLowerCase();
-        if (seenDocuments.has(key)) return false;
-        seenDocuments.add(key);
-        return true;
-      });
-      const invoices = rawInvoices.map((invoice) => {
-        const candidates = [invoice.amount, invoice.invoiceAmount, invoice.totalAmount, invoice.grossAmount];
-        const amount = candidates.map(Number).find(Number.isFinite);
-        return { ...invoice, amount: amount ?? 0, amountMissing: amount === undefined, status: invoice.status || 'draft' };
-      });
-      return res.json({ success: true, data: { ...entry, documents, invoices, canInvoice: entry.status === 'custom_cleared' || entry.status === 'invoice_pending' } });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
-
-  router.post('/vendor-rfqs/:id/bl-entries/:blId/invoices', authenticateToken, async (req, res) => {
-    try {
-      const context = await resolveVendorAwardedRfq(req);
-      if (context.error) return res.status(context.status).json({ success: false, error: context.error });
-      const bl = await RfqBlEntry.findOne({ rfqId: context.rfq.rfqId, $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] });
-      const keys = freightVendorKeys(context.vendor);
-      if (!bl || ![bl.vendorId, bl.vendorName].map(normaliseInviteValue).some((key) => keys.includes(key))) return res.status(404).json({ success: false, error: 'BL entry not found.' });
-      if (!['custom_cleared', 'invoice_pending'].includes(bl.status)) return res.status(400).json({ success: false, error: 'Logistics invoice can only be raised after customs clearance.' });
-      const invoiceNumber = String(req.body.invoiceNumber || '').trim().toUpperCase();
-      const amount = Number(req.body.amount);
-      const ref = `BLI-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
-      const category = req.body.category || 'freight';
-      const allowedCategories = ['freight', 'destination_charges', 'detention', 'port_storage', 'agency_fee'];
-      if (!invoiceNumber || invoiceNumber.length > 100) return res.status(400).json({ success: false, error: 'A valid invoice number is required.' });
-      if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ success: false, error: 'Invoice amount must be greater than zero.' });
-      if (!allowedCategories.includes(category)) return res.status(400).json({ success: false, error: 'Invalid logistics invoice category.' });
-      const duplicateInvoice = await LogisticsPayment.exists({ vendorId: bl.vendorId, invoiceNumber });
-      if (duplicateInvoice) return res.status(409).json({ success: false, error: `Invoice number "${invoiceNumber}" has already been submitted.` });
-      const typeDisplay = category === 'freight' ? 'Freight Invoice' : category === 'destination_charges' ? 'Destination Charges (Shipping Line)' : category === 'recepted_charges' ? 'Recepted Charges' : category === 'agency_fee' ? 'Agency Charges' : category === 'port_storage' ? 'Port Storage' : 'BL Charge Invoice';
-      const numAmount = amount;
-      const curr = String(req.body.currency || 'INR').toUpperCase();
-      if (!['INR', 'USD', 'EUR', 'GBP', 'CNY', 'JPY', 'AED', 'SGD'].includes(curr)) return res.status(400).json({ success: false, error: 'Unsupported invoice currency.' });
-      const rawFile = String(req.body.fileName || req.body.fileUrl || '').trim();
-      const docList = Array.isArray(req.body.documents) && req.body.documents.length > 0
-        ? req.body.documents.filter((document) => String(document?.fileName || document?.fileUrl || '').trim())
-        : (rawFile ? [{ docType: typeDisplay, fileName: rawFile, fileUrl: rawFile, uploadedBy: bl.vendorName || 'Vendor' }] : []);
-      if (!docList.length) return res.status(400).json({ success: false, error: 'At least one supporting invoice document is required.' });
-      const blWorkflow = await resolveWorkflowFromDB('BL Freight Invoice', numAmount, { currency: curr });
-
-      const approval = await createApprovalRecord({
-        referenceId: ref,
-        type: 'BL Freight Invoice',
-        vendorName: bl.vendorName || context.vendor?.companyName || 'Vendor',
-        amountFormatted: `${curr} ${numAmount}`,
-        poRef: bl.blNumber,
-        requestedBy: context.vendor?.companyName || 'Vendor',
-        requestedById: context.vendor?.id || 'vendor',
-        requestId: req.headers['x-request-id'],
-        transactionSnapshot: { blId: bl.blId, blNumber: bl.blNumber, invoiceNumber, category, typeDisplay, source: 'Vendor', amount: numAmount },
-        wf: blWorkflow
-      });
-
-      const payment = await LogisticsPayment.create({
-        logisticsPaymentId: ref, referenceNumber: ref, blId: bl.blId, blNumber: bl.blNumber,
-        vendorId: bl.vendorId, vendorName: bl.vendorName, category, typeDisplay, source: 'Vendor', invoiceNumber,
-        amount: numAmount, totalAmount: numAmount, currency: curr, remarks: String(req.body.remarks || '').trim(),
-        invoiceFile: rawFile, fileUrl: rawFile, fileName: rawFile, documents: docList,
-        status: approval.status, currentStep: approval.currentStep || 1, totalSteps: approval.totalSteps || 2, submittedAt: new Date()
-      });
-      broadcastEvent('LOGISTICS_INVOICE_SUBMITTED', { logisticsPaymentId: payment.logisticsPaymentId, blId: bl.blId, vendorId: bl.vendorId, amount: numAmount });
-      return res.status(201).json({ success: true, message: 'Logistics invoice submitted for approval.', data: payment, approval });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
-
-  router.post('/rfqs/:id/close', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
-    try {
-      const isObjId = mongoose.Types.ObjectId.isValid(req.params.id);
-      const query = isObjId
-        ? { $or: [{ _id: req.params.id }, { rfqId: req.params.id }, { rfqNumber: req.params.id }] }
-        : { $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] };
-
-      const rfq = await RfqHeader.findOne(query);
-      if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found.' });
-      if (!['published', 'partially_awarded'].includes(String(rfq.status).toLowerCase())) {
-        return res.status(409).json({ success: false, error: `RFQ cannot be closed while it is ${String(rfq.status).replace(/_/g, ' ')}.` });
-      }
-
-      rfq.status = 'closed';
-      rfq.closedAt = new Date();
-      await rfq.save();
-
-      broadcastEvent('RFQ_CLOSED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber });
-
-      return res.json({
-        success: true,
-        message: `RFQ ${rfq.rfqNumber || rfq.rfqId} closed successfully.`,
-        data: rfq
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  router.post('/rfqs/:id/reopen', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
-    try {
-      const isObjId = mongoose.Types.ObjectId.isValid(req.params.id);
-      const query = isObjId
-        ? { $or: [{ _id: req.params.id }, { rfqId: req.params.id }, { rfqNumber: req.params.id }] }
-        : { $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] };
-
-      const rfq = await RfqHeader.findOne(query);
-      if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found.' });
-      const status = String(rfq.status).toLowerCase();
-      const expiredPublishedRfq = status === 'published' && isRfqClosed(rfq.closingDate);
-      if (status !== 'closed' && !expiredPublishedRfq) {
-        return res.status(409).json({ success: false, error: `Only a closed RFQ can be reopened. Current status: ${String(rfq.status).replace(/_/g, ' ')}.` });
-      }
-
-      const newClosingDate = req.body.closingDate ? new Date(req.body.closingDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-      if (Number.isNaN(newClosingDate.getTime()) || newClosingDate <= new Date()) {
-        return res.status(400).json({ success: false, error: 'Reopened RFQ closing date must be a valid future date and time.' });
-      }
-      rfq.status = 'published';
-      rfq.closingDate = newClosingDate;
-      await rfq.save();
-
-      broadcastEvent('RFQ_REOPENED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, closingDate: rfq.closingDate });
-
-      return res.json({
-        success: true,
-        message: `RFQ ${rfq.rfqNumber || rfq.rfqId} reopened successfully until ${new Date(rfq.closingDate).toLocaleDateString('en-IN')}.`,
-        data: rfq
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // ─── CUSTOMS BROKER & BL ASSIGNMENT ROUTES ──────────────────────────────────
-
-  router.get('/custom-agents/bl-entries', authenticateToken, async (req, res) => {
-    try {
-      const entries = await RfqBlEntry.find().sort({ createdAt: -1 }).lean();
-      const agents = await CustomAgent.find({ status: 'Active' }).select('agentId agencyName contactPerson email').sort({ agencyName: 1 }).lean();
-      return res.json({ success: true, blEntries: entries, data: entries, agents });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
-
-  router.get('/exim/bl-entries', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'view'), async (req, res) => {
-    try {
-      const entries = await RfqBlEntry.find().sort({ createdAt: -1 }).lean();
-      const agents = await CustomAgent.find({ status: 'Active' }).select('agentId agencyName contactPerson email').sort({ agencyName: 1 }).lean();
-      return res.json({ success: true, data: entries, blEntries: entries, agents });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
-
-  router.get('/exim/bl-entries/:blId', authenticateToken, async (req, res) => {
-    try {
-      const entry = await RfqBlEntry.findOne({ $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] }).lean();
-      if (!entry) return res.status(404).json({ success: false, error: 'BL entry not found.' });
-      const [rfq, agents, assignedAgent, invoices] = await Promise.all([
-        RfqHeader.findOne({ rfqId: entry.rfqId }).select('rfqId rfqNumber title').lean(),
-        CustomAgent.find({ status: 'Active' }).select('agentId agencyName contactPerson email').sort({ agencyName: 1 }).lean(),
-        entry.customAgentId ? CustomAgent.findOne({ agentId: entry.customAgentId }).select('agentId agencyName contactPerson email').lean() : null,
-        BlInvoice.find({ $or: [{ blId: entry.blId }, { blNumber: entry.blNumber }] }).sort({ submittedAt: 1, createdAt: 1 }).lean()
-      ]);
-      return res.json({
-        success: true, data: {
-          ...entry,
-          customAgentName: assignedAgent?.contactPerson || entry.customAgentName,
-          customAgentAgencyName: assignedAgent?.agencyName || entry.customAgentAgencyName,
-          rfq,
-          invoices
-        }, agents
-      });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
-
-  router.post('/exim/bl-entries/:blId/documents', authenticateToken, async (req, res) => {
-    try {
-      const bl = await RfqBlEntry.findOne({ $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] });
-      if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
-      if (bl.status === 'custom_cleared') return res.status(400).json({ success: false, error: 'Documents cannot be changed after customs clearance.' });
-      const documents = Array.isArray(req.body.documents) ? req.body.documents : [];
-      const valid = documents.filter((doc) => String(doc.docType || '').trim() && String(doc.fileName || '').trim());
-      if (!valid.length) return res.status(400).json({ success: false, error: 'Select a document type and file.' });
-      bl.documents.push(...valid.map((doc) => ({ docType: String(doc.docType).trim(), fileUrl: String(doc.fileName).trim(), fileName: String(doc.fileName).trim(), uploadedBy: req.user?.name || req.user?.email || 'EXIM Team', uploadedAt: new Date(), stage: 'EXIM Review' })));
-      if (bl.status === 'submitted') bl.status = 'exim_review';
-      bl.eximReviewedAt = bl.eximReviewedAt || new Date();
-      await bl.save();
-      broadcastEvent('BL_EXIM_REVIEWED', { blId: bl.blId, vendorId: bl.vendorId });
-      return res.json({ success: true, message: 'EXIM documents uploaded.', data: bl });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
-
-  router.post('/exim/bl-entries/:blId/assign', authenticateToken, async (req, res) => {
-    try {
-      const agent = await CustomAgent.findOne({ agentId: req.body.agentId, status: 'Active' }).lean();
-      if (!agent) return res.status(400).json({ success: false, error: 'Select an active customs agent.' });
-      const bl = await RfqBlEntry.findOne({ $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] });
-      if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
-      if (bl.status === 'custom_cleared') return res.status(400).json({ success: false, error: 'A customs-cleared BL cannot be reassigned.' });
-      bl.customAgentId = agent.agentId;
-      bl.customAgentName = agent.agencyName;
-      bl.customAgentAgencyName = agent.agencyName;
-      bl.eximNotes = String(req.body.notes || '').trim();
-      bl.eximReviewedAt = bl.eximReviewedAt || new Date();
-      bl.assignedAt = new Date();
-      bl.status = 'assigned_to_agent';
-      await bl.save();
-      broadcastEvent('BL_ASSIGNED', { blId: bl.blId, blNumber: bl.blNumber, agentId: agent.agentId, vendorId: bl.vendorId });
-      return res.json({ success: true, message: 'BL assigned to customs agent.', data: bl });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
-
-  router.post('/exim/bl-entries/:blId/action', authenticateToken, async (req, res) => {
-    try {
-      const { action, remarks } = req.body;
-      const bl = await RfqBlEntry.findOne({ $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] });
-      if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
-
-      let nextStatus = bl.status;
-      if (action === 'approve') {
-        nextStatus = bl.customAgentId ? 'assigned_to_agent' : 'exim_review';
-        bl.eximReviewedAt = new Date();
-      } else if (action === 'return') {
-        nextStatus = 'returned_for_correction';
-      } else if (action === 'reject') {
-        nextStatus = 'rejected';
-      } else {
-        return res.status(400).json({ success: false, error: 'Invalid action type.' });
-      }
-
-      bl.status = nextStatus;
-      if (!bl.eximApprovalHistory) bl.eximApprovalHistory = [];
-      bl.eximApprovalHistory.push({
-        action,
-        actionedBy: req.user?.name || req.user?.email || 'EXIM Manager',
-        role: req.user?.role || 'EXIM Manager',
-        actionedAt: new Date(),
-        remarks: remarks || `BL Entry ${action.toUpperCase()} action processed.`
-      });
-
-      await bl.save();
-      broadcastEvent('BL_EXIM_ACTION', { blId: bl.blId, blNumber: bl.blNumber, action, status: nextStatus });
-      return res.json({ success: true, message: `BL Entry ${action}d successfully.`, data: bl });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  router.get('/customs-agent/assigned', authenticateToken, async (req, res) => {
-    try {
-      if (req.user?.role === 'Vendor') return res.status(403).json({ success: false, error: 'Customs Agent or internal access is required.' });
-      let filter = {};
-      if (req.user?.role === 'CustomAgent') {
-        filter = { customAgentId: req.user.id };
-      }
-      const bls = await RfqBlEntry.find(filter).sort({ createdAt: -1 }).lean();
-      return res.json({
-        success: true,
-        agentName: req.user?.email || 'All Agents',
-        agentCompany: req.user?.agencyName || 'Internal View',
-        totalAssigned: bls.length,
-        pendingClearance: bls.filter(b => b.status !== 'custom_cleared').length,
-        customCleared: bls.filter(b => b.status === 'custom_cleared').length,
-        assignments: bls
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  router.get('/customs-agent/assigned/:blId', authenticateToken, async (req, res) => {
-    try {
-      if (req.user?.role === 'Vendor') return res.status(403).json({ success: false, error: 'Customs Agent or internal access is required.' });
-      let query = { $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] };
-      if (req.user?.role === 'CustomAgent') {
-        query.customAgentId = req.user.id;
-      }
-      const bl = await RfqBlEntry.findOne(query).lean();
-      if (!bl) return res.status(404).json({ success: false, error: 'Assigned BL entry not found.' });
-      const rfq = await RfqHeader.findOne({ rfqId: bl.rfqId }).select('rfqId rfqNumber title cargoDetails').lean();
-      const seenDocuments = new Set();
-      const documents = (bl.documents || []).filter((doc) => {
-        const key = `${doc.docType || ''}|${doc.fileUrl || ''}`.toLowerCase();
-        if (seenDocuments.has(key)) return false;
-        seenDocuments.add(key);
-        return true;
-      });
-      return res.json({ success: true, data: { ...bl, documents, rfq } });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
-
-  router.post('/customs-agent/documents', authenticateToken, async (req, res) => {
-    try {
-      if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
-      const bl = await RfqBlEntry.findOne({ customAgentId: req.user.id, $or: [{ blId: req.body.blId }, { blNumber: req.body.blId }] });
-      if (!bl) return res.status(404).json({ success: false, error: 'Assigned BL entry not found.' });
-      if (bl.status === 'custom_cleared') return res.status(400).json({ success: false, error: 'Documents cannot be changed after customs clearance.' });
-      const docType = String(req.body.docType || '').trim();
-      const fileName = String(req.body.fileName || '').trim();
-      if (!docType || !fileName) return res.status(400).json({ success: false, error: 'Document type and file are required.' });
-      bl.documents.push({ docType, fileUrl: fileName, uploadedBy: `${req.user.agencyName || req.user.email} (Customs Agent)`, uploadedAt: new Date(), stage: 'Customs Clearance' });
-      await bl.save();
-      return res.json({ success: true, message: 'Customs document uploaded.', data: bl });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
-
-  router.post('/customs-agent/upload-boe', authenticateToken, async (req, res) => {
-    try {
-      if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
-      const { blId, boeNumber, dutyAmount, fileName } = req.body;
-      const bl = await RfqBlEntry.findOne({ customAgentId: req.user.id, $or: [{ blId }, { blNumber: blId }] });
-      if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
-      if (bl.status === 'custom_cleared') return res.status(400).json({ success: false, error: 'BOE cannot be changed after customs clearance.' });
-      const existingBoeDocument = bl.documents.some((doc) => doc.docType === 'Customs Bill of Entry');
-      if (!String(boeNumber || '').trim()) return res.status(400).json({ success: false, error: 'BOE Number is required.' });
-      if (!existingBoeDocument && !String(fileName || '').trim()) return res.status(400).json({ success: false, error: 'BOE document is required.' });
-
-      const duplicateBoeFile = bl.documents.some((doc) => doc.docType === 'Customs Bill of Entry' && String(doc.fileUrl || '').trim() === String(fileName || '').trim());
-      if (String(fileName || '').trim() && !duplicateBoeFile) {
-        bl.documents.push({
-          docType: 'Customs Bill of Entry',
-          fileUrl: String(fileName).trim(),
-          uploadedBy: `${req.user.agencyName || req.user.email} (Customs Agent)`,
-          uploadedAt: new Date(),
-          stage: 'Customs Clearance'
-        });
-      }
-      bl.boeNumber = String(boeNumber).trim();
-      bl.dutyAmount = Math.max(0, Number(dutyAmount) || 0);
-      bl.boeUploadedAt = new Date();
-      await bl.save();
-
-      return res.json({ success: true, message: 'Bill of Entry uploaded successfully.', bl });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  router.post('/customs-agent/clear', authenticateToken, async (req, res) => {
-    try {
-      if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
-      const { blId } = req.body;
-      const bl = await RfqBlEntry.findOne({ customAgentId: req.user.id, $or: [{ blId }, { blNumber: blId }] });
-      if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
-      const boeDocument = bl.documents.find((doc) => doc.docType === 'Customs Bill of Entry');
-      if (!boeDocument) return res.status(400).json({ success: false, error: 'Upload the Bill of Entry document before marking customs cleared.' });
-      if (!bl.boeNumber) bl.boeReference = `DOCUMENT:${boeDocument.fileUrl}`;
-
-      bl.status = 'custom_cleared';
-      bl.customsClearedAt = new Date();
-      bl.customsClearanceNotes = String(req.body.notes || '').trim();
-      await bl.save();
-
-      broadcastEvent('BL_CUSTOMS_CLEARED', { blId: bl.blId, blNumber: bl.blNumber, rfqId: bl.rfqId, vendorId: bl.vendorId, clearedAt: bl.customsClearedAt });
-
-      sendBlCustomsClearedEmail({
-        to: 'vendor@rayzon.com',
-        vendorName: bl.vendorName,
-        blNumber: bl.blNumber,
-        asnNumber: bl.asnNumber || bl.autoAsnNumber,
-        rfqNumber: bl.rfqNumber,
-        clearedDate: new Date(bl.customsClearedAt).toLocaleDateString('en-IN'),
-        agentNotes: bl.customsClearanceNotes
-      }).catch((err) => console.warn('[BL Email] sendBlCustomsClearedEmail error:', err.message));
-
-      return res.json({ success: true, message: 'Marked as Customs Cleared! Invoicing options enabled.', bl });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  router.post('/customs-agent/invoices', authenticateToken, async (req, res) => {
-    try {
-      if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
-      const { blId, invoiceNumber, amount, currency, category, remarks, fileName } = req.body;
-      const bl = await RfqBlEntry.findOne({ customAgentId: req.user.id, $or: [{ blId }, { blNumber: blId }] });
-      if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
-
-      const numAmount = Number(amount);
-      if (!String(invoiceNumber || '').trim() || !(numAmount > 0)) {
-        return res.status(400).json({ success: false, error: 'Invoice Number and a positive amount are required.' });
-      }
-
-      const ref = `BLI-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
-      const cat = category || 'agency_fee';
-      const typeDisplay = cat === 'agency_fee' ? 'Agency Charges' : cat === 'recepted_charges' ? 'Recepted Charges' : cat === 'port_storage' ? 'Port Storage' : 'Customs Clearance Fee';
-
-      const blWorkflow = await resolveWorkflowFromDB('BL Freight Invoice', numAmount, { currency: currency || 'INR' });
-
-      const approval = await createApprovalRecord({
-        referenceId: ref,
-        type: 'BL Freight Invoice',
-        vendorName: req.user.agencyName || req.user.contactPerson || 'Customs Agent',
-        amountFormatted: `${currency || 'INR'} ${numAmount}`,
-        poRef: bl.blNumber,
-        requestedBy: req.user.agencyName || req.user.contactPerson || req.user.email || 'Customs Agent',
-        requestedById: req.user.id || req.user.agentId,
-        requestId: req.headers['x-request-id'],
-        transactionSnapshot: { blId: bl.blId, blNumber: bl.blNumber, invoiceNumber, category: cat, typeDisplay, source: 'Agent', amount: numAmount },
-        wf: blWorkflow
-      });
-
-      const payment = await BlInvoice.create({
-        logisticsPaymentId: ref,
-        referenceNumber: ref,
-        blId: bl.blId,
-        blNumber: bl.blNumber,
-        vendorId: req.user.agentId || bl.customAgentId || 'AGENT-101',
-        vendorName: req.user.agencyName || req.user.contactPerson || 'Customs Agent',
-        category: cat,
-        typeDisplay,
-        source: 'Agent',
-        invoiceNumber: String(invoiceNumber).trim().toUpperCase(),
-        amount: numAmount,
-        totalAmount: numAmount,
-        currency: String(currency || 'INR').toUpperCase(),
-        remarks: String(remarks || '').trim(),
-        invoiceFile: String(fileName || '').trim(),
-        status: approval.status,
-        currentStep: approval.currentStep || 1,
-        totalSteps: approval.totalSteps || 2,
-        submittedAt: new Date()
-      });
-
-      broadcastEvent('AGENT_INVOICE_SUBMITTED', { id: payment.logisticsPaymentId, referenceNumber: ref, blNumber: bl.blNumber, amount: numAmount });
-
-      return res.status(201).json({ success: true, message: 'Agent customs charge invoice submitted for approval.', data: payment, approval });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // ─── LOGISTICS PAYMENTS ROUTES ──────────────────────────────────────────────
-
-  router.get('/logistics-payments', authenticateToken, async (req, res) => {
-    try {
-      const visibility = await getPaymentVisibility(req);
-      if (!visibility) return res.status(403).json({ success: false, error: 'Your active user record could not be found.' });
-      let items = await LogisticsPayment.find(paymentOwnerFilter(visibility)).sort({ createdAt: -1 }).lean();
-
-      const q = String(req.query.q || '').toLowerCase().trim();
-      const statusFilter = String(req.query.status || 'All').trim();
-      const includeBli = String(req.query.includeBli || 'false').toLowerCase() === 'true';
-
-      let filtered = await Promise.all(items.map(async (item) => {
-        const ref = item.referenceNumber || item.logisticsPaymentId || '';
-        const isLOG = ref.startsWith('LOG-') || item.source === 'Logistics' || item.source === 'Logistics Payment';
-        const isBLI = ref.startsWith('BLI-');
-
-        const typeDisplay = item.typeDisplay || (isLOG ? 'Logistics Freight Payment' : 'Freight Invoice');
-        const source = item.source || (isLOG ? 'Logistics' : 'Vendor');
-        const amount = item.totalAmount || item.amount || 0;
-        const currency = item.currency || 'INR';
-
-        const app = await Approval.findOne({ $or: [{ id: ref }, { referenceNumber: ref }] }).lean();
-
-        let rawStatus = app?.status || item.status || 'Approved';
-        let status = rawStatus;
-        let currentStep = app?.currentStep || item.currentStep || 1;
-        let totalSteps = app?.totalSteps || item.totalSteps || 1;
-        let workflowSteps = null;
-        if (app?.workflowSteps) {
-          try { workflowSteps = JSON.parse(app.workflowSteps); } catch (_) { }
-        }
-
-        return {
-          ...item,
-          id: item.logisticsPaymentId || item._id,
-          referenceNumber: ref,
-          recordType: isLOG ? 'LOG' : (isBLI ? 'BLI' : 'LOG'),
-          typeDisplay,
-          source,
-          amount,
-          currency,
-          status,
-          currentStep,
-          totalSteps,
-          currentSlab: app?.currentSlab || (isLOG ? 'Logistics Payment Workflow' : 'BL Freight Invoice Workflow'),
-          workflowSteps: app?.workflowSteps,
-          parsedSteps: workflowSteps,
-          submittedAt: item.submittedAt || item.createdAt
-        };
-      }));
-
-      if (!includeBli) {
-        filtered = filtered.filter(i => i.recordType === 'LOG');
-      }
-
-      if (q) {
-        filtered = filtered.filter(i =>
-          i.referenceNumber?.toLowerCase().includes(q) ||
-          i.invoiceNumber?.toLowerCase().includes(q) ||
-          i.blNumber?.toLowerCase().includes(q) ||
-          i.vendorName?.toLowerCase().includes(q) ||
-          i.typeDisplay?.toLowerCase().includes(q)
-        );
-      }
-
-      if (statusFilter && statusFilter !== 'All') {
-        filtered = filtered.filter(i => (i.status || '').toLowerCase() === statusFilter.toLowerCase());
-      }
-
-      const stats = {
-        total: filtered.length,
-        approved: filtered.filter(i => (i.status || '').toLowerCase() === 'approved').length,
-        pending: filtered.filter(i => (i.status || '').toLowerCase().includes('pending')).length,
-        rejected: filtered.filter(i => (i.status || '').toLowerCase() === 'rejected').length
-      };
-
-      return res.json({ success: true, payments: filtered, invoices: filtered, stats });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  router.post('/logistics-payments', authenticateToken, authorizePermission('logistics-payments', 'create'), async (req, res) => {
-    try {
-      const { blNumber, typeDisplay, category, source, invoiceNumber, vendorId, vendorName, amount, currency, remarks } = req.body;
-      if (!invoiceNumber || !amount || Number(amount) <= 0) {
-        return res.status(400).json({ success: false, error: 'Invoice Number and a valid positive amount are required.' });
-      }
-
-      const numAmount = Number(amount);
-      const ref = `LOG-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-      const wf = await resolveWorkflowFromDB('Logistics Payment', numAmount, { currency: currency || 'INR', category: category || 'freight' });
-      const approval = await createApprovalRecord({
-        referenceId: ref,
-        type: 'Logistics Payment',
-        vendorName: vendorName || 'Logistics Provider',
-        amountFormatted: `${currency || 'INR'} ${numAmount}`,
-        poRef: blNumber || 'N/A',
-        requestedBy: req.user?.name || req.user?.email || 'System User',
-        requestedById: req.user?.id || req.user?.email,
-        requestId: req.headers['x-request-id'],
-        transactionSnapshot: { blNumber: blNumber || '', invoiceNumber, category: category || 'freight', typeDisplay: typeDisplay || 'Logistics Freight Payment', source: source || 'Logistics', amount: numAmount },
-        wf
-      });
-
-      const payment = await LogisticsPayment.create({
-        logisticsPaymentId: ref,
-        referenceNumber: ref,
-        blNumber: blNumber ? String(blNumber).trim().toUpperCase() : 'N/A',
-        category: category || 'freight',
-        typeDisplay: typeDisplay || 'Logistics Freight Payment',
-        source: source || 'Logistics',
-        invoiceNumber: String(invoiceNumber).trim().toUpperCase(),
-        vendorId: vendorId || `VEND-${Math.floor(100 + Math.random() * 900)}`,
-        vendorName: vendorName || 'Logistics Provider',
-        amount: numAmount,
-        totalAmount: numAmount,
-        currency: currency || 'INR',
-        status: approval.status,
-        currentStep: approval.currentStep || 1,
-        totalSteps: approval.totalSteps || 1,
-        remarks: remarks || '',
-        submittedAt: new Date(),
-        createdBy: req.user?.name || req.user?.email || 'System User',
-        requestedBy: req.user?.name || req.user?.email || 'System User',
-        requestedById: req.user?.id || req.user?.email,
-        requestedByTeam: approval.requestedByTeam || null,
-        assignedApprover: approval.assignedApprover || null,
-        assignedApproverName: approval.assignedApproverName || null,
-        assignedApproverRole: approval.assignedApproverRole || null,
-        actionHistory: [
-          { action: 'submit', step: 1, role: 'Requester', actionedBy: req.user?.name || req.user?.email || 'User', actionedAt: new Date(), remarks: 'Submitted Logistics Payment for approval' }
-        ]
-      });
-
-      broadcastEvent('LOGISTICS_PAYMENT_SUBMITTED', { id: payment.logisticsPaymentId, referenceNumber: ref, blNumber, amount: numAmount, status: approval.status });
-
-      return res.status(201).json({ success: true, message: 'Logistics Payment submitted for approval.', payment, approval });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  router.delete('/logistics-payments/clear-bli', authenticateToken, async (req, res) => {
-    try {
-      const bliQuery = {
-        $or: [
-          { referenceNumber: /^BLI-/ },
-          { logisticsPaymentId: /^BLI-/ },
-          { category: 'bl_invoice' }
-        ]
-      };
-
-      const countBlColl = await BlInvoice.countDocuments({});
-      const countLegacy = await LogisticsPayment.countDocuments(bliQuery);
-      const totalCount = countBlColl + countLegacy;
-
-      const blRecords = await BlInvoice.find({}, { referenceNumber: 1, logisticsPaymentId: 1 }).lean();
-      const legacyRecords = await LogisticsPayment.find(bliQuery, { referenceNumber: 1, logisticsPaymentId: 1 }).lean();
-      const bliRefs = [...blRecords, ...legacyRecords].map(r => r.referenceNumber || r.logisticsPaymentId).filter(Boolean);
-
-      await BlInvoice.deleteMany({});
-      await LogisticsPayment.deleteMany(bliQuery);
-      if (bliRefs.length > 0) {
-        await Approval.deleteMany({ $or: [{ id: { $in: bliRefs } }, { referenceNumber: { $in: bliRefs } }] });
-      }
-
-      return res.json({ success: true, message: `Successfully purged ${totalCount} BLI record(s) from database.`, deletedCount: totalCount });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  router.get('/logistics-payments/:id', authenticateToken, async (req, res) => {
-    try {
-      const { id } = req.params;
-      const payment = await LogisticsPayment.findOne({
-        $or: [{ logisticsPaymentId: id }, { referenceNumber: id }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }]
       }).lean();
+    } else {
+      matchingInvoice = await InvoicePayment.findOne({
+        asnNumber: { $regex: new RegExp(`^${asnNumber.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') }
+      }).lean();
+    }
 
-      if (!payment) {
-        return res.status(404).json({ success: false, error: 'Payment record not found.' });
-      }
+    if (!matchingInvoice) {
+      return res.json({
+        success: true,
+        valid: false,
+        error: `ASN Number "${asnNumber}" does not match any invoice record for the linked Purchase Order (PO).`
+      });
+    }
 
-      const ref = payment.referenceNumber || payment.logisticsPaymentId;
+    return res.json({ success: true, valid: true, message: `ASN Number "${asnNumber}" is valid and matched with Purchase Order (PO) invoice records.` });
+  } catch (err) {
+    return res.status(500).json({ success: false, valid: false, error: err.message });
+  }
+});
+
+router.post('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) => {
+  try {
+    const context = await resolveVendorAwardedRfq(req);
+    if (context.error) return res.status(context.status).json({ success: false, error: context.error });
+    const blNumber = String(req.body.blNumber || '').trim().toUpperCase();
+    if (!blNumber) {
+      return res.status(400).json({ success: false, error: 'BL Number is required.' });
+    }
+    if (!/^[A-Z0-9\-_/]{3,30}$/i.test(blNumber)) {
+      return res.status(400).json({ success: false, error: 'BL Number must be between 3 and 30 characters (letters, numbers, hyphens, slashes).' });
+    }
+
+    const asnNumber = String(req.body.asnNumber || '').trim().toUpperCase();
+    const poRef = context.rfq.sapPoNumber || context.rfq.poId || context.rfq.poNumber;
+    const linkedPo = poRef ? await PurchaseOrder.findOne({ $or: [{ poNumber: poRef }, { sapPoNumber: poRef }] }).lean() : null;
+    const requiresAsn = /^(43|60|PO-43)/i.test(String(linkedPo?.sapPoNumber || linkedPo?.poNumber || poRef || ''));
+    if (requiresAsn && !asnNumber) {
+      return res.status(400).json({ success: false, error: 'ASN Number (Advance Shipping Notice) is required to link with RFQ & PO records.' });
+    }
+    if (asnNumber && !/^[A-Z0-9\-_/]{3,30}$/i.test(asnNumber)) {
+      return res.status(400).json({ success: false, error: 'ASN Number must be between 3 and 30 characters (letters, numbers, hyphens, slashes).' });
+    }
+
+    const containerCount = Number(req.body.containerCount);
+    const duplicateBl = await RfqBlEntry.exists({ blNumber });
+    if (duplicateBl) {
+      return res.status(400).json({ success: false, error: `BL Number "${blNumber}" already exists in the system.` });
+    }
+
+    const poKeys = [context.rfq?.poId, context.rfq?.sapPoNumber, context.rfq?.poNumber, context.rfq?.rfqId, context.rfq?.rfqNumber].filter(Boolean);
+    const matchingInvoice = asnNumber ? await InvoicePayment.findOne({
+      $and: [
+        { asnNumber: { $regex: new RegExp(`^${asnNumber.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') } },
+        { $or: [{ poId: { $in: poKeys } }, { sapPoNumber: { $in: poKeys } }, { poNumber: { $in: poKeys } }] }
+      ]
+    }).lean() : null;
+
+    if (requiresAsn && !matchingInvoice) {
+      return res.status(400).json({
+        success: false,
+        error: `ASN Number "${asnNumber}" does not match any invoice record for the linked Purchase Order (PO).`
+      });
+    }
+    const vendorKeys = freightVendorKeys(context.vendor);
+    const existing = await RfqBlEntry.find({ rfqId: context.rfq.rfqId }).lean();
+    const used = existing.filter((entry) => vendorKeys.includes(normaliseInviteValue(entry.vendorId)) || vendorKeys.includes(normaliseInviteValue(entry.vendorName))).reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0);
+    const remaining = context.allocation.containers - used;
+    if (!Number.isInteger(containerCount) || containerCount <= 0) {
+      return res.status(400).json({ success: false, error: 'Container count must be a positive whole number.' });
+    }
+    if (containerCount > remaining) return res.status(400).json({ success: false, error: `Only ${Math.max(0, remaining)} awarded container(s) remain.` });
+    const documents = (Array.isArray(req.body.documents) ? req.body.documents : []).filter((doc) => doc?.fileName).map((doc) => ({ docType: doc.docType || 'Bill of Lading', fileUrl: String(doc.fileName), uploadedBy: context.vendor.companyName, uploadedAt: new Date() }));
+    if (!documents.length) return res.status(400).json({ success: false, error: 'At least one supporting document is required.' });
+    const entry = await RfqBlEntry.create({
+      blId: `BL-${Date.now().toString(36).toUpperCase()}`,
+      rfqId: context.rfq.rfqId, rfqNumber: context.rfq.rfqNumber,
+      blNumber, containerCount, vendorId: context.vendor.sapVendorCode || context.vendor.supplierId || context.vendor.id,
+      vendorName: context.vendor.companyName, remarks: String(req.body.remarks || '').trim(),
+      vesselName: context.rfq.title, shippingLine: context.rfq.awardedVendorName || context.vendor.companyName,
+      asnNumber, autoAsnNumber: asnNumber, status: 'submitted', documents
+    });
+    await WorkflowAudit.record({
+      eventId: `wa-${crypto.randomUUID()}`,
+      eventType: 'BL_SUBMITTED',
+      actorId: context.vendor.sapVendorCode || context.vendor.supplierId || context.vendor.id || 'Vendor',
+      actorName: context.vendor.companyName || 'Freight Vendor',
+      actorRole: 'Vendor',
+      entityType: 'Bill of Lading',
+      entityId: entry.blId,
+      workflowId: context.rfq.rfqId,
+      workflowVersion: 1,
+      step: 4,
+      action: 'submit BL',
+      reason: `Bill of Lading "${blNumber}" (${containerCount} container(s), ASN: ${asnNumber || 'N/A'}) submitted for EXIM review.`,
+      newState: {
+        blId: entry.blId,
+        blNumber,
+        rfqId: context.rfq.rfqId,
+        asnNumber,
+        containerCount,
+        status: entry.status
+      },
+      referenceNumber: blNumber,
+      requestId: req.headers['x-request-id'],
+      source: req.headers['x-client-source'] || 'web',
+      occurredAt: new Date()
+    }).catch((err) => console.warn('[BL Audit Error]:', err.message));
+    broadcastEvent('BL_SUBMITTED', { blId: entry.blId, blNumber, rfqId: context.rfq.rfqId, vendorName: context.vendor.companyName });
+    return res.status(201).json({ success: true, message: 'BL entry submitted for EXIM review.', data: entry });
+  } catch (err) { return res.status(500).json({ success: false, error: err.code === 11000 ? 'This BL Number already exists.' : err.message }); }
+});
+
+router.get('/vendor-rfqs/:id/bl-entries/:blId', authenticateToken, async (req, res) => {
+  try {
+    const context = await resolveVendorAwardedRfq(req);
+    if (context.error) return res.status(context.status).json({ success: false, error: context.error });
+    const entry = await RfqBlEntry.findOne({ rfqId: context.rfq.rfqId, $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] }).lean();
+    const keys = freightVendorKeys(context.vendor);
+    if (!entry || ![entry.vendorId, entry.vendorName].map(normaliseInviteValue).some((key) => keys.includes(key))) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+    const blCollInvoices = await BlInvoice.find({ blId: entry.blId }).sort({ createdAt: -1 }).lean();
+    const legacyInvoices = await LogisticsPayment.find({ blId: entry.blId }).sort({ createdAt: -1 }).lean();
+    const rawInvoices = [...blCollInvoices, ...legacyInvoices];
+    const seenDocuments = new Set();
+    const documents = (entry.documents || []).filter((doc) => {
+      const key = `${doc.docType || ''}|${doc.fileUrl || ''}`.toLowerCase();
+      if (seenDocuments.has(key)) return false;
+      seenDocuments.add(key);
+      return true;
+    });
+    const invoices = rawInvoices.map((invoice) => {
+      const candidates = [invoice.amount, invoice.invoiceAmount, invoice.totalAmount, invoice.grossAmount];
+      const amount = candidates.map(Number).find(Number.isFinite);
+      return { ...invoice, amount: amount ?? 0, amountMissing: amount === undefined, status: invoice.status || 'draft' };
+    });
+    return res.json({ success: true, data: { ...entry, documents, invoices, canInvoice: entry.status === 'custom_cleared' || entry.status === 'invoice_pending' } });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/vendor-rfqs/:id/bl-entries/:blId/invoices', authenticateToken, async (req, res) => {
+  try {
+    const context = await resolveVendorAwardedRfq(req);
+    if (context.error) return res.status(context.status).json({ success: false, error: context.error });
+    const bl = await RfqBlEntry.findOne({ rfqId: context.rfq.rfqId, $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] });
+    const keys = freightVendorKeys(context.vendor);
+    if (!bl || ![bl.vendorId, bl.vendorName].map(normaliseInviteValue).some((key) => keys.includes(key))) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+    if (!['custom_cleared', 'invoice_pending'].includes(bl.status)) return res.status(400).json({ success: false, error: 'Logistics invoice can only be raised after customs clearance.' });
+    const invoiceNumber = String(req.body.invoiceNumber || '').trim().toUpperCase();
+    const amount = Number(req.body.amount);
+    const ref = `BLI-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const category = req.body.category || 'freight';
+    const allowedCategories = ['freight', 'destination_charges', 'detention', 'port_storage', 'agency_fee'];
+    if (!invoiceNumber || invoiceNumber.length > 100) return res.status(400).json({ success: false, error: 'A valid invoice number is required.' });
+    if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ success: false, error: 'Invoice amount must be greater than zero.' });
+    if (!allowedCategories.includes(category)) return res.status(400).json({ success: false, error: 'Invalid logistics invoice category.' });
+    const duplicateInvoice = await LogisticsPayment.exists({ vendorId: bl.vendorId, invoiceNumber });
+    if (duplicateInvoice) return res.status(409).json({ success: false, error: `Invoice number "${invoiceNumber}" has already been submitted.` });
+    const typeDisplay = category === 'freight' ? 'Freight Invoice' : category === 'destination_charges' ? 'Destination Charges (Shipping Line)' : category === 'recepted_charges' ? 'Recepted Charges' : category === 'agency_fee' ? 'Agency Charges' : category === 'port_storage' ? 'Port Storage' : 'BL Charge Invoice';
+    const numAmount = amount;
+    const curr = String(req.body.currency || 'INR').toUpperCase();
+    if (!['INR', 'USD', 'EUR', 'GBP', 'CNY', 'JPY', 'AED', 'SGD'].includes(curr)) return res.status(400).json({ success: false, error: 'Unsupported invoice currency.' });
+    const rawFile = String(req.body.fileName || req.body.fileUrl || '').trim();
+    const docList = Array.isArray(req.body.documents) && req.body.documents.length > 0
+      ? req.body.documents.filter((document) => String(document?.fileName || document?.fileUrl || '').trim())
+      : (rawFile ? [{ docType: typeDisplay, fileName: rawFile, fileUrl: rawFile, uploadedBy: bl.vendorName || 'Vendor' }] : []);
+    if (!docList.length) return res.status(400).json({ success: false, error: 'At least one supporting invoice document is required.' });
+    const blWorkflow = await resolveWorkflowFromDB('BL Freight Invoice', numAmount, { currency: curr });
+
+    const approval = await createApprovalRecord({
+      referenceId: ref,
+      type: 'BL Freight Invoice',
+      vendorName: bl.vendorName || context.vendor?.companyName || 'Vendor',
+      amountFormatted: `${curr} ${numAmount}`,
+      poRef: bl.blNumber,
+      requestedBy: context.vendor?.companyName || 'Vendor',
+      requestedById: context.vendor?.id || 'vendor',
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: { blId: bl.blId, blNumber: bl.blNumber, invoiceNumber, category, typeDisplay, source: 'Vendor', amount: numAmount },
+      wf: blWorkflow
+    });
+
+    const payment = await LogisticsPayment.create({
+      logisticsPaymentId: ref, referenceNumber: ref, blId: bl.blId, blNumber: bl.blNumber,
+      vendorId: bl.vendorId, vendorName: bl.vendorName, category, typeDisplay, source: 'Vendor', invoiceNumber,
+      amount: numAmount, totalAmount: numAmount, currency: curr, remarks: String(req.body.remarks || '').trim(),
+      invoiceFile: rawFile, fileUrl: rawFile, fileName: rawFile, documents: docList,
+      status: approval.status, currentStep: approval.currentStep || 1, totalSteps: approval.totalSteps || 2, submittedAt: new Date()
+    });
+    broadcastEvent('LOGISTICS_INVOICE_SUBMITTED', { logisticsPaymentId: payment.logisticsPaymentId, blId: bl.blId, vendorId: bl.vendorId, amount: numAmount });
+    return res.status(201).json({ success: true, message: 'Logistics invoice submitted for approval.', data: payment, approval });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/rfqs/:id/close', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
+  try {
+    const isObjId = mongoose.Types.ObjectId.isValid(req.params.id);
+    const query = isObjId
+      ? { $or: [{ _id: req.params.id }, { rfqId: req.params.id }, { rfqNumber: req.params.id }] }
+      : { $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] };
+
+    const rfq = await RfqHeader.findOne(query);
+    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found.' });
+    if (!['published', 'partially_awarded'].includes(String(rfq.status).toLowerCase())) {
+      return res.status(409).json({ success: false, error: `RFQ cannot be closed while it is ${String(rfq.status).replace(/_/g, ' ')}.` });
+    }
+
+    rfq.status = 'closed';
+    rfq.closedAt = new Date();
+    await rfq.save();
+
+    broadcastEvent('RFQ_CLOSED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber });
+
+    return res.json({
+      success: true,
+      message: `RFQ ${rfq.rfqNumber || rfq.rfqId} closed successfully.`,
+      data: rfq
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/rfqs/:id/reopen', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'create'), async (req, res) => {
+  try {
+    const isObjId = mongoose.Types.ObjectId.isValid(req.params.id);
+    const query = isObjId
+      ? { $or: [{ _id: req.params.id }, { rfqId: req.params.id }, { rfqNumber: req.params.id }] }
+      : { $or: [{ rfqId: req.params.id }, { rfqNumber: req.params.id }] };
+
+    const rfq = await RfqHeader.findOne(query);
+    if (!rfq) return res.status(404).json({ success: false, error: 'RFQ not found.' });
+    const status = String(rfq.status).toLowerCase();
+    const expiredPublishedRfq = status === 'published' && isRfqClosed(rfq.closingDate);
+    if (status !== 'closed' && !expiredPublishedRfq) {
+      return res.status(409).json({ success: false, error: `Only a closed RFQ can be reopened. Current status: ${String(rfq.status).replace(/_/g, ' ')}.` });
+    }
+
+    const newClosingDate = req.body.closingDate ? new Date(req.body.closingDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    if (Number.isNaN(newClosingDate.getTime()) || newClosingDate <= new Date()) {
+      return res.status(400).json({ success: false, error: 'Reopened RFQ closing date must be a valid future date and time.' });
+    }
+    rfq.status = 'published';
+    rfq.closingDate = newClosingDate;
+    await rfq.save();
+
+    broadcastEvent('RFQ_REOPENED', { rfqId: rfq.rfqId, rfqNumber: rfq.rfqNumber, closingDate: rfq.closingDate });
+
+    return res.json({
+      success: true,
+      message: `RFQ ${rfq.rfqNumber || rfq.rfqId} reopened successfully until ${new Date(rfq.closingDate).toLocaleDateString('en-IN')}.`,
+      data: rfq
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── CUSTOMS BROKER & BL ASSIGNMENT ROUTES ──────────────────────────────────
+
+router.get('/custom-agents/bl-entries', authenticateToken, async (req, res) => {
+  try {
+    const entries = await RfqBlEntry.find().sort({ createdAt: -1 }).lean();
+    const agents = await CustomAgent.find({ status: 'Active' }).select('agentId agencyName contactPerson email').sort({ agencyName: 1 }).lean();
+    return res.json({ success: true, blEntries: entries, data: entries, agents });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.get('/exim/bl-entries', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'view'), async (req, res) => {
+  try {
+    const entries = await RfqBlEntry.find().sort({ createdAt: -1 }).lean();
+    const agents = await CustomAgent.find({ status: 'Active' }).select('agentId agencyName contactPerson email').sort({ agencyName: 1 }).lean();
+    return res.json({ success: true, data: entries, blEntries: entries, agents });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.get('/exim/bl-entries/:blId', authenticateToken, async (req, res) => {
+  try {
+    const entry = await RfqBlEntry.findOne({ $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] }).lean();
+    if (!entry) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+    const [rfq, agents, assignedAgent, invoices] = await Promise.all([
+      RfqHeader.findOne({ rfqId: entry.rfqId }).select('rfqId rfqNumber title').lean(),
+      CustomAgent.find({ status: 'Active' }).select('agentId agencyName contactPerson email').sort({ agencyName: 1 }).lean(),
+      entry.customAgentId ? CustomAgent.findOne({ agentId: entry.customAgentId }).select('agentId agencyName contactPerson email').lean() : null,
+      BlInvoice.find({ $or: [{ blId: entry.blId }, { blNumber: entry.blNumber }] }).sort({ submittedAt: 1, createdAt: 1 }).lean()
+    ]);
+    return res.json({
+      success: true, data: {
+        ...entry,
+        customAgentName: assignedAgent?.contactPerson || entry.customAgentName,
+        customAgentAgencyName: assignedAgent?.agencyName || entry.customAgentAgencyName,
+        rfq,
+        invoices
+      }, agents
+    });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/exim/bl-entries/:blId/documents', authenticateToken, async (req, res) => {
+  try {
+    const bl = await RfqBlEntry.findOne({ $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] });
+    if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+    if (bl.status === 'custom_cleared') return res.status(400).json({ success: false, error: 'Documents cannot be changed after customs clearance.' });
+    const documents = Array.isArray(req.body.documents) ? req.body.documents : [];
+    const valid = documents.filter((doc) => String(doc.docType || '').trim() && String(doc.fileName || '').trim());
+    if (!valid.length) return res.status(400).json({ success: false, error: 'Select a document type and file.' });
+    bl.documents.push(...valid.map((doc) => ({ docType: String(doc.docType).trim(), fileUrl: String(doc.fileName).trim(), fileName: String(doc.fileName).trim(), uploadedBy: req.user?.name || req.user?.email || 'EXIM Team', uploadedAt: new Date(), stage: 'EXIM Review' })));
+    if (bl.status === 'submitted') bl.status = 'exim_review';
+    bl.eximReviewedAt = bl.eximReviewedAt || new Date();
+    await bl.save();
+    await WorkflowAudit.record({
+      eventId: `wa-${crypto.randomUUID()}`,
+      eventType: 'BL_EXIM_REVIEW',
+      actorId: req.user?.id || req.user?.email || 'exim',
+      actorName: req.user?.name || req.user?.email || 'EXIM Manager',
+      actorRole: req.user?.role || 'EXIM Manager',
+      entityType: 'Bill of Lading',
+      entityId: bl.blId,
+      workflowId: bl.rfqId,
+      workflowVersion: 1,
+      step: 5,
+      action: 'upload EXIM documents',
+      reason: `EXIM review documents (${valid.map((d) => d.docType).join(', ')}) uploaded for Bill of Lading "${bl.blNumber}".`,
+      newState: { blId: bl.blId, blNumber: bl.blNumber, status: bl.status },
+      referenceNumber: bl.blNumber,
+      requestId: req.headers['x-request-id'],
+      source: req.headers['x-client-source'] || 'web',
+      occurredAt: new Date()
+    }).catch((err) => console.warn('[BL Audit Error]:', err.message));
+    broadcastEvent('BL_EXIM_REVIEWED', { blId: bl.blId, vendorId: bl.vendorId });
+    return res.json({ success: true, message: 'EXIM documents uploaded.', data: bl });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/exim/bl-entries/:blId/assign', authenticateToken, async (req, res) => {
+  try {
+    const agent = await CustomAgent.findOne({ agentId: req.body.agentId, status: 'Active' }).lean();
+    if (!agent) return res.status(400).json({ success: false, error: 'Select an active customs agent.' });
+    const bl = await RfqBlEntry.findOne({ $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] });
+    if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+    if (bl.status === 'custom_cleared') return res.status(400).json({ success: false, error: 'A customs-cleared BL cannot be reassigned.' });
+    bl.customAgentId = agent.agentId;
+    bl.customAgentName = agent.agencyName;
+    bl.customAgentAgencyName = agent.agencyName;
+    bl.eximNotes = String(req.body.notes || '').trim();
+    bl.eximReviewedAt = bl.eximReviewedAt || new Date();
+    bl.assignedAt = new Date();
+    bl.status = 'assigned_to_agent';
+    await bl.save();
+    await WorkflowAudit.record({
+      eventId: `wa-${crypto.randomUUID()}`,
+      eventType: 'BL_AGENT_ASSIGNED',
+      actorId: req.user?.id || req.user?.email || 'exim',
+      actorName: req.user?.name || req.user?.email || 'EXIM Manager',
+      actorRole: req.user?.role || 'EXIM Manager',
+      entityType: 'Bill of Lading',
+      entityId: bl.blId,
+      workflowId: bl.rfqId,
+      workflowVersion: 1,
+      step: 6,
+      action: 'assign customs agent',
+      reason: `Bill of Lading "${bl.blNumber}" assigned to Customs Broker "${agent.agencyName || agent.agentId}". Notes: ${bl.eximNotes || 'None'}.`,
+      newState: { blId: bl.blId, blNumber: bl.blNumber, customAgentId: agent.agentId, status: bl.status },
+      referenceNumber: bl.blNumber,
+      requestId: req.headers['x-request-id'],
+      source: req.headers['x-client-source'] || 'web',
+      occurredAt: new Date()
+    }).catch((err) => console.warn('[BL Audit Error]:', err.message));
+    broadcastEvent('BL_ASSIGNED', { blId: bl.blId, blNumber: bl.blNumber, agentId: agent.agentId, vendorId: bl.vendorId });
+    return res.json({ success: true, message: 'BL assigned to customs agent.', data: bl });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/exim/bl-entries/:blId/action', authenticateToken, async (req, res) => {
+  try {
+    const { action, remarks } = req.body;
+    const bl = await RfqBlEntry.findOne({ $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] });
+    if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+
+    let nextStatus = bl.status;
+    if (action === 'approve') {
+      nextStatus = bl.customAgentId ? 'assigned_to_agent' : 'exim_review';
+      bl.eximReviewedAt = new Date();
+    } else if (action === 'return') {
+      nextStatus = 'returned_for_correction';
+    } else if (action === 'reject') {
+      nextStatus = 'rejected';
+    } else {
+      return res.status(400).json({ success: false, error: 'Invalid action type.' });
+    }
+
+    bl.status = nextStatus;
+    if (!bl.eximApprovalHistory) bl.eximApprovalHistory = [];
+    bl.eximApprovalHistory.push({
+      action,
+      actionedBy: req.user?.name || req.user?.email || 'EXIM Manager',
+      role: req.user?.role || 'EXIM Manager',
+      actionedAt: new Date(),
+      remarks: remarks || `BL Entry ${action.toUpperCase()} action processed.`
+    });
+
+    await bl.save();
+    await WorkflowAudit.record({
+      eventId: `wa-${crypto.randomUUID()}`,
+      eventType: `BL_EXIM_${action.toUpperCase()}`,
+      actorId: req.user?.id || req.user?.email || 'exim',
+      actorName: req.user?.name || req.user?.email || 'EXIM Manager',
+      actorRole: req.user?.role || 'EXIM Manager',
+      entityType: 'Bill of Lading',
+      entityId: bl.blId,
+      workflowId: bl.rfqId,
+      workflowVersion: 1,
+      step: 5,
+      action: `exim ${action}`,
+      reason: remarks || `Bill of Lading "${bl.blNumber}" ${action}d by EXIM Manager.`,
+      newState: { blId: bl.blId, blNumber: bl.blNumber, status: nextStatus },
+      referenceNumber: bl.blNumber,
+      requestId: req.headers['x-request-id'],
+      source: req.headers['x-client-source'] || 'web',
+      occurredAt: new Date()
+    }).catch((err) => console.warn('[BL Audit Error]:', err.message));
+    broadcastEvent('BL_EXIM_ACTION', { blId: bl.blId, blNumber: bl.blNumber, action, status: nextStatus });
+    return res.json({ success: true, message: `BL Entry ${action}d successfully.`, data: bl });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/customs-agent/assigned', authenticateToken, async (req, res) => {
+  try {
+    if (req.user?.role === 'Vendor') return res.status(403).json({ success: false, error: 'Customs Agent or internal access is required.' });
+    let filter = {};
+    if (req.user?.role === 'CustomAgent') {
+      filter = { customAgentId: req.user.id };
+    }
+    const bls = await RfqBlEntry.find(filter).sort({ createdAt: -1 }).lean();
+    return res.json({
+      success: true,
+      agentName: req.user?.email || 'All Agents',
+      agentCompany: req.user?.agencyName || 'Internal View',
+      totalAssigned: bls.length,
+      pendingClearance: bls.filter(b => b.status !== 'custom_cleared').length,
+      customCleared: bls.filter(b => b.status === 'custom_cleared').length,
+      assignments: bls
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/customs-agent/assigned/:blId', authenticateToken, async (req, res) => {
+  try {
+    if (req.user?.role === 'Vendor') return res.status(403).json({ success: false, error: 'Customs Agent or internal access is required.' });
+    let query = { $or: [{ blId: req.params.blId }, { blNumber: req.params.blId }] };
+    if (req.user?.role === 'CustomAgent') {
+      query.customAgentId = req.user.id;
+    }
+    const bl = await RfqBlEntry.findOne(query).lean();
+    if (!bl) return res.status(404).json({ success: false, error: 'Assigned BL entry not found.' });
+    const rfq = await RfqHeader.findOne({ rfqId: bl.rfqId }).select('rfqId rfqNumber title cargoDetails').lean();
+    const seenDocuments = new Set();
+    const documents = (bl.documents || []).filter((doc) => {
+      const key = `${doc.docType || ''}|${doc.fileUrl || ''}`.toLowerCase();
+      if (seenDocuments.has(key)) return false;
+      seenDocuments.add(key);
+      return true;
+    });
+    return res.json({ success: true, data: { ...bl, documents, rfq } });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/customs-agent/documents', authenticateToken, async (req, res) => {
+  try {
+    if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
+    const bl = await RfqBlEntry.findOne({ customAgentId: req.user.id, $or: [{ blId: req.body.blId }, { blNumber: req.body.blId }] });
+    if (!bl) return res.status(404).json({ success: false, error: 'Assigned BL entry not found.' });
+    if (bl.status === 'custom_cleared') return res.status(400).json({ success: false, error: 'Documents cannot be changed after customs clearance.' });
+    const docType = String(req.body.docType || '').trim();
+    const fileName = String(req.body.fileName || '').trim();
+    if (!docType || !fileName) return res.status(400).json({ success: false, error: 'Document type and file are required.' });
+    bl.documents.push({ docType, fileUrl: fileName, uploadedBy: `${req.user.agencyName || req.user.email} (Customs Agent)`, uploadedAt: new Date(), stage: 'Customs Clearance' });
+    await bl.save();
+    return res.json({ success: true, message: 'Customs document uploaded.', data: bl });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/customs-agent/upload-boe', authenticateToken, async (req, res) => {
+  try {
+    if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
+    const { blId, boeNumber, dutyAmount, fileName } = req.body;
+    const bl = await RfqBlEntry.findOne({ customAgentId: req.user.id, $or: [{ blId }, { blNumber: blId }] });
+    if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+    if (bl.status === 'custom_cleared') return res.status(400).json({ success: false, error: 'BOE cannot be changed after customs clearance.' });
+    const existingBoeDocument = bl.documents.some((doc) => doc.docType === 'Customs Bill of Entry');
+    if (!String(boeNumber || '').trim()) return res.status(400).json({ success: false, error: 'BOE Number is required.' });
+    if (!existingBoeDocument && !String(fileName || '').trim()) return res.status(400).json({ success: false, error: 'BOE document is required.' });
+
+    const duplicateBoeFile = bl.documents.some((doc) => doc.docType === 'Customs Bill of Entry' && String(doc.fileUrl || '').trim() === String(fileName || '').trim());
+    if (String(fileName || '').trim() && !duplicateBoeFile) {
+      bl.documents.push({
+        docType: 'Customs Bill of Entry',
+        fileUrl: String(fileName).trim(),
+        uploadedBy: `${req.user.agencyName || req.user.email} (Customs Agent)`,
+        uploadedAt: new Date(),
+        stage: 'Customs Clearance'
+      });
+    }
+    bl.boeNumber = String(boeNumber).trim();
+    bl.dutyAmount = Math.max(0, Number(dutyAmount) || 0);
+    bl.boeUploadedAt = new Date();
+    await bl.save();
+
+    await WorkflowAudit.record({
+      entityType: 'rfqs',
+      entityId: bl.rfqId,
+      blId: bl.blId,
+      blNumber: bl.blNumber,
+      action: 'BOE_UPLOADED',
+      eventType: 'BL_BOE_UPLOADED',
+      step: 7,
+      actorId: req.user.id || req.user.agentId,
+      actorName: req.user.agencyName || req.user.name || req.user.email || 'Customs Agent',
+      actorRole: req.user.role || 'CustomAgent',
+      reason: `Bill of Entry "${bl.boeNumber}" uploaded (Duty: ₹${bl.dutyAmount || 0}) for BL "${bl.blNumber}".`,
+      previousState: { status: bl.status },
+      newState: { status: bl.status, boeNumber: bl.boeNumber, dutyAmount: bl.dutyAmount },
+      source: 'web',
+      requestId: req.headers['x-request-id']
+    }).catch((e) => console.warn('[WorkflowAudit] BOE upload error:', e.message));
+
+    return res.json({ success: true, message: 'Bill of Entry uploaded successfully.', bl });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/customs-agent/clear', authenticateToken, async (req, res) => {
+  try {
+    if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
+    const { blId } = req.body;
+    const bl = await RfqBlEntry.findOne({ customAgentId: req.user.id, $or: [{ blId }, { blNumber: blId }] });
+    if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+    const boeDocument = bl.documents.find((doc) => doc.docType === 'Customs Bill of Entry');
+    if (!boeDocument) return res.status(400).json({ success: false, error: 'Upload the Bill of Entry document before marking customs cleared.' });
+    if (!bl.boeNumber) bl.boeReference = `DOCUMENT:${boeDocument.fileUrl}`;
+
+    bl.status = 'custom_cleared';
+    bl.customsClearedAt = new Date();
+    bl.customsClearanceNotes = String(req.body.notes || '').trim();
+    await bl.save();
+
+    await WorkflowAudit.record({
+      entityType: 'rfqs',
+      entityId: bl.rfqId,
+      blId: bl.blId,
+      blNumber: bl.blNumber,
+      action: 'CUSTOMS_CLEARED',
+      eventType: 'BL_CUSTOMS_CLEARED',
+      step: 7,
+      actorId: req.user.id || req.user.agentId,
+      actorName: req.user.agencyName || req.user.name || req.user.email || 'Customs Agent',
+      actorRole: req.user.role || 'CustomAgent',
+      reason: `BL "${bl.blNumber}" marked as Customs Cleared${bl.customsClearanceNotes ? ': ' + bl.customsClearanceNotes : '.'}`,
+      previousState: { status: 'assigned_to_agent' },
+      newState: { status: 'custom_cleared', customsClearedAt: bl.customsClearedAt },
+      source: 'web',
+      requestId: req.headers['x-request-id']
+    }).catch((e) => console.warn('[WorkflowAudit] customs clear error:', e.message));
+
+    broadcastEvent('BL_CUSTOMS_CLEARED', { blId: bl.blId, blNumber: bl.blNumber, rfqId: bl.rfqId, vendorId: bl.vendorId, clearedAt: bl.customsClearedAt });
+
+    sendBlCustomsClearedEmail({
+      to: 'vendor@rayzon.com',
+      vendorName: bl.vendorName,
+      blNumber: bl.blNumber,
+      asnNumber: bl.asnNumber || bl.autoAsnNumber,
+      rfqNumber: bl.rfqNumber,
+      clearedDate: new Date(bl.customsClearedAt).toLocaleDateString('en-IN'),
+      agentNotes: bl.customsClearanceNotes
+    }).catch((err) => console.warn('[BL Email] sendBlCustomsClearedEmail error:', err.message));
+
+    return res.json({ success: true, message: 'Marked as Customs Cleared! Invoicing options enabled.', bl });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/customs-agent/invoices', authenticateToken, async (req, res) => {
+  try {
+    if (req.user?.role !== 'CustomAgent') return res.status(403).json({ success: false, error: 'Customs Agent access is required.' });
+    const { blId, invoiceNumber, amount, currency, category, remarks, fileName } = req.body;
+    const bl = await RfqBlEntry.findOne({ customAgentId: req.user.id, $or: [{ blId }, { blNumber: blId }] });
+    if (!bl) return res.status(404).json({ success: false, error: 'BL entry not found.' });
+
+    const numAmount = Number(amount);
+    if (!String(invoiceNumber || '').trim() || !(numAmount > 0)) {
+      return res.status(400).json({ success: false, error: 'Invoice Number and a positive amount are required.' });
+    }
+
+    const ref = `BLI-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const cat = category || 'agency_fee';
+    const typeDisplay = cat === 'agency_fee' ? 'Agency Charges' : cat === 'recepted_charges' ? 'Recepted Charges' : cat === 'port_storage' ? 'Port Storage' : 'Customs Clearance Fee';
+
+    const blWorkflow = await resolveWorkflowFromDB('BL Freight Invoice', numAmount, { currency: currency || 'INR' });
+
+    const approval = await createApprovalRecord({
+      referenceId: ref,
+      type: 'BL Freight Invoice',
+      vendorName: req.user.agencyName || req.user.contactPerson || 'Customs Agent',
+      amountFormatted: `${currency || 'INR'} ${numAmount}`,
+      poRef: bl.blNumber,
+      requestedBy: req.user.agencyName || req.user.contactPerson || req.user.email || 'Customs Agent',
+      requestedById: req.user.id || req.user.agentId,
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: { blId: bl.blId, blNumber: bl.blNumber, invoiceNumber, category: cat, typeDisplay, source: 'Agent', amount: numAmount },
+      wf: blWorkflow
+    });
+
+    const payment = await BlInvoice.create({
+      logisticsPaymentId: ref,
+      referenceNumber: ref,
+      blId: bl.blId,
+      blNumber: bl.blNumber,
+      vendorId: req.user.agentId || bl.customAgentId || 'AGENT-101',
+      vendorName: req.user.agencyName || req.user.contactPerson || 'Customs Agent',
+      category: cat,
+      typeDisplay,
+      source: 'Agent',
+      invoiceNumber: String(invoiceNumber).trim().toUpperCase(),
+      amount: numAmount,
+      totalAmount: numAmount,
+      currency: String(currency || 'INR').toUpperCase(),
+      remarks: String(remarks || '').trim(),
+      invoiceFile: String(fileName || '').trim(),
+      status: approval.status,
+      currentStep: approval.currentStep || 1,
+      totalSteps: approval.totalSteps || 2,
+      submittedAt: new Date()
+    });
+
+    broadcastEvent('AGENT_INVOICE_SUBMITTED', { id: payment.logisticsPaymentId, referenceNumber: ref, blNumber: bl.blNumber, amount: numAmount });
+
+    return res.status(201).json({ success: true, message: 'Agent customs charge invoice submitted for approval.', data: payment, approval });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── LOGISTICS PAYMENTS ROUTES ──────────────────────────────────────────────
+
+router.get('/logistics-payments', authenticateToken, async (req, res) => {
+  try {
+    const visibility = await getPaymentVisibility(req);
+    if (!visibility) return res.status(403).json({ success: false, error: 'Your active user record could not be found.' });
+    let items = await LogisticsPayment.find(paymentOwnerFilter(visibility)).sort({ createdAt: -1 }).lean();
+
+    const q = String(req.query.q || '').toLowerCase().trim();
+    const statusFilter = String(req.query.status || 'All').trim();
+    const includeBli = String(req.query.includeBli || 'false').toLowerCase() === 'true';
+
+    let filtered = await Promise.all(items.map(async (item) => {
+      const ref = item.referenceNumber || item.logisticsPaymentId || '';
+      const isLOG = ref.startsWith('LOG-') || item.source === 'Logistics' || item.source === 'Logistics Payment';
+      const isBLI = ref.startsWith('BLI-');
+
+      const typeDisplay = item.typeDisplay || (isLOG ? 'Logistics Freight Payment' : 'Freight Invoice');
+      const source = item.source || (isLOG ? 'Logistics' : 'Vendor');
+      const amount = item.totalAmount || item.amount || 0;
+      const currency = item.currency || 'INR';
+
       const app = await Approval.findOne({ $or: [{ id: ref }, { referenceNumber: ref }] }).lean();
 
-      return res.json({
-        success: true,
-        data: {
-          ...payment,
-          id: payment.logisticsPaymentId || payment._id,
-          referenceNumber: ref,
-          status: app?.status || payment.status || 'Pending Approval',
-          currentStep: app?.currentStep || payment.currentStep || 1,
-          totalSteps: app?.totalSteps || payment.totalSteps || 1
-        }
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  router.put('/logistics-payments/:id', authenticateToken, authorizePermission('logistics-payments', 'create'), async (req, res) => {
-    try {
-      const { id } = req.params;
-      const payment = await LogisticsPayment.findOne({
-        $or: [{ logisticsPaymentId: id }, { referenceNumber: id }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }]
-      });
-
-      if (!payment) {
-        return res.status(404).json({ success: false, error: 'Payment record not found.' });
+      let rawStatus = app?.status || item.status || 'Approved';
+      let status = rawStatus;
+      let currentStep = app?.currentStep || item.currentStep || 1;
+      let totalSteps = app?.totalSteps || item.totalSteps || 1;
+      let workflowSteps = null;
+      if (app?.workflowSteps) {
+        try { workflowSteps = JSON.parse(app.workflowSteps); } catch (_) { }
       }
 
-      const { invoiceNumber, vendorName, vendorId, amount, currency, paymentMode, sourceLocation, destinationLocation, hsnCode, remarks, documents } = req.body;
-
-      if (invoiceNumber) payment.invoiceNumber = String(invoiceNumber).trim().toUpperCase();
-      if (vendorName) payment.vendorName = vendorName;
-      if (vendorId) payment.vendorId = vendorId;
-      if (amount && Number(amount) > 0) {
-        payment.amount = Number(amount);
-        payment.totalAmount = Number(amount);
-      }
-      if (currency) payment.currency = currency;
-      if (paymentMode) payment.paymentMode = paymentMode;
-      if (sourceLocation !== undefined) payment.sourceLocation = sourceLocation;
-      if (destinationLocation !== undefined) payment.destinationLocation = destinationLocation;
-      if (hsnCode !== undefined) payment.hsnCode = hsnCode;
-      if (remarks !== undefined) payment.remarks = remarks;
-      if (Array.isArray(documents)) payment.documents = documents;
-      if (paymentMode) payment.paymentMode = paymentMode;
-      if (sourceLocation !== undefined) payment.sourceLocation = sourceLocation;
-      if (destinationLocation !== undefined) payment.destinationLocation = destinationLocation;
-      if (hsnCode !== undefined) payment.hsnCode = hsnCode;
-      if (remarks !== undefined) payment.remarks = remarks;
-
-      const numAmount = payment.amount;
-      const ref = payment.referenceNumber || payment.logisticsPaymentId;
-      const wf = await resolveWorkflowFromDB('Logistics Payment', numAmount, { currency: payment.currency || 'INR', category: payment.category || 'freight' });
-      const approval = await createApprovalRecord({
-        referenceId: ref,
-        type: 'Logistics Payment',
-        vendorName: payment.vendorName || 'Logistics Provider',
-        amountFormatted: `${payment.currency || 'INR'} ${numAmount}`,
-        poRef: payment.blNumber || 'N/A',
-        requestedBy: req.user?.name || req.user?.email || payment.createdBy || 'System User',
-        requestedById: req.user?.id || req.user?.email,
-        requestId: req.headers['x-request-id'],
-        transactionSnapshot: { blNumber: payment.blNumber || '', invoiceNumber: payment.invoiceNumber, category: payment.category || 'freight', typeDisplay: payment.typeDisplay || 'Logistics Freight Payment', source: payment.source || 'Logistics', amount: numAmount },
-        wf
-      });
-
-      payment.status = approval.status;
-      payment.currentStep = approval.currentStep || 1;
-      payment.totalSteps = approval.totalSteps || 1;
-      payment.assignedApprover = approval.assignedApprover || null;
-      payment.assignedApproverName = approval.assignedApproverName || null;
-      payment.submittedAt = new Date();
-      payment.updatedAt = new Date();
-
-      await payment.save();
-
-      return res.json({
-        success: true,
-        message: 'Logistics payment updated and resubmitted for approval.',
-        payment
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  router.delete('/logistics-payments/:id', authenticateToken, authorizePermission('logistics-payments', 'delete'), async (req, res) => {
-    try {
-      const { id } = req.params;
-      const target = await LogisticsPayment.findOne({
-        $or: [{ logisticsPaymentId: id }, { referenceNumber: id }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }]
-      });
-
-      if (!target) {
-        return res.status(404).json({ success: false, error: 'Payment record not found.' });
-      }
-
-      const targetStatus = String(target.status || '').toLowerCase();
-      if (targetStatus.includes('pending') || targetStatus.includes('approval') || (target.currentStep > 0 && !targetStatus.includes('draft') && !targetStatus.includes('reject'))) {
-        return res.status(409).json({ success: false, error: 'Payment record cannot be deleted while under active approval cycle.' });
-      }
-
-      const ref = target.referenceNumber || target.logisticsPaymentId;
-      await LogisticsPayment.deleteOne({ _id: target._id });
-      if (ref) {
-        await Approval.deleteMany({ $or: [{ id: ref }, { referenceNumber: ref }] });
-      }
-
-      return res.json({ success: true, message: `Payment record ${ref || id} deleted successfully.` });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // ─── BL INVOICES ROUTES ──────────────────────────────────────────────────────
-
-  router.get('/bl-invoices', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'view'), async (req, res) => {
-    try {
-      let itemsFromBlColl = await BlInvoice.find().sort({ createdAt: -1 }).lean();
-      let legacyBlItems = await LogisticsPayment.find({ $or: [{ referenceNumber: /^BLI-/ }, { logisticsPaymentId: /^BLI-/ }] }).sort({ createdAt: -1 }).lean();
-
-      const seenRefs = new Set();
-      let items = [];
-      for (const item of [...itemsFromBlColl, ...legacyBlItems]) {
-        const ref = item.referenceNumber || item.logisticsPaymentId || String(item._id);
-        if (!seenRefs.has(ref)) {
-          seenRefs.add(ref);
-          items.push(item);
-        }
-      }
-
-      const q = String(req.query.q || '').toLowerCase().trim();
-      const statusFilter = String(req.query.status || 'All').trim();
-      const sourceFilter = String(req.query.source || 'All').trim();
-
-      const normalizeInvoiceDocument = (doc, fallbackType, fallbackUploader) => {
-        const fileUrl = String(doc?.fileUrl || doc?.filePath || doc?.fileName || doc?.originalFilename || '').trim();
-        if (!fileUrl) return null;
-        return {
-          ...doc,
-          docType: doc?.docType || doc?.documentType || doc?.label || fallbackType || 'Supporting Document',
-          fileUrl,
-          fileName: doc?.fileName || doc?.originalFilename || path.basename(fileUrl),
-          uploadedBy: doc?.uploadedBy || fallbackUploader || 'Vendor'
-        };
-      };
-
-      let filtered = await Promise.all(items.map(async (item) => {
-        const typeDisplay = item.typeDisplay || (
-          item.category === 'freight' ? 'Freight Invoice' :
-            item.category === 'destination_charges' ? 'Destination Charges (Shipping Line)' :
-              item.category === 'recepted_charges' ? 'Recepted Charges' :
-                item.category === 'agency_fee' ? 'Agency Charges' :
-                  item.category === 'port_storage' ? 'Port Storage' : 'BL Charge Invoice'
-        );
-        const source = item.source || (item.vendorName?.toLowerCase().includes('agent') ? 'Agent' : 'Vendor');
-        const amount = item.totalAmount || item.amount || 0;
-        const currency = item.currency || 'INR';
-
-        const app = await Approval.findOne({ $or: [{ id: item.referenceNumber }, { id: item.logisticsPaymentId }] }).lean();
-
-        let status = app?.status || item.status || 'Pending EXIM Approval';
-        let currentStep = app?.currentStep || item.currentStep || 1;
-        let totalSteps = app?.totalSteps || item.totalSteps || 1;
-        let workflowSteps = null;
-        if (app?.workflowSteps) {
-          try { workflowSteps = JSON.parse(app.workflowSteps); } catch (_) { }
-        }
-
-        const fileTarget = String(item.fileUrl || item.fileName || item.invoiceFile || app?.transactionSnapshot?.fileUrl || app?.transactionSnapshot?.fileName || app?.documents?.[0]?.fileUrl || '').trim();
-        const documentsList = (Array.isArray(item.documents) ? item.documents : [])
-          .map((doc) => normalizeInvoiceDocument(doc, typeDisplay, item.vendorName))
-          .filter(Boolean);
-        if (!documentsList.length && fileTarget) {
-          documentsList.push(normalizeInvoiceDocument({ fileUrl: fileTarget }, typeDisplay, item.vendorName));
-        }
-
-        const blEntry = item.blId
-          ? await RfqBlEntry.findOne({ blId: item.blId }, { documents: 1 }).lean()
-          : await RfqBlEntry.findOne({ blNumber: item.blNumber }, { documents: 1 }).lean();
-        const blEntryDocuments = (blEntry?.documents || [])
-          .map((doc) => normalizeInvoiceDocument(doc, 'Bill of Lading', item.vendorName))
-          .filter(Boolean);
-
-        return {
-          ...item,
-          id: item.logisticsPaymentId || item.referenceNumber || item._id,
-          referenceNumber: item.referenceNumber || item.logisticsPaymentId,
-          fileName: fileTarget,
-          fileUrl: fileTarget,
-          invoiceFile: fileTarget,
-          documents: documentsList,
-          blEntryDocuments,
-          typeDisplay,
-          source,
-          amount,
-          currency,
-          status,
-          currentStep,
-          totalSteps,
-          currentSlab: app?.currentSlab || 'BL Freight Invoice Workflow',
-          workflowSteps: app?.workflowSteps,
-          parsedSteps: workflowSteps,
-          submittedAt: item.submittedAt || item.createdAt
-        };
-      }));
-
-      if (q) {
-        filtered = filtered.filter(i =>
-          i.referenceNumber?.toLowerCase().includes(q) ||
-          i.invoiceNumber?.toLowerCase().includes(q) ||
-          i.blNumber?.toLowerCase().includes(q) ||
-          i.vendorName?.toLowerCase().includes(q) ||
-          i.typeDisplay?.toLowerCase().includes(q)
-        );
-      }
-
-      if (statusFilter && statusFilter !== 'All') {
-        filtered = filtered.filter(i => (i.status || '').toLowerCase() === statusFilter.toLowerCase());
-      }
-
-      if (sourceFilter && sourceFilter !== 'All') {
-        filtered = filtered.filter(i => (i.source || '').toLowerCase() === sourceFilter.toLowerCase());
-      }
-
-      const stats = {
-        total: items.length,
-        approved: items.filter(i => (i.status || '').toLowerCase() === 'approved').length,
-        pending: items.filter(i => (i.status || '').toLowerCase().includes('pending')).length,
-        rejected: items.filter(i => (i.status || '').toLowerCase() === 'rejected').length
-      };
-
-      return res.json({ success: true, invoices: filtered, stats });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  router.post('/bl-invoices', authenticateToken, async (req, res) => {
-    try {
-      const { blNumber, typeDisplay, category, source, invoiceNumber, vendorName, amount, currency, remarks } = req.body;
-      if (!blNumber || !invoiceNumber || !amount) {
-        return res.status(400).json({ success: false, error: 'BL Number, Invoice Number, and Amount are required.' });
-      }
-
-      const numAmount = Number(amount);
-      const ref = `BLI-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
-      const blWorkflow = await resolveWorkflowFromDB('BL Freight Invoice', numAmount, { currency: currency || 'INR' });
-
-      const approval = await createApprovalRecord({
-        referenceId: ref,
-        type: 'BL Freight Invoice',
-        vendorName: vendorName || 'Logistics Provider',
-        amountFormatted: `${currency || 'INR'} ${numAmount}`,
-        poRef: blNumber,
-        requestedBy: req.user?.name || req.user?.email || 'System User',
-        requestedById: req.user?.id || req.user?.email,
-        requestId: req.headers['x-request-id'],
-        transactionSnapshot: { blNumber, invoiceNumber, category, typeDisplay, source, amount: numAmount },
-        wf: blWorkflow
-      });
-
-      const payment = await BlInvoice.create({
-        logisticsPaymentId: ref,
+      return {
+        ...item,
+        id: item.logisticsPaymentId || item._id,
         referenceNumber: ref,
-        blNumber: String(blNumber).trim().toUpperCase(),
-        category: category || 'freight',
-        typeDisplay: typeDisplay || 'Freight Invoice',
-        source: source || 'Vendor',
-        invoiceNumber: String(invoiceNumber).trim().toUpperCase(),
-        vendorId: `VEND-${Math.floor(100 + Math.random() * 900)}`,
-        vendorName: vendorName || 'Logistics Provider',
-        amount: numAmount,
-        totalAmount: numAmount,
-        currency: currency || 'INR',
-        status: approval.status,
-        currentStep: approval.currentStep || 1,
-        totalSteps: approval.totalSteps || 2,
-        remarks: remarks || '',
-        submittedAt: new Date(),
-        createdBy: req.user?.name || req.user?.email || 'System User',
-        actionHistory: [
-          { action: 'submit', step: 1, role: 'Requester', actionedBy: req.user?.name || req.user?.email || 'User', actionedAt: new Date(), remarks: 'Submitted BL Freight Invoice' }
-        ]
-      });
+        recordType: isLOG ? 'LOG' : (isBLI ? 'BLI' : 'LOG'),
+        typeDisplay,
+        source,
+        amount,
+        currency,
+        status,
+        currentStep,
+        totalSteps,
+        currentSlab: app?.currentSlab || (isLOG ? 'Logistics Payment Workflow' : 'BL Freight Invoice Workflow'),
+        workflowSteps: app?.workflowSteps,
+        parsedSteps: workflowSteps,
+        submittedAt: item.submittedAt || item.createdAt
+      };
+    }));
 
-      broadcastEvent('BL_INVOICE_SUBMITTED', { id: payment.logisticsPaymentId, referenceNumber: ref, blNumber, amount });
-
-      return res.status(201).json({ success: true, message: 'BL Invoice submitted for approval.', invoice: payment, approval });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+    if (!includeBli) {
+      filtered = filtered.filter(i => i.recordType === 'LOG');
     }
-  });
 
-  router.post('/bl-invoices/:id/action', authenticateToken, async (req, res) => {
-    try {
-      const { action, remarks } = req.body;
-      let invoice = await BlInvoice.findOne({
+    if (q) {
+      filtered = filtered.filter(i =>
+        i.referenceNumber?.toLowerCase().includes(q) ||
+        i.invoiceNumber?.toLowerCase().includes(q) ||
+        i.blNumber?.toLowerCase().includes(q) ||
+        i.vendorName?.toLowerCase().includes(q) ||
+        i.typeDisplay?.toLowerCase().includes(q)
+      );
+    }
+
+    if (statusFilter && statusFilter !== 'All') {
+      filtered = filtered.filter(i => (i.status || '').toLowerCase() === statusFilter.toLowerCase());
+    }
+
+    const stats = {
+      total: filtered.length,
+      approved: filtered.filter(i => (i.status || '').toLowerCase() === 'approved').length,
+      pending: filtered.filter(i => (i.status || '').toLowerCase().includes('pending')).length,
+      rejected: filtered.filter(i => (i.status || '').toLowerCase() === 'rejected').length
+    };
+
+    return res.json({ success: true, payments: filtered, invoices: filtered, stats });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/logistics-payments', authenticateToken, authorizePermission('logistics-payments', 'create'), async (req, res) => {
+  try {
+    const { blNumber, typeDisplay, category, source, invoiceNumber, vendorId, vendorName, amount, currency, remarks } = req.body;
+    if (!invoiceNumber || !amount || Number(amount) <= 0) {
+      return res.status(400).json({ success: false, error: 'Invoice Number and a valid positive amount are required.' });
+    }
+
+    const numAmount = Number(amount);
+    const ref = `LOG-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const wf = await resolveWorkflowFromDB('Logistics Payment', numAmount, { currency: currency || 'INR', category: category || 'freight' });
+    const approval = await createApprovalRecord({
+      referenceId: ref,
+      type: 'Logistics Payment',
+      vendorName: vendorName || 'Logistics Provider',
+      amountFormatted: `${currency || 'INR'} ${numAmount}`,
+      poRef: blNumber || 'N/A',
+      requestedBy: req.user?.name || req.user?.email || 'System User',
+      requestedById: req.user?.id || req.user?.email,
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: { blNumber: blNumber || '', invoiceNumber, category: category || 'freight', typeDisplay: typeDisplay || 'Logistics Freight Payment', source: source || 'Logistics', amount: numAmount },
+      wf
+    });
+
+    const payment = await LogisticsPayment.create({
+      logisticsPaymentId: ref,
+      referenceNumber: ref,
+      blNumber: blNumber ? String(blNumber).trim().toUpperCase() : 'N/A',
+      category: category || 'freight',
+      typeDisplay: typeDisplay || 'Logistics Freight Payment',
+      source: source || 'Logistics',
+      invoiceNumber: String(invoiceNumber).trim().toUpperCase(),
+      vendorId: vendorId || `VEND-${Math.floor(100 + Math.random() * 900)}`,
+      vendorName: vendorName || 'Logistics Provider',
+      amount: numAmount,
+      totalAmount: numAmount,
+      currency: currency || 'INR',
+      status: approval.status,
+      currentStep: approval.currentStep || 1,
+      totalSteps: approval.totalSteps || 1,
+      remarks: remarks || '',
+      submittedAt: new Date(),
+      createdBy: req.user?.name || req.user?.email || 'System User',
+      requestedBy: req.user?.name || req.user?.email || 'System User',
+      requestedById: req.user?.id || req.user?.email,
+      requestedByTeam: approval.requestedByTeam || null,
+      assignedApprover: approval.assignedApprover || null,
+      assignedApproverName: approval.assignedApproverName || null,
+      assignedApproverRole: approval.assignedApproverRole || null,
+      actionHistory: [
+        { action: 'submit', step: 1, role: 'Requester', actionedBy: req.user?.name || req.user?.email || 'User', actionedAt: new Date(), remarks: 'Submitted Logistics Payment for approval' }
+      ]
+    });
+
+    broadcastEvent('LOGISTICS_PAYMENT_SUBMITTED', { id: payment.logisticsPaymentId, referenceNumber: ref, blNumber, amount: numAmount, status: approval.status });
+
+    return res.status(201).json({ success: true, message: 'Logistics Payment submitted for approval.', payment, approval });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.delete('/logistics-payments/clear-bli', authenticateToken, async (req, res) => {
+  try {
+    const bliQuery = {
+      $or: [
+        { referenceNumber: /^BLI-/ },
+        { logisticsPaymentId: /^BLI-/ },
+        { category: 'bl_invoice' }
+      ]
+    };
+
+    const countBlColl = await BlInvoice.countDocuments({});
+    const countLegacy = await LogisticsPayment.countDocuments(bliQuery);
+    const totalCount = countBlColl + countLegacy;
+
+    const blRecords = await BlInvoice.find({}, { referenceNumber: 1, logisticsPaymentId: 1 }).lean();
+    const legacyRecords = await LogisticsPayment.find(bliQuery, { referenceNumber: 1, logisticsPaymentId: 1 }).lean();
+    const bliRefs = [...blRecords, ...legacyRecords].map(r => r.referenceNumber || r.logisticsPaymentId).filter(Boolean);
+
+    await BlInvoice.deleteMany({});
+    await LogisticsPayment.deleteMany(bliQuery);
+    if (bliRefs.length > 0) {
+      await Approval.deleteMany({ $or: [{ id: { $in: bliRefs } }, { referenceNumber: { $in: bliRefs } }] });
+    }
+
+    return res.json({ success: true, message: `Successfully purged ${totalCount} BLI record(s) from database.`, deletedCount: totalCount });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/logistics-payments/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const payment = await LogisticsPayment.findOne({
+      $or: [{ logisticsPaymentId: id }, { referenceNumber: id }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }]
+    }).lean();
+
+    if (!payment) {
+      return res.status(404).json({ success: false, error: 'Payment record not found.' });
+    }
+
+    const ref = payment.referenceNumber || payment.logisticsPaymentId;
+    const app = await Approval.findOne({ $or: [{ id: ref }, { referenceNumber: ref }] }).lean();
+
+    return res.json({
+      success: true,
+      data: {
+        ...payment,
+        id: payment.logisticsPaymentId || payment._id,
+        referenceNumber: ref,
+        status: app?.status || payment.status || 'Pending Approval',
+        currentStep: app?.currentStep || payment.currentStep || 1,
+        totalSteps: app?.totalSteps || payment.totalSteps || 1
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.put('/logistics-payments/:id', authenticateToken, authorizePermission('logistics-payments', 'create'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const payment = await LogisticsPayment.findOne({
+      $or: [{ logisticsPaymentId: id }, { referenceNumber: id }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }]
+    });
+
+    if (!payment) {
+      return res.status(404).json({ success: false, error: 'Payment record not found.' });
+    }
+
+    const { invoiceNumber, vendorName, vendorId, amount, currency, paymentMode, sourceLocation, destinationLocation, hsnCode, remarks, documents } = req.body;
+
+    if (invoiceNumber) payment.invoiceNumber = String(invoiceNumber).trim().toUpperCase();
+    if (vendorName) payment.vendorName = vendorName;
+    if (vendorId) payment.vendorId = vendorId;
+    if (amount && Number(amount) > 0) {
+      payment.amount = Number(amount);
+      payment.totalAmount = Number(amount);
+    }
+    if (currency) payment.currency = currency;
+    if (paymentMode) payment.paymentMode = paymentMode;
+    if (sourceLocation !== undefined) payment.sourceLocation = sourceLocation;
+    if (destinationLocation !== undefined) payment.destinationLocation = destinationLocation;
+    if (hsnCode !== undefined) payment.hsnCode = hsnCode;
+    if (remarks !== undefined) payment.remarks = remarks;
+    if (Array.isArray(documents)) payment.documents = documents;
+    if (paymentMode) payment.paymentMode = paymentMode;
+    if (sourceLocation !== undefined) payment.sourceLocation = sourceLocation;
+    if (destinationLocation !== undefined) payment.destinationLocation = destinationLocation;
+    if (hsnCode !== undefined) payment.hsnCode = hsnCode;
+    if (remarks !== undefined) payment.remarks = remarks;
+
+    const numAmount = payment.amount;
+    const ref = payment.referenceNumber || payment.logisticsPaymentId;
+    const wf = await resolveWorkflowFromDB('Logistics Payment', numAmount, { currency: payment.currency || 'INR', category: payment.category || 'freight' });
+    const approval = await createApprovalRecord({
+      referenceId: ref,
+      type: 'Logistics Payment',
+      vendorName: payment.vendorName || 'Logistics Provider',
+      amountFormatted: `${payment.currency || 'INR'} ${numAmount}`,
+      poRef: payment.blNumber || 'N/A',
+      requestedBy: req.user?.name || req.user?.email || payment.createdBy || 'System User',
+      requestedById: req.user?.id || req.user?.email,
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: { blNumber: payment.blNumber || '', invoiceNumber: payment.invoiceNumber, category: payment.category || 'freight', typeDisplay: payment.typeDisplay || 'Logistics Freight Payment', source: payment.source || 'Logistics', amount: numAmount },
+      wf
+    });
+
+    payment.status = approval.status;
+    payment.currentStep = approval.currentStep || 1;
+    payment.totalSteps = approval.totalSteps || 1;
+    payment.assignedApprover = approval.assignedApprover || null;
+    payment.assignedApproverName = approval.assignedApproverName || null;
+    payment.submittedAt = new Date();
+    payment.updatedAt = new Date();
+
+    await payment.save();
+
+    return res.json({
+      success: true,
+      message: 'Logistics payment updated and resubmitted for approval.',
+      payment
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.delete('/logistics-payments/:id', authenticateToken, authorizePermission('logistics-payments', 'delete'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const target = await LogisticsPayment.findOne({
+      $or: [{ logisticsPaymentId: id }, { referenceNumber: id }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }]
+    });
+
+    if (!target) {
+      return res.status(404).json({ success: false, error: 'Payment record not found.' });
+    }
+
+    const targetStatus = String(target.status || '').toLowerCase();
+    if (targetStatus.includes('pending') || targetStatus.includes('approval') || (target.currentStep > 0 && !targetStatus.includes('draft') && !targetStatus.includes('reject'))) {
+      return res.status(409).json({ success: false, error: 'Payment record cannot be deleted while under active approval cycle.' });
+    }
+
+    const ref = target.referenceNumber || target.logisticsPaymentId;
+    await LogisticsPayment.deleteOne({ _id: target._id });
+    if (ref) {
+      await Approval.deleteMany({ $or: [{ id: ref }, { referenceNumber: ref }] });
+    }
+
+    return res.json({ success: true, message: `Payment record ${ref || id} deleted successfully.` });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── BL INVOICES ROUTES ──────────────────────────────────────────────────────
+
+router.get('/bl-invoices', authenticateToken, requireInternalRfqUser, authorizePermission('rfq', 'view'), async (req, res) => {
+  try {
+    let itemsFromBlColl = await BlInvoice.find().sort({ createdAt: -1 }).lean();
+    let legacyBlItems = await LogisticsPayment.find({ $or: [{ referenceNumber: /^BLI-/ }, { logisticsPaymentId: /^BLI-/ }] }).sort({ createdAt: -1 }).lean();
+
+    const seenRefs = new Set();
+    let items = [];
+    for (const item of [...itemsFromBlColl, ...legacyBlItems]) {
+      const ref = item.referenceNumber || item.logisticsPaymentId || String(item._id);
+      if (!seenRefs.has(ref)) {
+        seenRefs.add(ref);
+        items.push(item);
+      }
+    }
+
+    const q = String(req.query.q || '').toLowerCase().trim();
+    const statusFilter = String(req.query.status || 'All').trim();
+    const sourceFilter = String(req.query.source || 'All').trim();
+
+    const normalizeInvoiceDocument = (doc, fallbackType, fallbackUploader) => {
+      const fileUrl = String(doc?.fileUrl || doc?.filePath || doc?.fileName || doc?.originalFilename || '').trim();
+      if (!fileUrl) return null;
+      return {
+        ...doc,
+        docType: doc?.docType || doc?.documentType || doc?.label || fallbackType || 'Supporting Document',
+        fileUrl,
+        fileName: doc?.fileName || doc?.originalFilename || path.basename(fileUrl),
+        uploadedBy: doc?.uploadedBy || fallbackUploader || 'Vendor'
+      };
+    };
+
+    let filtered = await Promise.all(items.map(async (item) => {
+      const typeDisplay = item.typeDisplay || (
+        item.category === 'freight' ? 'Freight Invoice' :
+          item.category === 'destination_charges' ? 'Destination Charges (Shipping Line)' :
+            item.category === 'recepted_charges' ? 'Recepted Charges' :
+              item.category === 'agency_fee' ? 'Agency Charges' :
+                item.category === 'port_storage' ? 'Port Storage' : 'BL Charge Invoice'
+      );
+      const source = item.source || (item.vendorName?.toLowerCase().includes('agent') ? 'Agent' : 'Vendor');
+      const amount = item.totalAmount || item.amount || 0;
+      const currency = item.currency || 'INR';
+
+      const app = await Approval.findOne({ $or: [{ id: item.referenceNumber }, { id: item.logisticsPaymentId }] }).lean();
+
+      let status = app?.status || item.status || 'Pending EXIM Approval';
+      let currentStep = app?.currentStep || item.currentStep || 1;
+      let totalSteps = app?.totalSteps || item.totalSteps || 1;
+      let workflowSteps = null;
+      if (app?.workflowSteps) {
+        try { workflowSteps = JSON.parse(app.workflowSteps); } catch (_) { }
+      }
+
+      const fileTarget = String(item.fileUrl || item.fileName || item.invoiceFile || app?.transactionSnapshot?.fileUrl || app?.transactionSnapshot?.fileName || app?.documents?.[0]?.fileUrl || '').trim();
+      const documentsList = (Array.isArray(item.documents) ? item.documents : [])
+        .map((doc) => normalizeInvoiceDocument(doc, typeDisplay, item.vendorName))
+        .filter(Boolean);
+      if (!documentsList.length && fileTarget) {
+        documentsList.push(normalizeInvoiceDocument({ fileUrl: fileTarget }, typeDisplay, item.vendorName));
+      }
+
+      const blEntry = item.blId
+        ? await RfqBlEntry.findOne({ blId: item.blId }, { documents: 1 }).lean()
+        : await RfqBlEntry.findOne({ blNumber: item.blNumber }, { documents: 1 }).lean();
+      const blEntryDocuments = (blEntry?.documents || [])
+        .map((doc) => normalizeInvoiceDocument(doc, 'Bill of Lading', item.vendorName))
+        .filter(Boolean);
+
+      return {
+        ...item,
+        id: item.logisticsPaymentId || item.referenceNumber || item._id,
+        referenceNumber: item.referenceNumber || item.logisticsPaymentId,
+        fileName: fileTarget,
+        fileUrl: fileTarget,
+        invoiceFile: fileTarget,
+        documents: documentsList,
+        blEntryDocuments,
+        typeDisplay,
+        source,
+        amount,
+        currency,
+        status,
+        currentStep,
+        totalSteps,
+        currentSlab: app?.currentSlab || 'BL Freight Invoice Workflow',
+        workflowSteps: app?.workflowSteps,
+        parsedSteps: workflowSteps,
+        submittedAt: item.submittedAt || item.createdAt
+      };
+    }));
+
+    if (q) {
+      filtered = filtered.filter(i =>
+        i.referenceNumber?.toLowerCase().includes(q) ||
+        i.invoiceNumber?.toLowerCase().includes(q) ||
+        i.blNumber?.toLowerCase().includes(q) ||
+        i.vendorName?.toLowerCase().includes(q) ||
+        i.typeDisplay?.toLowerCase().includes(q)
+      );
+    }
+
+    if (statusFilter && statusFilter !== 'All') {
+      filtered = filtered.filter(i => (i.status || '').toLowerCase() === statusFilter.toLowerCase());
+    }
+
+    if (sourceFilter && sourceFilter !== 'All') {
+      filtered = filtered.filter(i => (i.source || '').toLowerCase() === sourceFilter.toLowerCase());
+    }
+
+    const stats = {
+      total: items.length,
+      approved: items.filter(i => (i.status || '').toLowerCase() === 'approved').length,
+      pending: items.filter(i => (i.status || '').toLowerCase().includes('pending')).length,
+      rejected: items.filter(i => (i.status || '').toLowerCase() === 'rejected').length
+    };
+
+    return res.json({ success: true, invoices: filtered, stats });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/bl-invoices', authenticateToken, async (req, res) => {
+  try {
+    const { blNumber, typeDisplay, category, source, invoiceNumber, vendorName, amount, currency, remarks } = req.body;
+    if (!blNumber || !invoiceNumber || !amount) {
+      return res.status(400).json({ success: false, error: 'BL Number, Invoice Number, and Amount are required.' });
+    }
+
+    const numAmount = Number(amount);
+    const ref = `BLI-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const blWorkflow = await resolveWorkflowFromDB('BL Freight Invoice', numAmount, { currency: currency || 'INR' });
+
+    const approval = await createApprovalRecord({
+      referenceId: ref,
+      type: 'BL Freight Invoice',
+      vendorName: vendorName || 'Logistics Provider',
+      amountFormatted: `${currency || 'INR'} ${numAmount}`,
+      poRef: blNumber,
+      requestedBy: req.user?.name || req.user?.email || 'System User',
+      requestedById: req.user?.id || req.user?.email,
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: { blNumber, invoiceNumber, category, typeDisplay, source, amount: numAmount },
+      wf: blWorkflow
+    });
+
+    const payment = await BlInvoice.create({
+      logisticsPaymentId: ref,
+      referenceNumber: ref,
+      blNumber: String(blNumber).trim().toUpperCase(),
+      category: category || 'freight',
+      typeDisplay: typeDisplay || 'Freight Invoice',
+      source: source || 'Vendor',
+      invoiceNumber: String(invoiceNumber).trim().toUpperCase(),
+      vendorId: `VEND-${Math.floor(100 + Math.random() * 900)}`,
+      vendorName: vendorName || 'Logistics Provider',
+      amount: numAmount,
+      totalAmount: numAmount,
+      currency: currency || 'INR',
+      status: approval.status,
+      currentStep: approval.currentStep || 1,
+      totalSteps: approval.totalSteps || 2,
+      remarks: remarks || '',
+      submittedAt: new Date(),
+      createdBy: req.user?.name || req.user?.email || 'System User',
+      actionHistory: [
+        { action: 'submit', step: 1, role: 'Requester', actionedBy: req.user?.name || req.user?.email || 'User', actionedAt: new Date(), remarks: 'Submitted BL Freight Invoice' }
+      ]
+    });
+
+    broadcastEvent('BL_INVOICE_SUBMITTED', { id: payment.logisticsPaymentId, referenceNumber: ref, blNumber, amount });
+
+    return res.status(201).json({ success: true, message: 'BL Invoice submitted for approval.', invoice: payment, approval });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/bl-invoices/:id/action', authenticateToken, async (req, res) => {
+  try {
+    const { action, remarks } = req.body;
+    let invoice = await BlInvoice.findOne({
+      $or: [{ logisticsPaymentId: req.params.id }, { referenceNumber: req.params.id }]
+    });
+
+    if (!invoice) {
+      invoice = await LogisticsPayment.findOne({
         $or: [{ logisticsPaymentId: req.params.id }, { referenceNumber: req.params.id }]
       });
+    }
 
-      if (!invoice) {
-        invoice = await LogisticsPayment.findOne({
-          $or: [{ logisticsPaymentId: req.params.id }, { referenceNumber: req.params.id }]
-        });
-      }
+    if (!invoice) return res.status(404).json({ success: false, error: 'BL Invoice not found.' });
 
-      if (!invoice) return res.status(404).json({ success: false, error: 'BL Invoice not found.' });
+    const currentStep = invoice.currentStep || 1;
+    let nextStatus = invoice.status;
 
-      const currentStep = invoice.currentStep || 1;
-      let nextStatus = invoice.status;
-
-      if (action === 'approve') {
-        if (currentStep < 2) {
-          invoice.currentStep = 2;
-          nextStatus = 'Pending Finance Approval';
-        } else {
-          nextStatus = 'Approved';
-        }
-      } else if (action === 'reject') {
-        nextStatus = 'Rejected';
-      } else if (action === 'return') {
-        nextStatus = 'Returned';
+    if (action === 'approve') {
+      if (currentStep < 2) {
+        invoice.currentStep = 2;
+        nextStatus = 'Pending Finance Approval';
       } else {
-        return res.status(400).json({ success: false, error: 'Invalid action type.' });
+        nextStatus = 'Approved';
       }
+    } else if (action === 'reject') {
+      nextStatus = 'Rejected';
+    } else if (action === 'return') {
+      nextStatus = 'Returned';
+    } else {
+      return res.status(400).json({ success: false, error: 'Invalid action type.' });
+    }
 
-      invoice.status = nextStatus;
-      if (!invoice.actionHistory) invoice.actionHistory = [];
-      invoice.actionHistory.push({
+    invoice.status = nextStatus;
+    if (!invoice.actionHistory) invoice.actionHistory = [];
+    invoice.actionHistory.push({
+      action,
+      step: currentStep,
+      role: req.user?.role || 'Approver',
+      actionedBy: req.user?.name || req.user?.email || 'Approver',
+      actionedAt: new Date(),
+      remarks: remarks || `${action.toUpperCase()} action processed.`
+    });
+
+    await invoice.save();
+
+    try {
+      const appRecord = await Approval.findOne({ referenceNumber: invoice.referenceNumber });
+      if (appRecord) {
+        appRecord.status = nextStatus;
+        appRecord.currentStep = invoice.currentStep;
+        await appRecord.save();
+      }
+    } catch (_) { }
+
+    try {
+      await WorkflowAudit.record({
+        entityType: 'LogisticsPayment',
+        entityId: invoice.logisticsPaymentId,
+        referenceNumber: invoice.referenceNumber,
         action,
-        step: currentStep,
-        role: req.user?.role || 'Approver',
-        actionedBy: req.user?.name || req.user?.email || 'Approver',
-        actionedAt: new Date(),
-        remarks: remarks || `${action.toUpperCase()} action processed.`
+        actorId: req.user?.id || 'system',
+        actorName: req.user?.name || req.user?.email || 'User',
+        actorRole: req.user?.role || 'Approver',
+        remarks: remarks || `${action.toUpperCase()} action taken on BL Invoice.`
       });
+    } catch (_) { }
 
-      await invoice.save();
+    broadcastEvent('BL_INVOICE_ACTION', { id: invoice.logisticsPaymentId, action, status: nextStatus });
 
-      try {
-        const appRecord = await Approval.findOne({ referenceNumber: invoice.referenceNumber });
-        if (appRecord) {
-          appRecord.status = nextStatus;
-          appRecord.currentStep = invoice.currentStep;
-          await appRecord.save();
-        }
-      } catch (_) { }
+    return res.json({ success: true, message: `BL Invoice ${action}d successfully.`, invoice });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-      try {
-        await WorkflowAudit.record({
-          entityType: 'LogisticsPayment',
-          entityId: invoice.logisticsPaymentId,
-          referenceNumber: invoice.referenceNumber,
-          action,
-          actorId: req.user?.id || 'system',
-          actorName: req.user?.name || req.user?.email || 'User',
-          actorRole: req.user?.role || 'Approver',
-          remarks: remarks || `${action.toUpperCase()} action taken on BL Invoice.`
-        });
-      } catch (_) { }
+// ─── CUSTOM DUTIES CRUD ROUTES ─────────────────────────────────────────────
 
-      broadcastEvent('BL_INVOICE_ACTION', { id: invoice.logisticsPaymentId, action, status: nextStatus });
+router.get('/custom-duties', authenticateToken, async (req, res) => {
+  try {
+    const visibility = await getPaymentVisibility(req);
+    if (!visibility) return res.status(403).json({ success: false, error: 'Your active user record could not be found.' });
+    const duties = await CustomDutyPayment.find(paymentOwnerFilter(visibility)).sort({ createdAt: -1 }).lean();
+    return res.json({ success: true, duties, count: duties.length });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-      return res.json({ success: true, message: `BL Invoice ${action}d successfully.`, invoice });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+router.post('/custom-duties', authenticateToken, authorizePermission('custom-duty', 'create'), async (req, res) => {
+  try {
+    const { blNumber, boeNumber, dutyAmount, portCode, customAgentName, vesselName, icegateRef, remarks, documents } = req.body;
+    if (!blNumber || !dutyAmount) {
+      return res.status(400).json({ success: false, error: 'BL Number and Duty Amount are required.' });
     }
-  });
 
-  // ─── CUSTOM DUTIES CRUD ROUTES ─────────────────────────────────────────────
+    const numAmount = Number(dutyAmount);
+    const dutyId = `DUTY-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-  router.get('/custom-duties', authenticateToken, async (req, res) => {
-    try {
-      const visibility = await getPaymentVisibility(req);
-      if (!visibility) return res.status(403).json({ success: false, error: 'Your active user record could not be found.' });
-      const duties = await CustomDutyPayment.find(paymentOwnerFilter(visibility)).sort({ createdAt: -1 }).lean();
-      return res.json({ success: true, duties, count: duties.length });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+    const wf = await resolveWorkflowFromDB('Custom Duty', numAmount, { currency: 'INR' });
+    const approval = await createApprovalRecord({
+      referenceId: dutyId,
+      type: 'Custom Duty',
+      vendorName: customAgentName || 'Customs House Agent',
+      amountFormatted: `INR ${numAmount}`,
+      poRef: blNumber,
+      requestedBy: req.user?.name || req.user?.email || 'System User',
+      requestedById: req.user?.id || req.user?.email,
+      requestId: req.headers['x-request-id'],
+      transactionSnapshot: { blNumber, boeNumber, dutyAmount: numAmount, portCode, customAgentName, icegateRef },
+      wf
+    });
+
+    const duty = await CustomDutyPayment.create({
+      dutyId,
+      blId: String(blNumber).trim().toUpperCase(),
+      blNumber: String(blNumber).trim().toUpperCase(),
+      boeNumber: boeNumber || `BOE-${blNumber.slice(-6)}`,
+      vesselName: vesselName || 'EVER GIVEN V-104E',
+      portCode: portCode || 'INNHAV (Nhava Sheva)',
+      dutyAmount: numAmount,
+      customAgentName: customAgentName || 'Magnesh - Fast Forward Logistics India',
+      icegateRef: icegateRef || `ICEGATE-${Math.floor(1000000 + Math.random() * 9000000)}`,
+      status: approval.status,
+      remarks: remarks || '',
+      documents: documents || [],
+      approvalInstanceId: approval._id,
+      createdBy: req.user?.name || req.user?.email || 'System User',
+      requestedBy: req.user?.name || req.user?.email || 'System User',
+      requestedById: req.user?.id || req.user?.email,
+      requestedByTeam: approval.requestedByTeam || null,
+      assignedApprover: approval.assignedApprover || null,
+      assignedApproverName: approval.assignedApproverName || null,
+      assignedApproverRole: approval.assignedApproverRole || null
+    });
+
+    return res.status(201).json({ success: true, message: 'Custom Duty payment created successfully.', duty, approval });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.delete('/custom-duties/:id', authenticateToken, authorizePermission('custom-duty', 'delete'), async (req, res) => {
+  try {
+    const duty = await CustomDutyPayment.findOneAndDelete({ $or: [{ dutyId: req.params.id }, { _id: req.params.id }] });
+    if (!duty) return res.status(404).json({ success: false, error: 'Custom Duty record not found.' });
+    return res.json({ success: true, message: 'Custom Duty record deleted successfully.' });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/logistics-payments/:id/payout', authenticateToken, authorizePermission('logistics-payments', 'mark-paid'), async (req, res) => {
+  try {
+    const utrNumber = String(req.body.utrNumber || '').trim();
+    const payment = await LogisticsPayment.findOne({
+      $or: [{ logisticsPaymentId: req.params.id }, { referenceNumber: req.params.id }, ...(mongoose.Types.ObjectId.isValid(req.params.id) ? [{ _id: req.params.id }] : [])]
+    });
+    if (!payment) return res.status(404).json({ success: false, error: 'Logistics payment not found.' });
+
+    payment.status = 'paid';
+    if (utrNumber) payment.utrNumber = utrNumber;
+    payment.paidAt = new Date();
+    await payment.save();
+
+    const approval = await Approval.findOne({
+      $or: [{ id: payment.logisticsPaymentId }, { id: payment.referenceNumber }, { id: req.params.id }]
+    });
+    if (approval) {
+      approval.status = 'Approved & Dispatched';
+      await approval.save();
     }
-  });
 
-  router.post('/custom-duties', authenticateToken, authorizePermission('custom-duty', 'create'), async (req, res) => {
-    try {
-      const { blNumber, boeNumber, dutyAmount, portCode, customAgentName, vesselName, icegateRef, remarks, documents } = req.body;
-      if (!blNumber || !dutyAmount) {
-        return res.status(400).json({ success: false, error: 'BL Number and Duty Amount are required.' });
-      }
+    await recalculatePoMetrics(payment.sapPoNumber || payment.poId || payment.blNumber);
 
-      const numAmount = Number(dutyAmount);
-      const dutyId = `DUTY-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    return res.json({ success: true, message: 'Logistics payment marked as paid.', data: payment });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
 
-      const wf = await resolveWorkflowFromDB('Custom Duty', numAmount, { currency: 'INR' });
-      const approval = await createApprovalRecord({
-        referenceId: dutyId,
-        type: 'Custom Duty',
-        vendorName: customAgentName || 'Customs House Agent',
-        amountFormatted: `INR ${numAmount}`,
-        poRef: blNumber,
-        requestedBy: req.user?.name || req.user?.email || 'System User',
-        requestedById: req.user?.id || req.user?.email,
-        requestId: req.headers['x-request-id'],
-        transactionSnapshot: { blNumber, boeNumber, dutyAmount: numAmount, portCode, customAgentName, icegateRef },
-        wf
-      });
+router.post('/custom-duties/:id/payout', authenticateToken, authorizePermission('custom-duty', 'mark-paid'), async (req, res) => {
+  try {
+    const utrNumber = String(req.body.utrNumber || '').trim();
+    const duty = await CustomDutyPayment.findOne({ $or: [{ dutyId: req.params.id }, ...(mongoose.Types.ObjectId.isValid(req.params.id) ? [{ _id: req.params.id }] : [])] });
+    if (!duty) return res.status(404).json({ success: false, error: 'Custom Duty record not found.' });
 
-      const duty = await CustomDutyPayment.create({
-        dutyId,
-        blId: String(blNumber).trim().toUpperCase(),
-        blNumber: String(blNumber).trim().toUpperCase(),
-        boeNumber: boeNumber || `BOE-${blNumber.slice(-6)}`,
-        vesselName: vesselName || 'EVER GIVEN V-104E',
-        portCode: portCode || 'INNHAV (Nhava Sheva)',
-        dutyAmount: numAmount,
-        customAgentName: customAgentName || 'Magnesh - Fast Forward Logistics India',
-        icegateRef: icegateRef || `ICEGATE-${Math.floor(1000000 + Math.random() * 9000000)}`,
-        status: approval.status,
-        remarks: remarks || '',
-        documents: documents || [],
-        approvalInstanceId: approval._id,
-        createdBy: req.user?.name || req.user?.email || 'System User',
-        requestedBy: req.user?.name || req.user?.email || 'System User',
-        requestedById: req.user?.id || req.user?.email,
-        requestedByTeam: approval.requestedByTeam || null,
-        assignedApprover: approval.assignedApprover || null,
-        assignedApproverName: approval.assignedApproverName || null,
-        assignedApproverRole: approval.assignedApproverRole || null
-      });
+    duty.status = 'paid';
+    if (utrNumber) duty.utrNumber = utrNumber;
+    duty.paidAt = new Date();
+    await duty.save();
 
-      return res.status(201).json({ success: true, message: 'Custom Duty payment created successfully.', duty, approval });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+    const approval = await Approval.findOne({
+      $or: [{ id: duty.dutyId }, { id: req.params.id }]
+    });
+    if (approval) {
+      approval.status = 'Approved & Dispatched';
+      await approval.save();
     }
-  });
 
-  router.delete('/custom-duties/:id', authenticateToken, authorizePermission('custom-duty', 'delete'), async (req, res) => {
-    try {
-      const duty = await CustomDutyPayment.findOneAndDelete({ $or: [{ dutyId: req.params.id }, { _id: req.params.id }] });
-      if (!duty) return res.status(404).json({ success: false, error: 'Custom Duty record not found.' });
-      return res.json({ success: true, message: 'Custom Duty record deleted successfully.' });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
+    await recalculatePoMetrics(duty.blNumber || duty.poId);
 
-  router.post('/logistics-payments/:id/payout', authenticateToken, authorizePermission('logistics-payments', 'mark-paid'), async (req, res) => {
-    try {
-      const utrNumber = String(req.body.utrNumber || '').trim();
-      const payment = await LogisticsPayment.findOne({
-        $or: [{ logisticsPaymentId: req.params.id }, { referenceNumber: req.params.id }, ...(mongoose.Types.ObjectId.isValid(req.params.id) ? [{ _id: req.params.id }] : [])]
-      });
-      if (!payment) return res.status(404).json({ success: false, error: 'Logistics payment not found.' });
+    return res.json({ success: true, message: 'Custom Duty payment marked as paid.', data: duty });
+  } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
 
-      payment.status = 'paid';
-      if (utrNumber) payment.utrNumber = utrNumber;
-      payment.paidAt = new Date();
-      await payment.save();
+// ─── FILE UPLOAD/DOWNLOAD ROUTES ────────────────────────────────────────────
 
-      const approval = await Approval.findOne({
-        $or: [{ id: payment.logisticsPaymentId }, { id: payment.referenceNumber }, { id: req.params.id }]
-      });
-      if (approval) {
-        approval.status = 'Approved & Dispatched';
-        await approval.save();
-      }
+const uploadMiddleware = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024, files: 10 }
+});
 
-      await recalculatePoMetrics(payment.sapPoNumber || payment.poId || payment.blNumber);
+router.post('/upload-file', authenticateToken, uploadMiddleware.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded.' });
 
-      return res.json({ success: true, message: 'Logistics payment marked as paid.', data: payment });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
+    const folder = req.body.folder || 'documents';
+    const storageResult = await uploadToS3(
+      req.file.buffer,
+      req.file.originalname,
+      req.file.mimetype,
+      folder
+    );
 
-  router.post('/custom-duties/:id/payout', authenticateToken, authorizePermission('custom-duty', 'mark-paid'), async (req, res) => {
-    try {
-      const utrNumber = String(req.body.utrNumber || '').trim();
-      const duty = await CustomDutyPayment.findOne({ $or: [{ dutyId: req.params.id }, ...(mongoose.Types.ObjectId.isValid(req.params.id) ? [{ _id: req.params.id }] : [])] });
-      if (!duty) return res.status(404).json({ success: false, error: 'Custom Duty record not found.' });
+    return res.status(200).json({
+      success: true,
+      message: 'File uploaded successfully to storage.',
+      fileUrl: storageResult.url,
+      fileName: storageResult.key || req.file.originalname,
+      originalName: req.file.originalname,
+      size: storageResult.size,
+      storage: storageResult.storage
+    });
+  } catch (err) {
+    console.error('[Upload API] File upload error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-      duty.status = 'paid';
-      if (utrNumber) duty.utrNumber = utrNumber;
-      duty.paidAt = new Date();
-      await duty.save();
+router.post('/upload-files', authenticateToken, uploadMiddleware.array('files', 10), async (req, res) => {
+  try {
+    if (!req.files?.length) return res.status(400).json({ success: false, error: 'No files uploaded.' });
 
-      const approval = await Approval.findOne({
-        $or: [{ id: duty.dutyId }, { id: req.params.id }]
-      });
-      if (approval) {
-        approval.status = 'Approved & Dispatched';
-        await approval.save();
-      }
-
-      await recalculatePoMetrics(duty.blNumber || duty.poId);
-
-      return res.json({ success: true, message: 'Custom Duty payment marked as paid.', data: duty });
-    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
-  });
-
-  // ─── FILE UPLOAD/DOWNLOAD ROUTES ────────────────────────────────────────────
-
-  const uploadMiddleware = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: 25 * 1024 * 1024, files: 10 }
-  });
-
-  router.post('/upload-file', authenticateToken, uploadMiddleware.single('file'), async (req, res) => {
-    try {
-      if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded.' });
-
-      const folder = req.body.folder || 'documents';
-      const storageResult = await uploadToS3(
-        req.file.buffer,
-        req.file.originalname,
-        req.file.mimetype,
-        folder
-      );
-
-      return res.status(200).json({
-        success: true,
-        message: 'File uploaded successfully to storage.',
+    const folder = req.body.folder || 'documents';
+    const uploadedFiles = await Promise.all(req.files.map(async (file) => {
+      const storageResult = await uploadToS3(file.buffer, file.originalname, file.mimetype, folder);
+      return {
         fileUrl: storageResult.url,
-        fileName: storageResult.key || req.file.originalname,
-        originalName: req.file.originalname,
+        fileName: storageResult.key || file.originalname,
+        originalName: file.originalname,
         size: storageResult.size,
+        mimeType: file.mimetype,
         storage: storageResult.storage
-      });
-    } catch (err) {
-      console.error('[Upload API] File upload error:', err);
-      return res.status(500).json({ success: false, error: err.message });
+      };
+    }));
+
+    return res.status(200).json({
+      success: true,
+      message: `${uploadedFiles.length} files uploaded successfully.`,
+      files: uploadedFiles
+    });
+
+    const newlyClosed = enrichedPos.filter((po) => po.status === 'closed' && pos.find((item) => String(item._id) === String(po._id))?.status !== 'closed');
+    if (newlyClosed.length) {
+      await PurchaseOrder.bulkWrite(newlyClosed.map((po) => ({
+        updateOne: { filter: { _id: po._id }, update: { $set: { status: 'closed' } } }
+      })));
     }
-  });
+  } catch (err) {
+    console.error('[Batch Upload API] File upload error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-  router.post('/upload-files', authenticateToken, uploadMiddleware.array('files', 10), async (req, res) => {
+router.get('/download-file', authenticateToken, async (req, res) => {
+  try {
+    const rawTarget = req.query.fileUrl || req.query.url || req.query.name;
+    if (!rawTarget) return res.status(400).json({ success: false, error: 'File path or name required.' });
+
+    const cleanTarget = String(rawTarget).trim();
+    const filename = path.basename(String(req.query.name || cleanTarget).trim());
+    const storageFilename = path.basename(cleanTarget);
+
     try {
-      if (!req.files?.length) return res.status(400).json({ success: false, error: 'No files uploaded.' });
-
-      const folder = req.body.folder || 'documents';
-      const uploadedFiles = await Promise.all(req.files.map(async (file) => {
-        const storageResult = await uploadToS3(file.buffer, file.originalname, file.mimetype, folder);
-        return {
-          fileUrl: storageResult.url,
-          fileName: storageResult.key || file.originalname,
-          originalName: file.originalname,
-          size: storageResult.size,
-          mimeType: file.mimetype,
-          storage: storageResult.storage
-        };
-      }));
-
-      return res.status(200).json({
-        success: true,
-        message: `${uploadedFiles.length} files uploaded successfully.`,
-        files: uploadedFiles
-      });
-
-      const newlyClosed = enrichedPos.filter((po) => po.status === 'closed' && pos.find((item) => String(item._id) === String(po._id))?.status !== 'closed');
-      if (newlyClosed.length) {
-        await PurchaseOrder.bulkWrite(newlyClosed.map((po) => ({
-          updateOne: { filter: { _id: po._id }, update: { $set: { status: 'closed' } } }
-        })));
+      if (typeof fileExistsInS3 === 'function' && typeof openDownloadStream === 'function') {
+        const existsInS3 = await fileExistsInS3(cleanTarget);
+        if (existsInS3) {
+          const storedFile = await openDownloadStream(cleanTarget);
+          res.setHeader('Content-Type', storedFile.contentType);
+          res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/["\r\n]/g, '_')}"`);
+          if (storedFile.contentLength != null) res.setHeader('Content-Length', storedFile.contentLength);
+          storedFile.body.on('error', (streamError) => {
+            console.error('[Download API] Storage stream failed:', streamError);
+            if (!res.headersSent) res.status(500).json({ success: false, error: 'Document stream failed.' });
+            else res.destroy(streamError);
+          });
+          return storedFile.body.pipe(res);
+        }
       }
-    } catch (err) {
-      console.error('[Batch Upload API] File upload error:', err);
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
+    } catch (_) { }
 
-  router.get('/download-file', authenticateToken, async (req, res) => {
-    try {
-      const rawTarget = req.query.fileUrl || req.query.url || req.query.name;
-      if (!rawTarget) return res.status(400).json({ success: false, error: 'File path or name required.' });
-
-      const cleanTarget = String(rawTarget).trim();
-      const filename = path.basename(String(req.query.name || cleanTarget).trim());
-      const storageFilename = path.basename(cleanTarget);
-
-      try {
-        if (typeof fileExistsInS3 === 'function' && typeof openDownloadStream === 'function') {
-          const existsInS3 = await fileExistsInS3(cleanTarget);
-          if (existsInS3) {
-            const storedFile = await openDownloadStream(cleanTarget);
-            res.setHeader('Content-Type', storedFile.contentType);
-            res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/["\r\n]/g, '_')}"`);
-            if (storedFile.contentLength != null) res.setHeader('Content-Length', storedFile.contentLength);
-            storedFile.body.on('error', (streamError) => {
-              console.error('[Download API] Storage stream failed:', streamError);
-              if (!res.headersSent) res.status(500).json({ success: false, error: 'Document stream failed.' });
-              else res.destroy(streamError);
-            });
-            return storedFile.body.pipe(res);
+    let localPath = toLocalPath(cleanTarget);
+    if (!localPath || !fs.existsSync(localPath)) {
+      const findFile = (dir) => {
+        if (!fs.existsSync(dir)) return null;
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            const found = findFile(fullPath);
+            if (found) return found;
+          } else if (entry.name.toLowerCase() === storageFilename.toLowerCase() || entry.name.toLowerCase().includes(storageFilename.toLowerCase())) {
+            return fullPath;
           }
         }
-      } catch (_) { }
-
-      let localPath = toLocalPath(cleanTarget);
-      if (!localPath || !fs.existsSync(localPath)) {
-        const findFile = (dir) => {
-          if (!fs.existsSync(dir)) return null;
-          const entries = fs.readdirSync(dir, { withFileTypes: true });
-          for (const entry of entries) {
-            const fullPath = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-              const found = findFile(fullPath);
-              if (found) return found;
-            } else if (entry.name.toLowerCase() === storageFilename.toLowerCase() || entry.name.toLowerCase().includes(storageFilename.toLowerCase())) {
-              return fullPath;
-            }
-          }
-          return null;
-        };
-        localPath = findFile(UPLOAD_DIR);
-      }
-
-      if (localPath && fs.existsSync(localPath)) {
-        return res.download(localPath, filename);
-      }
-
-      /* Fallback generator for legacy/demo documents whose physical file is not on disk or S3 */
-      const lowerName = filename.toLowerCase();
-
-      if (lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) {
-        const docxBuffer = Buffer.from(
-          'PK\x03\x04\x14\x00\x06\x00\x08\x00\x00\x00!\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00[Content_Types].xml',
-          'binary'
-        );
-        res.setHeader('Content-Type', lowerName.endsWith('.docx')
-          ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-          : 'application/msword');
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        return res.send(docxBuffer);
-      }
-
-      if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')) {
-        const xlsxBuffer = Buffer.from('PK\x03\x04\x14\x00\x06\x00\x08\x00\x00\x00', 'binary');
-        res.setHeader('Content-Type', lowerName.endsWith('.xlsx')
-          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-          : 'application/vnd.ms-excel');
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        return res.send(xlsxBuffer);
-      }
-
-      if (lowerName.endsWith('.png') || lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) {
-        const pngBuffer = Buffer.from(
-          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-          'base64'
-        );
-        res.setHeader('Content-Type', lowerName.endsWith('.png') ? 'image/png' : 'image/jpeg');
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        return res.send(pngBuffer);
-      } else {
-        const pdfBuffer = Buffer.from(
-          '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<<>>>>endobj\nxref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n0000000052 00000 n\n0000000101 00000 n\ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n178\n%%EOF\n'
-        );
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="${filename.endsWith('.pdf') ? filename : filename + '.pdf'}"`);
-        return res.send(pdfBuffer);
-      }
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
+        return null;
+      };
+      localPath = findFile(UPLOAD_DIR);
     }
-  });
 
-  // ─── AUDIT TRAIL ─────────────────────────────────────────────────────────────
+    if (localPath && fs.existsSync(localPath)) {
+      return res.download(localPath, filename);
+    }
 
-  router.get('/audit/:entityId', authenticateToken, async (req, res) => {
-    try {
-      const { entityId } = req.params;
-      const matcher = new RegExp(escapeRegex(entityId), 'i');
+    /* Fallback generator for legacy/demo documents whose physical file is not on disk or S3 */
+    const lowerName = filename.toLowerCase();
 
-      const [invDoc, advDoc, rfqDoc, poDoc, appDoc] = await Promise.all([
-        InvoicePayment.findOne({ $or: [{ invoicePaymentId: entityId }, { invoiceNumber: entityId }, { invoicePaymentId: matcher }, { invoiceNumber: matcher }] }).lean().catch(() => null),
-        AdvancePayment.findOne({ $or: [{ advanceId: entityId }, { advanceId: matcher }] }).lean().catch(() => null),
-        RfqHeader.findOne({ $or: [{ rfqId: entityId }, { rfqNumber: entityId }, { rfqId: matcher }, { rfqNumber: matcher }] }).lean().catch(() => null),
-        PurchaseOrder.findOne({ $or: [{ poNumber: entityId }, { sapPoNumber: entityId }, { poNumber: matcher }, { sapPoNumber: matcher }] }).lean().catch(() => null),
-        Approval.findOne({ $or: [{ id: entityId }, { id: matcher }, { referenceNumber: entityId }, { poReference: entityId }] }).lean().catch(() => null)
+    if (lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) {
+      const docxBuffer = Buffer.from(
+        'PK\x03\x04\x14\x00\x06\x00\x08\x00\x00\x00!\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00[Content_Types].xml',
+        'binary'
+      );
+      res.setHeader('Content-Type', lowerName.endsWith('.docx')
+        ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        : 'application/msword');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(docxBuffer);
+    }
+
+    if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')) {
+      const xlsxBuffer = Buffer.from('PK\x03\x04\x14\x00\x06\x00\x08\x00\x00\x00', 'binary');
+      res.setHeader('Content-Type', lowerName.endsWith('.xlsx')
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'application/vnd.ms-excel');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(xlsxBuffer);
+    }
+
+    if (lowerName.endsWith('.png') || lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) {
+      const pngBuffer = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64'
+      );
+      res.setHeader('Content-Type', lowerName.endsWith('.png') ? 'image/png' : 'image/jpeg');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.send(pngBuffer);
+    } else {
+      const pdfBuffer = Buffer.from(
+        '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<<>>>>endobj\nxref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n0000000052 00000 n\n0000000101 00000 n\ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n178\n%%EOF\n'
+      );
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename.endsWith('.pdf') ? filename : filename + '.pdf'}"`);
+      return res.send(pdfBuffer);
+    }
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── AUDIT TRAIL ─────────────────────────────────────────────────────────────
+
+router.get('/audit/:entityId', authenticateToken, async (req, res) => {
+  try {
+    const { entityId } = req.params;
+    const looseMatcher = new RegExp(escapeRegex(entityId), 'i');
+    const upper = String(entityId || '').toUpperCase();
+
+    let rfqDoc = null;
+    let advDoc = null;
+    let invDoc = null;
+    let blDoc = null;
+    let poDoc = null;
+    let logisticsDoc = null;
+    let blInvoiceDoc = null;
+
+    if (upper.startsWith('RFQ-') || upper.startsWith('Q-')) {
+      rfqDoc = await RfqHeader.findOne({ $or: [{ rfqId: entityId }, { rfqNumber: entityId }, { rfqId: looseMatcher }, { rfqNumber: looseMatcher }] }).lean().catch(() => null);
+    } else if (upper.startsWith('ADV-')) {
+      advDoc = await AdvancePayment.findOne({ $or: [{ advanceId: entityId }, { advanceId: looseMatcher }] }).lean().catch(() => null);
+    } else if (upper.startsWith('INV-')) {
+      invDoc = await InvoicePayment.findOne({ $or: [{ invoicePaymentId: entityId }, { invoiceNumber: entityId }, { invoicePaymentId: looseMatcher }, { invoiceNumber: looseMatcher }] }).lean().catch(() => null);
+    } else if (upper.startsWith('BL-')) {
+      blDoc = await RfqBlEntry.findOne({ $or: [{ blId: entityId }, { blNumber: entityId }, { blId: looseMatcher }, { blNumber: looseMatcher }] }).lean().catch(() => null);
+    } else {
+      [rfqDoc, advDoc, invDoc, blDoc, poDoc, logisticsDoc, blInvoiceDoc] = await Promise.all([
+        RfqHeader.findOne({ $or: [{ rfqId: entityId }, { rfqNumber: entityId }] }).lean().catch(() => null),
+        AdvancePayment.findOne({ $or: [{ advanceId: entityId }] }).lean().catch(() => null),
+        InvoicePayment.findOne({ $or: [{ invoicePaymentId: entityId }, { invoiceNumber: entityId }] }).lean().catch(() => null),
+        RfqBlEntry.findOne({ $or: [{ blId: entityId }, { blNumber: entityId }] }).lean().catch(() => null),
+        PurchaseOrder.findOne({ $or: [{ poNumber: entityId }, { sapPoNumber: entityId }] }).lean().catch(() => null),
+        LogisticsPayment.findOne({ $or: [{ logisticsPaymentId: entityId }, { referenceNumber: entityId }] }).lean().catch(() => null),
+        BlInvoice.findOne({ $or: [{ logisticsPaymentId: entityId }, { referenceNumber: entityId }] }).lean().catch(() => null)
       ]);
+    }
 
-      const idSet = new Set([
-        entityId,
-        invDoc?.invoicePaymentId, invDoc?.invoiceNumber, invDoc?.poId, invDoc?.sapPoNumber,
-        advDoc?.advanceId, advDoc?.poId, advDoc?.sapPoNumber,
-        rfqDoc?.rfqId, rfqDoc?.rfqNumber, rfqDoc?.linkedPoId,
-        poDoc?.poNumber, poDoc?.sapPoNumber, poDoc?.id,
-        appDoc?.id, appDoc?.referenceNumber, appDoc?.poReference
-      ].filter(Boolean).map(String));
+    let allowedIds = [entityId];
+    let approvalDocs = [];
+    const fallbackEvents = [];
 
-      const idList = Array.from(idSet);
-      const regexList = idList.map((val) => new RegExp(escapeRegex(val), 'i'));
+    if (rfqDoc || upper.startsWith('RFQ-') || upper.startsWith('Q-')) {
+      const rfqId = rfqDoc?.rfqId || entityId;
+      const rfqNumber = rfqDoc?.rfqNumber || entityId;
 
-      const [rawAudits, approvalDocs] = await Promise.all([
-        WorkflowAudit.find({
-          $or: [
-            { entityId: { $in: idList } },
-            { referenceNumber: { $in: idList } },
-            { workflowId: { $in: idList } },
-            { entityId: { $in: regexList } },
-            { referenceNumber: { $in: regexList } }
-          ]
-        }).sort({ createdAt: -1, occurredAt: -1 }).lean(),
+      const [quoteDocs, awardApprovals, blEntries] = await Promise.all([
+        RfqQuote.find({ $or: [{ rfqId }, { rfqNumber }] }, { quoteId: 1 }).lean().catch(() => []),
         Approval.find({
           $or: [
-            { id: { $in: idList } },
-            { referenceNumber: { $in: idList } },
-            { poReference: { $in: idList } },
-            { id: { $in: regexList } }
+            { 'transactionSnapshot.rfqId': { $in: [rfqId, rfqNumber] } },
+            { id: new RegExp(`^RFQ-(?:AWARD|REASSIGN)-${escapeRegex(rfqNumber)}`, 'i') },
+            { id: new RegExp(`^RFQ-(?:AWARD|REASSIGN)-${escapeRegex(rfqId)}`, 'i') },
+            { referenceNumber: { $in: [rfqId, rfqNumber] } }
           ]
-        }).lean()
+        }).lean().catch(() => []),
+        RfqBlEntry.find({ $or: [{ rfqId }, { rfqNumber }] }).lean().catch(() => [])
       ]);
 
-      const approvalActionLogs = approvalDocs.flatMap((doc) =>
-        (doc.actionHistory || []).map((act, idx) => ({
-          _id: `act-${doc.id}-${idx}`,
-          eventId: `act-${doc.id}-${idx}`,
-          eventType: `APPROVAL_${String(act.action || 'STEP').toUpperCase()}`,
-          action: act.action || 'Approval Action',
-          step: Number(act.step || idx + 1),
-          actorName: act.actionedBy || act.performedBy || act.actorName || 'Approver',
-          actorRole: act.role || act.actorRole || 'Approver',
-          remarks: act.remarks || act.reason || `Action "${act.action}" taken on step ${act.step || idx + 1}`,
-          createdAt: act.actionedAt || act.timestamp || act.occurredAt || doc.updatedAt || Date.now(),
-          occurredAt: act.actionedAt || act.timestamp || act.occurredAt || doc.updatedAt || Date.now()
-        }))
-      );
+      const quoteIds = quoteDocs.map((q) => q.quoteId).filter(Boolean);
+      const awardIds = awardApprovals.map((a) => a.id).filter(Boolean);
+      const blIds = blEntries.flatMap((b) => [b.blId, b.blNumber]).filter(Boolean);
 
-      const fallbackEvents = [];
-      if (invDoc && !rawAudits.some(a => (a.action || '').toLowerCase().includes('submit') || (a.action || '').toLowerCase().includes('create'))) {
+      // Also fetch any BlInvoice, LogisticsPayment and their approvals
+      const [blInvoices, logisticsPayments] = await Promise.all([
+        blIds.length ? BlInvoice.find({ $or: [{ blId: { $in: blIds } }, { blNumber: { $in: blIds } }] }).lean().catch(() => []) : [],
+        blIds.length ? LogisticsPayment.find({ $or: [{ blId: { $in: blIds } }, { blNumber: { $in: blIds } }] }).lean().catch(() => []) : []
+      ]);
+      const invoiceIds = [
+        ...blInvoices.flatMap((i) => [i.logisticsPaymentId, i.referenceNumber, i.invoiceNumber]),
+        ...logisticsPayments.flatMap((i) => [i.logisticsPaymentId, i.referenceNumber, i.invoiceNumber])
+      ].filter(Boolean);
+
+      const blApprovals = invoiceIds.length ? await Approval.find({
+        $or: [
+          { id: { $in: invoiceIds } },
+          { referenceNumber: { $in: invoiceIds } },
+          { 'transactionSnapshot.blId': { $in: blIds } }
+        ]
+      }).lean().catch(() => []) : [];
+
+      allowedIds = Array.from(new Set([
+        entityId, rfqId, rfqNumber,
+        ...quoteIds,
+        ...awardIds,
+        ...blIds,
+        ...invoiceIds,
+        ...blApprovals.map((a) => a.id)
+      ].filter(Boolean)));
+      approvalDocs = [...awardApprovals, ...blApprovals];
+
+      if (rfqDoc) {
         fallbackEvents.push({
-          _id: `sys-create-${invDoc.invoicePaymentId}`,
-          eventType: 'INVOICE_SUBMITTED',
-          action: 'submit',
-          actorName: invDoc.createdBy || 'Finance Team',
-          actorRole: 'Requester',
-          remarks: `Invoice Payment request "${invDoc.invoicePaymentId}" (${invDoc.invoiceNumber}) submitted.`,
-          createdAt: invDoc.createdAt || Date.now()
+          _id: `sys-create-${rfqDoc.rfqId}`,
+          eventType: 'RFQ_CREATED',
+          action: 'create',
+          step: 1,
+          entityType: 'rfqs',
+          entityId: rfqDoc.rfqId || rfqDoc.rfqNumber,
+          actorName: rfqDoc.createdBy || 'System Admin',
+          actorRole: 'Procurement Head',
+          remarks: `Freight RFQ "${rfqDoc.rfqNumber}" (${rfqDoc.title}) published.`,
+          createdAt: rfqDoc.createdAt || Date.now(),
+          occurredAt: rfqDoc.createdAt || Date.now()
         });
       }
 
-      if (advDoc && !rawAudits.some(a => (a.action || '').toLowerCase().includes('submit') || (a.action || '').toLowerCase().includes('create'))) {
+      // Add BL lifecycle fallback events for existing/historical BL entries
+      for (const bl of blEntries) {
+        // 1. BL Submission (Stage 4)
+        fallbackEvents.push({
+          _id: `sys-bl-submit-${bl.blId}`,
+          eventType: 'BL_SUBMITTED',
+          action: 'submit BL',
+          step: 4,
+          entityType: 'Bill of Lading',
+          entityId: bl.blId,
+          actorName: bl.vendorName || 'Freight Vendor',
+          actorRole: 'Vendor',
+          remarks: `Bill of Lading "${bl.blNumber}" (${bl.containersCount || (bl.containers && bl.containers.length) || 1} container(s), ASN: ${bl.asnNumber || bl.autoAsnNumber || 'N/A'}) submitted for EXIM review.`,
+          createdAt: bl.createdAt || Date.now(),
+          occurredAt: bl.createdAt || Date.now()
+        });
+
+        // 2. EXIM Action History (Stage 5)
+        if (Array.isArray(bl.eximApprovalHistory)) {
+          bl.eximApprovalHistory.forEach((hist, idx) => {
+            fallbackEvents.push({
+              _id: `sys-exim-${bl.blId}-${idx}`,
+              eventType: `BL_EXIM_${String(hist.action || 'ACTION').toUpperCase()}`,
+              action: `exim ${hist.action || 'action'}`,
+              step: 5,
+              entityType: 'Bill of Lading',
+              entityId: bl.blId,
+              actorName: hist.actionedBy || 'EXIM Manager',
+              actorRole: hist.role || 'EXIM Manager',
+              remarks: hist.remarks || `EXIM action "${hist.action}" processed on Bill of Lading "${bl.blNumber}".`,
+              createdAt: hist.actionedAt || bl.eximReviewedAt || bl.updatedAt || Date.now(),
+              occurredAt: hist.actionedAt || bl.eximReviewedAt || bl.updatedAt || Date.now()
+            });
+          });
+        }
+
+        // 3. Customs Agent Assigned (Stage 6)
+        if (bl.customAgentName || bl.customAgentId || bl.status === 'assigned_to_agent' || bl.status === 'custom_cleared') {
+          fallbackEvents.push({
+            _id: `sys-agent-assign-${bl.blId}`,
+            eventType: 'BL_AGENT_ASSIGNED',
+            action: 'assign customs agent',
+            step: 6,
+            entityType: 'Bill of Lading',
+            entityId: bl.blId,
+            actorName: 'EXIM Team',
+            actorRole: 'EXIM Manager',
+            remarks: `Bill of Lading "${bl.blNumber}" assigned to Customs Broker "${bl.customAgentAgencyName || bl.customAgentName || bl.customAgentId}".`,
+            createdAt: bl.assignedAt || bl.assignedToAgentAt || bl.updatedAt || Date.now(),
+            occurredAt: bl.assignedAt || bl.assignedToAgentAt || bl.updatedAt || Date.now()
+          });
+        }
+
+        // 4. BOE Uploaded (Stage 7)
+        if (bl.boeNumber || bl.boeUploadedAt) {
+          fallbackEvents.push({
+            _id: `sys-boe-${bl.blId}`,
+            eventType: 'BL_BOE_UPLOADED',
+            action: 'BOE_UPLOADED',
+            step: 7,
+            entityType: 'Bill of Lading',
+            entityId: bl.blId,
+            actorName: bl.customAgentAgencyName || bl.customAgentName || 'Customs Agent',
+            actorRole: 'CustomAgent',
+            remarks: `Bill of Entry "${bl.boeNumber}" uploaded (Duty: ₹${bl.dutyAmount || 0}) for BL "${bl.blNumber}".`,
+            createdAt: bl.boeUploadedAt || bl.updatedAt || Date.now(),
+            occurredAt: bl.boeUploadedAt || bl.updatedAt || Date.now()
+          });
+        }
+
+        // 5. Customs Cleared (Stage 7)
+        if (bl.status === 'custom_cleared' || bl.customsClearedAt) {
+          fallbackEvents.push({
+            _id: `sys-customs-clear-${bl.blId}`,
+            eventType: 'BL_CUSTOMS_CLEARED',
+            action: 'CUSTOMS_CLEARED',
+            step: 7,
+            entityType: 'Bill of Lading',
+            entityId: bl.blId,
+            actorName: bl.customAgentAgencyName || bl.customAgentName || 'Customs Agent',
+            actorRole: 'CustomAgent',
+            remarks: `Bill of Lading "${bl.blNumber}" marked as Customs Cleared.${bl.customsClearanceNotes ? ' Notes: ' + bl.customsClearanceNotes : ''}`,
+            createdAt: bl.customsClearedAt || bl.updatedAt || Date.now(),
+            occurredAt: bl.customsClearedAt || bl.updatedAt || Date.now()
+          });
+        }
+      }
+    } else if (advDoc || upper.startsWith('ADV-')) {
+      const advId = advDoc?.advanceId || entityId;
+      approvalDocs = await Approval.find({
+        $or: [
+          { id: advId },
+          { referenceNumber: advId },
+          { 'transactionSnapshot.advanceId': advId }
+        ]
+      }).lean().catch(() => []);
+      allowedIds = Array.from(new Set([entityId, advId, ...approvalDocs.map((a) => a.id)].filter(Boolean)));
+
+      if (advDoc) {
         fallbackEvents.push({
           _id: `sys-create-${advDoc.advanceId}`,
           eventType: 'ADVANCE_SUBMITTED',
@@ -6155,387 +6399,545 @@ router.post('/invoices/create', authenticateToken, async (req, res) => {
           createdAt: advDoc.createdAt || Date.now()
         });
       }
+    } else if (invDoc || upper.startsWith('INV-')) {
+      const invId = invDoc?.invoicePaymentId || entityId;
+      const invNum = invDoc?.invoiceNumber;
+      approvalDocs = await Approval.find({
+        $or: [
+          { id: { $in: [invId, invNum].filter(Boolean) } },
+          { referenceNumber: { $in: [invId, invNum].filter(Boolean) } },
+          { 'transactionSnapshot.invoicePaymentId': invId }
+        ]
+      }).lean().catch(() => []);
+      allowedIds = Array.from(new Set([entityId, invId, invNum, ...approvalDocs.map((a) => a.id)].filter(Boolean)));
 
-      if (rfqDoc && !rawAudits.some(a => (a.action || '').toLowerCase().includes('create') || (a.action || '').toLowerCase().includes('publish'))) {
+      if (invDoc) {
         fallbackEvents.push({
-          _id: `sys-create-${rfqDoc.rfqId}`,
-          eventType: 'RFQ_CREATED',
-          action: 'create',
-          actorName: rfqDoc.createdBy || 'System Admin',
-          actorRole: 'Procurement Head',
-          remarks: `Freight RFQ "${rfqDoc.rfqNumber}" (${rfqDoc.title}) published.`,
-          createdAt: rfqDoc.createdAt || Date.now()
+          _id: `sys-create-${invDoc.invoicePaymentId}`,
+          eventType: 'INVOICE_SUBMITTED',
+          action: 'submit',
+          actorName: invDoc.createdBy || 'Finance Team',
+          actorRole: 'Requester',
+          remarks: `Invoice Payment request "${invDoc.invoicePaymentId}" (${invDoc.invoiceNumber}) submitted.`,
+          createdAt: invDoc.createdAt || Date.now()
         });
       }
+    } else if (blDoc || upper.startsWith('BL-')) {
+      const blId = blDoc?.blId || entityId;
+      const blNum = blDoc?.blNumber;
+      const [blInvoices, logisticsPayments] = await Promise.all([
+        BlInvoice.find({ $or: [{ blId }, { blNumber: blNum }] }).lean().catch(() => []),
+        LogisticsPayment.find({ $or: [{ blId }, { blNumber: blNum }] }).lean().catch(() => [])
+      ]);
+      const invoiceIds = [
+        ...blInvoices.flatMap((i) => [i.logisticsPaymentId, i.referenceNumber, i.invoiceNumber]),
+        ...logisticsPayments.flatMap((i) => [i.logisticsPaymentId, i.referenceNumber, i.invoiceNumber])
+      ].filter(Boolean);
 
-      // Smart Deduplication for Audit Logs
-      const combinedRaw = [...rawAudits, ...approvalActionLogs, ...fallbackEvents];
-      
-      // Sort chronologically descending first
-      combinedRaw.sort((a, b) => new Date(b.createdAt || b.occurredAt || b.timestamp || 0).getTime() - new Date(a.createdAt || a.occurredAt || a.timestamp || 0).getTime());
+      approvalDocs = await Approval.find({
+        $or: [
+          { id: { $in: [blId, blNum, ...invoiceIds].filter(Boolean) } },
+          { referenceNumber: { $in: [blId, blNum, ...invoiceIds].filter(Boolean) } },
+          { 'transactionSnapshot.blId': blId }
+        ]
+      }).lean().catch(() => []);
+      allowedIds = Array.from(new Set([entityId, blId, blNum, ...invoiceIds, ...approvalDocs.map((a) => a.id)].filter(Boolean)));
 
-      const combined = [];
-      for (const log of combinedRaw) {
-        const logAction = String(log.action || log.eventType || '').toLowerCase().replace(/^(approval_|invoice_|advance_|rfq_)/, '').trim();
-        const logTime = new Date(log.createdAt || log.occurredAt || log.timestamp || 0).getTime();
-        const logActor = String(log.actorName || log.performedBy || log.actionedBy || log.actorId || '').trim();
+      if (blDoc) {
+        fallbackEvents.push({
+          _id: `sys-bl-submit-${blDoc.blId}`,
+          eventType: 'BL_SUBMITTED',
+          action: 'submit BL',
+          step: 4,
+          entityType: 'Bill of Lading',
+          entityId: blDoc.blId,
+          actorName: blDoc.vendorName || 'Freight Vendor',
+          actorRole: 'Vendor',
+          remarks: `Bill of Lading "${blDoc.blNumber}" (${blDoc.containersCount || (blDoc.containers && blDoc.containers.length) || 1} container(s)) submitted.`,
+          createdAt: blDoc.createdAt || Date.now()
+        });
+        if (blDoc.customAgentName || blDoc.customAgentId || blDoc.status === 'assigned_to_agent' || blDoc.status === 'custom_cleared') {
+          fallbackEvents.push({
+            _id: `sys-agent-assign-${blDoc.blId}`,
+            eventType: 'BL_AGENT_ASSIGNED',
+            action: 'assign customs agent',
+            step: 6,
+            entityType: 'Bill of Lading',
+            entityId: blDoc.blId,
+            actorName: 'EXIM Team',
+            actorRole: 'EXIM Manager',
+            remarks: `Bill of Lading "${blDoc.blNumber}" assigned to Customs Broker "${blDoc.customAgentAgencyName || blDoc.customAgentName || blDoc.customAgentId}".`,
+            createdAt: blDoc.assignedAt || blDoc.assignedToAgentAt || blDoc.updatedAt || Date.now()
+          });
+        }
+        if (blDoc.status === 'custom_cleared' || blDoc.customsClearedAt) {
+          fallbackEvents.push({
+            _id: `sys-customs-clear-${blDoc.blId}`,
+            eventType: 'BL_CUSTOMS_CLEARED',
+            action: 'CUSTOMS_CLEARED',
+            step: 7,
+            entityType: 'Bill of Lading',
+            entityId: blDoc.blId,
+            actorName: blDoc.customAgentAgencyName || blDoc.customAgentName || 'Customs Agent',
+            actorRole: 'CustomAgent',
+            remarks: `Bill of Lading "${blDoc.blNumber}" marked as Customs Cleared.${blDoc.customsClearanceNotes ? ' Notes: ' + blDoc.customsClearanceNotes : ''}`,
+            createdAt: blDoc.customsClearedAt || blDoc.updatedAt || Date.now()
+          });
+        }
+      }
+    } else if (logisticsDoc || blInvoiceDoc) {
+      const targetDoc = logisticsDoc || blInvoiceDoc;
+      const targetId = targetDoc.logisticsPaymentId || targetDoc.referenceNumber || entityId;
+      approvalDocs = await Approval.find({
+        $or: [
+          { id: targetId },
+          { referenceNumber: targetId },
+          { 'transactionSnapshot.logisticsPaymentId': targetId }
+        ]
+      }).lean().catch(() => []);
+      allowedIds = Array.from(new Set([entityId, targetId, targetDoc.invoiceNumber, ...approvalDocs.map((a) => a.id)].filter(Boolean)));
+    } else if (poDoc || upper.startsWith('PO-')) {
+      const poNum = poDoc?.poNumber || entityId;
+      const sapNum = poDoc?.sapPoNumber;
+      allowedIds = Array.from(new Set([entityId, poNum, sapNum].filter(Boolean)));
+      approvalDocs = await Approval.find({ poReference: { $in: allowedIds } }).lean().catch(() => []);
+    }
+
+    const rawAudits = await WorkflowAudit.find({
+      $or: [
+        { entityId: { $in: allowedIds } },
+        { workflowId: { $in: allowedIds } },
+        { referenceNumber: { $in: allowedIds } }
+      ]
+    }).sort({ createdAt: -1, occurredAt: -1 }).lean();
+
+    const approvalActionLogs = approvalDocs.flatMap((doc) =>
+      (doc.actionHistory || []).map((act, idx) => ({
+        _id: `act-${doc.id}-${idx}`,
+        eventId: `act-${doc.id}-${idx}`,
+        eventType: `APPROVAL_${String(act.action || 'STEP').toUpperCase()}`,
+        entityType: doc.type || 'Approval',
+        entityId: doc.id,
+        action: act.action || 'Approval Action',
+        step: Number(act.step || idx + 1),
+        actorName: act.actionedBy || act.performedBy || act.actorName || 'Approver',
+        actorRole: act.role || act.actorRole || 'Approver',
+        remarks: act.remarks || act.reason || `Action "${act.action}" taken on step ${act.step || idx + 1}`,
+        createdAt: act.actionedAt || act.timestamp || act.occurredAt || doc.updatedAt || Date.now(),
+        occurredAt: act.actionedAt || act.timestamp || act.occurredAt || doc.updatedAt || Date.now()
+      }))
+    );
+
+    // Helper to identify generic middleware / synthetic logs that add no business value
+    const isGenericMiddlewareLog = (log) => {
+      const eventType = String(log.eventType || '').toUpperCase();
+      const action = String(log.action || '').toUpperCase();
+      const reason = String(log.reason || log.remarks || '').trim();
+      if (/^(RFQS|VENDOR_RFQS|SYSTEM|DOCUMENTS|UPLOAD_FILE|AUTH)_CREATE$/i.test(eventType) || action === 'CREATE') {
+        if (
+          /created successfully\.?$/i.test(reason) ||
+          /completed successfully\.?$/i.test(reason) ||
+          /^(GET|POST|PUT|PATCH|DELETE)\s+\/api\//i.test(reason) ||
+          (log.newState && log.newState.statusCode === 200 && !log.newState.status)
+        ) {
+          return true;
+        }
+      }
+      if (/^(GET|POST|PUT|PATCH|DELETE)\s+\/api\//i.test(reason)) return true;
+      return false;
+    };
+
+    // Filter raw audits
+    const filteredAudits = rawAudits.filter((log) => {
+      if (isGenericMiddlewareLog(log)) return false;
+
+      // Discard redundant bare APPROVAL_SUBMITTED when richer RFQ_AWARD_APPROVAL_REQUESTED exists
+      if (log.eventType === 'APPROVAL_SUBMITTED' || (log.action || '').toLowerCase() === 'submit') {
+        const hasRichAward = rawAudits.some((other) =>
+          (other.eventType === 'RFQ_AWARD_APPROVAL_REQUESTED' || other.eventType === 'RFQ_REASSIGNMENT_APPROVAL_REQUESTED') &&
+          String(other.entityId) === String(log.entityId)
+        );
+        if (hasRichAward) return false;
+      }
+      return true;
+    });
+
+    // Combine and sort chronologically descending
+    const combinedRaw = [...filteredAudits, ...approvalActionLogs, ...fallbackEvents];
+
+    combinedRaw.sort((a, b) => new Date(b.createdAt || b.occurredAt || b.timestamp || 0).getTime() - new Date(a.createdAt || a.occurredAt || a.timestamp || 0).getTime());
+
+    const normAction = (act, evt) => {
+      const s = String(act || evt || '').toLowerCase().replace(/^(approval_|invoice_|advance_|rfq_|bl_)/, '').trim();
+      if (s.includes('publish') || s.includes('create')) return 'create_publish';
+      return s;
+    };
+
+    // Smart Deduplication
+    const combined = [];
+    for (const log of combinedRaw) {
+      const logAction = normAction(log.action, log.eventType);
+      const logTime = new Date(log.createdAt || log.occurredAt || log.timestamp || 0).getTime();
+      const logActor = String(log.actorName || log.performedBy || log.actionedBy || log.actorId || '').trim();
+
+      const existingIdx = combined.findIndex((item) => {
+        const itemAction = normAction(item.action, item.eventType);
+        const itemTime = new Date(item.createdAt || item.occurredAt || item.timestamp || 0).getTime();
+        const itemActor = String(item.actorName || item.performedBy || item.actionedBy || item.actorId || '').trim().toLowerCase();
+        const sameAction = logAction === itemAction;
+        const sameActor = (logAction === 'create_publish') || !logActor || !itemActor || String(logActor).toLowerCase() === itemActor;
+        const sameStep = Number(log.step || 0) === Number(item.step || 0);
+        const sameEntity = !log.entityId || !item.entityId || String(log.entityId) === String(item.entityId);
+        const timeDiff = Math.abs(logTime - itemTime);
+        return sameAction && sameActor && sameStep && sameEntity && timeDiff < 60000;
+      });
+
+      if (existingIdx === -1) {
+        combined.push(log);
+      } else {
+        const existing = combined[existingIdx];
+        const existingActor = String(existing.actorName || existing.performedBy || existing.actionedBy || existing.actorId || '').trim();
+        const existingRemarks = String(existing.remarks || existing.reason || '').trim();
         const logRemarks = String(log.remarks || log.reason || '').trim();
 
-        // Hide only the same persisted/logical event. Distinct actions close in
-        // time (for example CREATE then SUBMIT) must both remain visible.
-        const existingIdx = combined.findIndex((item) => {
-          const itemAction = String(item.action || item.eventType || '').toLowerCase().replace(/^(approval_|invoice_|advance_|rfq_)/, '').trim();
-          const itemTime = new Date(item.createdAt || item.occurredAt || item.timestamp || 0).getTime();
-          const itemActor = String(item.actorName || item.performedBy || item.actionedBy || item.actorId || '').trim().toLowerCase();
-          const sameAction = logAction === itemAction;
-          const sameActor = String(logActor).toLowerCase() === itemActor;
-          const sameStep = Number(log.step || 0) === Number(item.step || 0);
-          const sameRequest = log.requestId && item.requestId ? log.requestId === item.requestId : true;
-          const timeDiff = Math.abs(logTime - itemTime);
-          return sameAction && sameActor && sameStep && sameRequest && timeDiff < 3000;
-        });
+        const logScore = (logActor && !logActor.includes('@') && !logActor.toLowerCase().includes('system admin') ? 2 : 1) +
+          (logRemarks.length > 5 ? 1 : 0) +
+          (log._id && !String(log._id).startsWith('sys-') ? 2 : 0);
 
-        if (existingIdx === -1) {
-          combined.push(log);
+        const existingScore = (existingActor && !existingActor.includes('@') && !existingActor.toLowerCase().includes('system admin') ? 2 : 1) +
+          (existingRemarks.length > 5 ? 1 : 0) +
+          (existing._id && !String(existing._id).startsWith('sys-') ? 2 : 0);
+
+        if (logScore > existingScore) {
+          combined[existingIdx] = log;
+        }
+      }
+    }
+
+    return res.json({
+      success: true,
+      entityId,
+      count: combined.length,
+      auditLogs: combined
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── DASHBOARD ANALYTICS ─────────────────────────────────────────────────────
+
+router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
+  try {
+    const approvedReg = /approved|dispatched|paid/i;
+    const paidReg = /(^|\s)paid($|\s)|payment[_\s-]?paid/i;
+    const terminalApprovalStatuses = ['Approved & Dispatched', 'Approved', 'Rejected', 'Cancelled'];
+    const range = (req.query.range || '7d').toLowerCase();
+
+    let daysCount = 7;
+    if (range === '30d') daysCount = 30;
+    else if (range === '90d') daysCount = 90;
+    else if (range === '1y') daysCount = 365;
+
+    const now = new Date();
+    const rangeStartDate = new Date(now.getTime() - daysCount * 24 * 60 * 60 * 1000);
+    const prevPeriodStartDate = new Date(now.getTime() - (daysCount * 2) * 24 * 60 * 60 * 1000);
+
+    const [
+      poCount,
+      prevPoCount,
+      rawPendingCount,
+      rfqCount,
+      prevRfqCount,
+      rfqAwardedCount,
+      rfqDraftCount,
+      rfqPublishedCount,
+      blCount,
+      blClearedCount,
+      vendorCount,
+      activeUserCount,
+      advancesList,
+      invoicesList,
+      dutiesList,
+      blInvoicesList,
+      blEntriesList,
+      pendingList,
+      allApprovals,
+      recentPos,
+      recentRfqs
+    ] = await Promise.all([
+      PurchaseOrder.countDocuments().catch(() => 0),
+      PurchaseOrder.countDocuments({ createdAt: { $gte: prevPeriodStartDate, $lt: rangeStartDate } }).catch(() => 0),
+      Approval.countDocuments({ status: { $nin: terminalApprovalStatuses } }).catch(() => 0),
+      RfqHeader.countDocuments().catch(() => 0),
+      RfqHeader.countDocuments({ createdAt: { $gte: prevPeriodStartDate, $lt: rangeStartDate } }).catch(() => 0),
+      RfqHeader.countDocuments({ status: 'awarded' }).catch(() => 0),
+      RfqHeader.countDocuments({ status: 'draft' }).catch(() => 0),
+      RfqHeader.countDocuments({ status: { $in: ['published', 'active', 'open'] } }).catch(() => 0),
+      RfqBlEntry.countDocuments().catch(() => 0),
+      RfqBlEntry.countDocuments({ status: { $in: ['custom_cleared', 'invoice_pending', 'payment_requested', 'payment_approved', 'payment_paid', 'closed'] } }).catch(() => 0),
+      Vendor.countDocuments().catch(() => 0),
+      User.countDocuments({ status: 'Active' }).catch(() => 0),
+      AdvancePayment.find().lean().catch(() => []),
+      InvoicePayment.find().lean().catch(() => []),
+      CustomDutyPayment.find().lean().catch(() => []),
+      BlInvoice.find().lean().catch(() => []),
+      RfqBlEntry.find().lean().catch(() => []),
+      Approval.find({ status: { $nin: terminalApprovalStatuses } }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
+      Approval.find().lean().catch(() => []),
+      PurchaseOrder.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
+      RfqHeader.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => [])
+    ]);
+
+    const userRole = req.user?.role || '';
+    const userId = req.user?.id || req.user?.userId;
+    const pendingNonTerminalApprovals = allApprovals.filter(a => !terminalApprovalStatuses.includes(a.status));
+    const userActionableApprovals = pendingNonTerminalApprovals.filter(a => isApprovalForRole(a, userRole, userId));
+    const pendingCount = userActionableApprovals.length;
+
+    const approvedAdvances = advancesList.filter(a => approvedReg.test(a.status || ''));
+    const approvedInvoices = invoicesList.filter(i => approvedReg.test(i.status || ''));
+    const approvedDuties = dutiesList.filter(d => approvedReg.test(d.status || ''));
+    const paidAdvances = advancesList.filter(a => paidReg.test(a.status || ''));
+    const paidInvoices = invoicesList.filter(i => paidReg.test(i.status || ''));
+    const paidDuties = dutiesList.filter(d => paidReg.test(d.status || ''));
+
+    const sumAdvances = paidAdvances.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
+    const sumInvoices = paidInvoices.reduce((acc, curr) => acc + (Number(curr.netPayable || curr.amount || curr.amountINR || 0)), 0);
+    const sumDuties = paidDuties.reduce((acc, curr) => acc + (Number(curr.dutyAmount || curr.amount || curr.amountINR || 0)), 0);
+
+    const approvalPipeline = {
+      advance: {
+        pending: advancesList.filter(a => !approvedReg.test(a.status || '') && !(a.status || '').toLowerCase().includes('reject')).length,
+        approved: approvedAdvances.length,
+        rejected: advancesList.filter(a => (a.status || '').toLowerCase().includes('reject')).length
+      },
+      invoice: {
+        pending: invoicesList.filter(i => !approvedReg.test(i.status || '') && !(i.status || '').toLowerCase().includes('reject')).length,
+        approved: approvedInvoices.length,
+        rejected: invoicesList.filter(i => (i.status || '').toLowerCase().includes('reject')).length
+      },
+      rfq: {
+        pending: allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && !approvedReg.test(a.status || '')).length,
+        approved: rfqAwardedCount || allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && approvedReg.test(a.status || '')).length,
+        rejected: allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && (a.status || '').toLowerCase().includes('reject')).length
+      },
+      blInvoice: {
+        pending: blInvoicesList.filter(b => !approvedReg.test(b.status || '') && !(b.status || '').toLowerCase().includes('reject')).length,
+        approved: blInvoicesList.filter(b => approvedReg.test(b.status || '')).length,
+        rejected: blInvoicesList.filter(b => (b.status || '').toLowerCase().includes('reject')).length
+      }
+    };
+
+    const inrInvoices = invoicesList.filter(i => (i.currency || 'INR').toUpperCase() === 'INR').length;
+    const usdInvoices = invoicesList.filter(i => (i.currency || '').toUpperCase() === 'USD').length;
+    const inrAdvances = advancesList.filter(a => (a.currency || 'INR').toUpperCase() === 'INR').length;
+    const usdAdvances = advancesList.filter(a => (a.currency || '').toUpperCase() === 'USD').length;
+
+    const currencyDistribution = {
+      inrTxns: inrInvoices + inrAdvances,
+      usdTxns: usdInvoices + usdAdvances,
+      inrAdvances,
+      usdAdvances,
+      inrInvoices,
+      usdInvoices
+    };
+
+    const paymentTransactions = [...advancesList, ...invoicesList];
+    const isRejected = (item) => String(item.status || '').toLowerCase().includes('reject');
+    const isDraft = (item) => String(item.status || '').toLowerCase().includes('draft');
+    const isFinalized = (item) => approvedReg.test(item.status || '');
+    const statusMix = {
+      draft: paymentTransactions.filter(isDraft).length,
+      pending: paymentTransactions.filter(item => !isDraft(item) && !isRejected(item) && !isFinalized(item)).length,
+      approved: paymentTransactions.filter(isFinalized).length,
+      rejected: paymentTransactions.filter(isRejected).length,
+      total: paymentTransactions.filter(item => !isFinalized(item)).length
+    };
+
+    const poTrend = prevPoCount > 0 ? Math.round(((poCount - prevPoCount) / prevPoCount) * 100) : 0;
+    const rfqTrend = prevRfqCount > 0 ? Math.round(((rfqCount - prevRfqCount) / prevRfqCount) * 100) : 0;
+
+    const monthNames6 = [];
+    for (let i = 5; i >= 0; i--) {
+      const mDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      monthNames6.push({
+        label: mDate.toLocaleDateString('en-IN', { month: 'short' }),
+        start: mDate,
+        end: new Date(mDate.getFullYear(), mDate.getMonth() + 1, 1)
+      });
+    }
+
+    const last6MonthsActivity = await Promise.all(
+      monthNames6.map(async ({ label, start, end }) => {
+        const query = { createdAt: { $gte: start, $lt: end } };
+        const [advCount, invCount, rCount, bCount] = await Promise.all([
+          AdvancePayment.countDocuments(query).catch(() => 0),
+          InvoicePayment.countDocuments(query).catch(() => 0),
+          RfqHeader.countDocuments(query).catch(() => 0),
+          RfqBlEntry.countDocuments(query).catch(() => 0),
+        ]);
+        return {
+          month: label,
+          Advances: advCount,
+          Invoices: invCount,
+          RFQs: rCount,
+          BlEntries: bCount
+        };
+      })
+    );
+
+    const stepCount = daysCount <= 7 ? 7 : daysCount <= 30 ? 6 : 6;
+    const intervalMs = (daysCount * 24 * 60 * 60 * 1000) / stepCount;
+
+    const chartData = await Promise.all(
+      Array.from({ length: stepCount }, (_, i) => {
+        const stepStart = new Date(rangeStartDate.getTime() + i * intervalMs);
+        const stepEnd = new Date(stepStart.getTime() + intervalMs);
+        const queryRange = { createdAt: { $gte: stepStart, $lt: stepEnd } };
+
+        let label = '';
+        if (daysCount <= 7) {
+          label = stepStart.toLocaleDateString('en-IN', { weekday: 'short' });
+        } else if (daysCount <= 30) {
+          label = `W${i + 1} (${stepStart.getDate()} ${stepStart.toLocaleDateString('en-IN', { month: 'short' })})`;
         } else {
-          // Compare and keep the one with better actorName or remarks
-          const existing = combined[existingIdx];
-          const existingActor = String(existing.actorName || existing.performedBy || existing.actionedBy || existing.actorId || '').trim();
-          const existingRemarks = String(existing.remarks || existing.reason || '').trim();
-
-          const logScore = (logActor && !logActor.includes('@') && !logActor.toLowerCase().includes('system admin') ? 2 : 1) + (logRemarks.length > 5 ? 1 : 0);
-          const existingScore = (existingActor && !existingActor.includes('@') && !existingActor.toLowerCase().includes('system admin') ? 2 : 1) + (existingRemarks.length > 5 ? 1 : 0);
-
-          if (logScore > existingScore) {
-            combined[existingIdx] = log;
-          }
+          label = stepStart.toLocaleDateString('en-IN', { month: 'short' });
         }
-      }
 
-      return res.json({
-        success: true,
-        entityId,
-        count: combined.length,
-        auditLogs: combined
+        return Promise.all([
+          PurchaseOrder.countDocuments(queryRange).catch(() => 0),
+          InvoicePayment.countDocuments(queryRange).catch(() => 0),
+          RfqHeader.countDocuments(queryRange).catch(() => 0),
+          AdvancePayment.countDocuments(queryRange).catch(() => 0),
+        ]).then(([pos, invoices, rfqs, advances]) => ({
+          label,
+          pos,
+          invoices,
+          rfqs,
+          advances,
+        }));
+      })
+    );
+
+    const recentActivity = [];
+
+    recentPos.forEach(po => {
+      recentActivity.push({
+        badge: 'PO',
+        badgeColor: 'blue',
+        code: po.poNumber || `PO-${po.id}`,
+        date: new Date(po.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+        title: po.supplierName ? `PO for ${po.supplierName}` : `Purchase Order #${po.poNumber || po.id}`
       });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
+    });
 
-  // ─── DASHBOARD ANALYTICS ─────────────────────────────────────────────────────
-
-  router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
-    try {
-      const approvedReg = /approved|dispatched|paid/i;
-      const paidReg = /(^|\s)paid($|\s)|payment[_\s-]?paid/i;
-      const terminalApprovalStatuses = ['Approved & Dispatched', 'Approved', 'Rejected', 'Cancelled'];
-      const range = (req.query.range || '7d').toLowerCase();
-
-      let daysCount = 7;
-      if (range === '30d') daysCount = 30;
-      else if (range === '90d') daysCount = 90;
-      else if (range === '1y') daysCount = 365;
-
-      const now = new Date();
-      const rangeStartDate = new Date(now.getTime() - daysCount * 24 * 60 * 60 * 1000);
-      const prevPeriodStartDate = new Date(now.getTime() - (daysCount * 2) * 24 * 60 * 60 * 1000);
-
-      const [
-        poCount,
-        prevPoCount,
-        rawPendingCount,
-        rfqCount,
-        prevRfqCount,
-        rfqAwardedCount,
-        rfqDraftCount,
-        rfqPublishedCount,
-        blCount,
-        blClearedCount,
-        vendorCount,
-        activeUserCount,
-        advancesList,
-        invoicesList,
-        dutiesList,
-        blInvoicesList,
-        blEntriesList,
-        pendingList,
-        allApprovals,
-        recentPos,
-        recentRfqs
-      ] = await Promise.all([
-        PurchaseOrder.countDocuments().catch(() => 0),
-        PurchaseOrder.countDocuments({ createdAt: { $gte: prevPeriodStartDate, $lt: rangeStartDate } }).catch(() => 0),
-        Approval.countDocuments({ status: { $nin: terminalApprovalStatuses } }).catch(() => 0),
-        RfqHeader.countDocuments().catch(() => 0),
-        RfqHeader.countDocuments({ createdAt: { $gte: prevPeriodStartDate, $lt: rangeStartDate } }).catch(() => 0),
-        RfqHeader.countDocuments({ status: 'awarded' }).catch(() => 0),
-        RfqHeader.countDocuments({ status: 'draft' }).catch(() => 0),
-        RfqHeader.countDocuments({ status: { $in: ['published', 'active', 'open'] } }).catch(() => 0),
-        RfqBlEntry.countDocuments().catch(() => 0),
-        RfqBlEntry.countDocuments({ status: { $in: ['custom_cleared', 'invoice_pending', 'payment_requested', 'payment_approved', 'payment_paid', 'closed'] } }).catch(() => 0),
-        Vendor.countDocuments().catch(() => 0),
-        User.countDocuments({ status: 'Active' }).catch(() => 0),
-        AdvancePayment.find().lean().catch(() => []),
-        InvoicePayment.find().lean().catch(() => []),
-        CustomDutyPayment.find().lean().catch(() => []),
-        BlInvoice.find().lean().catch(() => []),
-        RfqBlEntry.find().lean().catch(() => []),
-        Approval.find({ status: { $nin: terminalApprovalStatuses } }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
-        Approval.find().lean().catch(() => []),
-        PurchaseOrder.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
-        RfqHeader.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => [])
-      ]);
-
-      const userRole = req.user?.role || '';
-      const userId = req.user?.id || req.user?.userId;
-      const pendingNonTerminalApprovals = allApprovals.filter(a => !terminalApprovalStatuses.includes(a.status));
-      const userActionableApprovals = pendingNonTerminalApprovals.filter(a => isApprovalForRole(a, userRole, userId));
-      const pendingCount = userActionableApprovals.length;
-
-      const approvedAdvances = advancesList.filter(a => approvedReg.test(a.status || ''));
-      const approvedInvoices = invoicesList.filter(i => approvedReg.test(i.status || ''));
-      const approvedDuties = dutiesList.filter(d => approvedReg.test(d.status || ''));
-      const paidAdvances = advancesList.filter(a => paidReg.test(a.status || ''));
-      const paidInvoices = invoicesList.filter(i => paidReg.test(i.status || ''));
-      const paidDuties = dutiesList.filter(d => paidReg.test(d.status || ''));
-
-      const sumAdvances = paidAdvances.reduce((acc, curr) => acc + (Number(curr.amount || curr.amountINR || 0)), 0);
-      const sumInvoices = paidInvoices.reduce((acc, curr) => acc + (Number(curr.netPayable || curr.amount || curr.amountINR || 0)), 0);
-      const sumDuties = paidDuties.reduce((acc, curr) => acc + (Number(curr.dutyAmount || curr.amount || curr.amountINR || 0)), 0);
-
-      const approvalPipeline = {
-        advance: {
-          pending: advancesList.filter(a => !approvedReg.test(a.status || '') && !(a.status || '').toLowerCase().includes('reject')).length,
-          approved: approvedAdvances.length,
-          rejected: advancesList.filter(a => (a.status || '').toLowerCase().includes('reject')).length
-        },
-        invoice: {
-          pending: invoicesList.filter(i => !approvedReg.test(i.status || '') && !(i.status || '').toLowerCase().includes('reject')).length,
-          approved: approvedInvoices.length,
-          rejected: invoicesList.filter(i => (i.status || '').toLowerCase().includes('reject')).length
-        },
-        rfq: {
-          pending: allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && !approvedReg.test(a.status || '')).length,
-          approved: rfqAwardedCount || allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && approvedReg.test(a.status || '')).length,
-          rejected: allApprovals.filter(a => (a.type || '').toLowerCase().includes('rfq') && (a.status || '').toLowerCase().includes('reject')).length
-        },
-        blInvoice: {
-          pending: blInvoicesList.filter(b => !approvedReg.test(b.status || '') && !(b.status || '').toLowerCase().includes('reject')).length,
-          approved: blInvoicesList.filter(b => approvedReg.test(b.status || '')).length,
-          rejected: blInvoicesList.filter(b => (b.status || '').toLowerCase().includes('reject')).length
-        }
-      };
-
-      const inrInvoices = invoicesList.filter(i => (i.currency || 'INR').toUpperCase() === 'INR').length;
-      const usdInvoices = invoicesList.filter(i => (i.currency || '').toUpperCase() === 'USD').length;
-      const inrAdvances = advancesList.filter(a => (a.currency || 'INR').toUpperCase() === 'INR').length;
-      const usdAdvances = advancesList.filter(a => (a.currency || '').toUpperCase() === 'USD').length;
-
-      const currencyDistribution = {
-        inrTxns: inrInvoices + inrAdvances,
-        usdTxns: usdInvoices + usdAdvances,
-        inrAdvances,
-        usdAdvances,
-        inrInvoices,
-        usdInvoices
-      };
-
-      const paymentTransactions = [...advancesList, ...invoicesList];
-      const isRejected = (item) => String(item.status || '').toLowerCase().includes('reject');
-      const isDraft = (item) => String(item.status || '').toLowerCase().includes('draft');
-      const isFinalized = (item) => approvedReg.test(item.status || '');
-      const statusMix = {
-        draft: paymentTransactions.filter(isDraft).length,
-        pending: paymentTransactions.filter(item => !isDraft(item) && !isRejected(item) && !isFinalized(item)).length,
-        approved: paymentTransactions.filter(isFinalized).length,
-        rejected: paymentTransactions.filter(isRejected).length,
-        total: paymentTransactions.filter(item => !isFinalized(item)).length
-      };
-
-      const poTrend = prevPoCount > 0 ? Math.round(((poCount - prevPoCount) / prevPoCount) * 100) : 0;
-      const rfqTrend = prevRfqCount > 0 ? Math.round(((rfqCount - prevRfqCount) / prevRfqCount) * 100) : 0;
-
-      const monthNames6 = [];
-      for (let i = 5; i >= 0; i--) {
-        const mDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        monthNames6.push({
-          label: mDate.toLocaleDateString('en-IN', { month: 'short' }),
-          start: mDate,
-          end: new Date(mDate.getFullYear(), mDate.getMonth() + 1, 1)
-        });
-      }
-
-      const last6MonthsActivity = await Promise.all(
-        monthNames6.map(async ({ label, start, end }) => {
-          const query = { createdAt: { $gte: start, $lt: end } };
-          const [advCount, invCount, rCount, bCount] = await Promise.all([
-            AdvancePayment.countDocuments(query).catch(() => 0),
-            InvoicePayment.countDocuments(query).catch(() => 0),
-            RfqHeader.countDocuments(query).catch(() => 0),
-            RfqBlEntry.countDocuments(query).catch(() => 0),
-          ]);
-          return {
-            month: label,
-            Advances: advCount,
-            Invoices: invCount,
-            RFQs: rCount,
-            BlEntries: bCount
-          };
-        })
-      );
-
-      const stepCount = daysCount <= 7 ? 7 : daysCount <= 30 ? 6 : 6;
-      const intervalMs = (daysCount * 24 * 60 * 60 * 1000) / stepCount;
-
-      const chartData = await Promise.all(
-        Array.from({ length: stepCount }, (_, i) => {
-          const stepStart = new Date(rangeStartDate.getTime() + i * intervalMs);
-          const stepEnd = new Date(stepStart.getTime() + intervalMs);
-          const queryRange = { createdAt: { $gte: stepStart, $lt: stepEnd } };
-
-          let label = '';
-          if (daysCount <= 7) {
-            label = stepStart.toLocaleDateString('en-IN', { weekday: 'short' });
-          } else if (daysCount <= 30) {
-            label = `W${i + 1} (${stepStart.getDate()} ${stepStart.toLocaleDateString('en-IN', { month: 'short' })})`;
-          } else {
-            label = stepStart.toLocaleDateString('en-IN', { month: 'short' });
-          }
-
-          return Promise.all([
-            PurchaseOrder.countDocuments(queryRange).catch(() => 0),
-            InvoicePayment.countDocuments(queryRange).catch(() => 0),
-            RfqHeader.countDocuments(queryRange).catch(() => 0),
-            AdvancePayment.countDocuments(queryRange).catch(() => 0),
-          ]).then(([pos, invoices, rfqs, advances]) => ({
-            label,
-            pos,
-            invoices,
-            rfqs,
-            advances,
-          }));
-        })
-      );
-
-      const recentActivity = [];
-
-      recentPos.forEach(po => {
-        recentActivity.push({
-          badge: 'PO',
-          badgeColor: 'blue',
-          code: po.poNumber || `PO-${po.id}`,
-          date: new Date(po.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-          title: po.supplierName ? `PO for ${po.supplierName}` : `Purchase Order #${po.poNumber || po.id}`
-        });
+    recentRfqs.forEach(rfq => {
+      recentActivity.push({
+        badge: 'RFQ',
+        badgeColor: 'green',
+        code: rfq.rfqNumber || `RFQ-${rfq.id}`,
+        date: new Date(rfq.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+        title: rfq.title || 'RFQ Logistics Sourcing'
       });
+    });
 
-      recentRfqs.forEach(rfq => {
-        recentActivity.push({
-          badge: 'RFQ',
-          badgeColor: 'green',
-          code: rfq.rfqNumber || `RFQ-${rfq.id}`,
-          date: new Date(rfq.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-          title: rfq.title || 'RFQ Logistics Sourcing'
-        });
+    advancesList.slice(0, 3).forEach(adv => {
+      recentActivity.push({
+        badge: 'ADVANCE',
+        badgeColor: 'teal',
+        code: adv.advanceNumber || `ADV-${adv.id}`,
+        date: new Date(adv.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+        title: adv.vendorName ? `Advance to ${adv.vendorName}` : 'Advance Request'
       });
+    });
 
-      advancesList.slice(0, 3).forEach(adv => {
-        recentActivity.push({
-          badge: 'ADVANCE',
-          badgeColor: 'teal',
-          code: adv.advanceNumber || `ADV-${adv.id}`,
-          date: new Date(adv.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-          title: adv.vendorName ? `Advance to ${adv.vendorName}` : 'Advance Request'
-        });
-      });
+    recentActivity.sort((a, b) => new Date(b.date) - new Date(a.date));
 
-      recentActivity.sort((a, b) => new Date(b.date) - new Date(a.date));
+    const formatINR = (val) => {
+      if (!val || val === 0) return '₹0';
+      if (val >= 10000000) return `₹${(val / 10000000).toFixed(2)} Cr`;
+      if (val >= 100000) return `₹${(val / 100000).toFixed(2)} L`;
+      if (val >= 1000) return `₹${(val / 1000).toFixed(1)}K`;
+      return `₹${val.toLocaleString()}`;
+    };
 
-      const formatINR = (val) => {
-        if (!val || val === 0) return '₹0';
-        if (val >= 10000000) return `₹${(val / 10000000).toFixed(2)} Cr`;
-        if (val >= 100000) return `₹${(val / 100000).toFixed(2)} L`;
-        if (val >= 1000) return `₹${(val / 1000).toFixed(1)}K`;
-        return `₹${val.toLocaleString()}`;
-      };
+    return res.json({
+      success: true,
+      range,
+      stats: {
+        purchaseOrders: poCount,
+        purchaseOrdersSub: `${poCount} open`,
+        poTrend,
+        pendingApprovals: pendingCount,
+        pendingApprovalsSub: 'Awaiting action',
+        rfqs: rfqCount,
+        rfqsSub: `${rfqAwardedCount} awarded`,
+        rfqTrend,
+        blEntries: blCount,
+        blEntriesSub: `${blClearedCount} cleared`,
+        activeVendors: vendorCount,
+        activeVendorsSub: 'Supplier base',
+        advancesPaid: formatINR(sumAdvances),
+        advancesPaidSub: 'Released payments',
+        invoicesPaid: formatINR(sumInvoices),
+        invoicesPaidSub: 'Completed Invoices',
+        dutyPaid: formatINR(sumDuties),
+        dutyPaidSub: 'Cleared duties'
+      },
+      last6MonthsActivity,
+      paymentStatusMix: statusMix,
+      currencyDistribution,
+      approvalPipeline,
+      rfqFunnel: {
+        draft: rfqDraftCount,
+        sent: 0,
+        quoted: 0,
+        awarded: rfqAwardedCount,
+        closed: 0,
+        total: rfqCount
+      },
+      blPipeline: {
+        assigned: blEntriesList.filter(b => b.status === 'assigned_to_agent').length,
+        cleared: blEntriesList.filter(b => b.status === 'custom_cleared').length,
+        invPending: blEntriesList.filter(b => b.status === 'invoice_pending').length,
+        pmtReq: blEntriesList.filter(b => b.status === 'payment_requested').length,
+        approved: blEntriesList.filter(b => b.status === 'payment_approved').length,
+        paid: blEntriesList.filter(b => ['payment_paid', 'closed'].includes(b.status)).length,
+        total: blEntriesList.length
+      },
+      recentPendingApprovals: [
+        ...pendingList.map(a => ({
+          id: a.id || a.approvalId || 'REQ-01',
+          stepText: `Step ${a.currentStep || 1}/${a.totalSteps || 1}`,
+          dateText: new Date(a.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+          type: a.type || 'Approval',
+        })),
+        ...blInvoicesList.filter(b => !approvedReg.test(b.status || '') && !(b.status || '').toLowerCase().includes('reject')).map(b => ({
+          id: b.blId || b.blNumber || b.referenceNo || 'BLI-ENTRY',
+          stepText: `Step ${b.currentStep || 1}/${b.totalSteps || 1}`,
+          dateText: new Date(b.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+          type: 'BL Freight Invoice'
+        }))
+      ].slice(0, 6),
+      recentActivity: recentActivity.slice(0, 8)
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-      return res.json({
-        success: true,
-        range,
-        stats: {
-          purchaseOrders: poCount,
-          purchaseOrdersSub: `${poCount} open`,
-          poTrend,
-          pendingApprovals: pendingCount,
-          pendingApprovalsSub: 'Awaiting action',
-          rfqs: rfqCount,
-          rfqsSub: `${rfqAwardedCount} awarded`,
-          rfqTrend,
-          blEntries: blCount,
-          blEntriesSub: `${blClearedCount} cleared`,
-          activeVendors: vendorCount,
-          activeVendorsSub: 'Supplier base',
-          advancesPaid: formatINR(sumAdvances),
-          advancesPaidSub: 'Released payments',
-          invoicesPaid: formatINR(sumInvoices),
-          invoicesPaidSub: 'Completed Invoices',
-          dutyPaid: formatINR(sumDuties),
-          dutyPaidSub: 'Cleared duties'
-        },
-        last6MonthsActivity,
-        paymentStatusMix: statusMix,
-        currencyDistribution,
-        approvalPipeline,
-        rfqFunnel: {
-          draft: rfqDraftCount,
-          sent: 0,
-          quoted: 0,
-          awarded: rfqAwardedCount,
-          closed: 0,
-          total: rfqCount
-        },
-        blPipeline: {
-          assigned: blEntriesList.filter(b => b.status === 'assigned_to_agent').length,
-          cleared: blEntriesList.filter(b => b.status === 'custom_cleared').length,
-          invPending: blEntriesList.filter(b => b.status === 'invoice_pending').length,
-          pmtReq: blEntriesList.filter(b => b.status === 'payment_requested').length,
-          approved: blEntriesList.filter(b => b.status === 'payment_approved').length,
-          paid: blEntriesList.filter(b => ['payment_paid', 'closed'].includes(b.status)).length,
-          total: blEntriesList.length
-        },
-        recentPendingApprovals: [
-          ...pendingList.map(a => ({
-            id: a.id || a.approvalId || 'REQ-01',
-            stepText: `Step ${a.currentStep || 1}/${a.totalSteps || 1}`,
-            dateText: new Date(a.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-            type: a.type || 'Approval',
-          })),
-          ...blInvoicesList.filter(b => !approvedReg.test(b.status || '') && !(b.status || '').toLowerCase().includes('reject')).map(b => ({
-            id: b.blId || b.blNumber || b.referenceNo || 'BLI-ENTRY',
-            stepText: `Step ${b.currentStep || 1}/${b.totalSteps || 1}`,
-            dateText: new Date(b.createdAt || Date.now()).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-            type: 'BL Freight Invoice'
-          }))
-        ].slice(0, 6),
-        recentActivity: recentActivity.slice(0, 8)
-      });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
+// ─── WORKFLOW PREVIEW ────────────────────────────────────────────────────────
 
-  // ─── WORKFLOW PREVIEW ────────────────────────────────────────────────────────
+router.get('/workflows/preview', async (req, res) => {
+  try {
+    const moduleType = req.query.module || 'Advance Payment';
+    const amount = Number(req.query.amount) || 0;
+    const wf = await resolveWorkflowFromDB(moduleType, amount, req.query);
+    return res.json({ success: true, workflow: wf });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-  router.get('/workflows/preview', async (req, res) => {
-    try {
-      const moduleType = req.query.module || 'Advance Payment';
-      const amount = Number(req.query.amount) || 0;
-      const wf = await resolveWorkflowFromDB(moduleType, amount, req.query);
-      return res.json({ success: true, workflow: wf });
-    } catch (err) {
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  export default router;
+export default router;

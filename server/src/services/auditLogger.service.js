@@ -69,11 +69,32 @@ export async function logAction(req, {
 
 const MUTATION_ACTIONS = { POST: 'CREATE', PUT: 'UPDATE', PATCH: 'UPDATE', DELETE: 'DELETE' };
 const firstValue = (...values) => values.find((value) => value !== undefined && value !== null && String(value).trim());
+const titleCase = (value) => String(value || 'record')
+  .replace(/[-_]+/g, ' ')
+  .replace(/\b\w/g, (character) => character.toUpperCase());
+const mutationNote = (action, entityType) => {
+  const label = titleCase(entityType);
+  if (action === 'CREATE') return `${label} created successfully.`;
+  if (action === 'UPDATE') return `${label} updated successfully.`;
+  if (action === 'DELETE') return `${label} deleted successfully.`;
+  return `${label} action completed successfully.`;
+};
 
 /** Catch-all audit coverage for successful API mutations that did not write a richer audit entry. */
 export function auditMutationMiddleware(req, res, next) {
   const action = MUTATION_ACTIONS[req.method];
   if (!action || !req.path.startsWith('/api/')) return next();
+
+  const normalizedPath = (req.originalUrl || req.path || '').toLowerCase();
+  if (
+    normalizedPath.includes('/auth/') ||
+    normalizedPath.includes('/login') ||
+    normalizedPath.includes('/logout') ||
+    normalizedPath.includes('/upload') ||
+    normalizedPath.includes('/export')
+  ) {
+    return next();
+  }
 
   req.auditRequestId = req.headers['x-request-id'] || `req-${crypto.randomUUID()}`;
   req.headers['x-request-id'] = req.auditRequestId;
@@ -98,14 +119,20 @@ export function auditMutationMiddleware(req, res, next) {
 
     setImmediate(async () => {
       try {
-        const richerAuditExists = await WorkflowAudit.exists({ requestId: req.auditRequestId, entityId: String(entityId) });
+        const richerAuditExists = await WorkflowAudit.exists({
+          $or: [
+            { requestId: req.auditRequestId },
+            { 'metadata.requestId': req.auditRequestId },
+            { entityId: String(entityId), occurredAt: { $gte: new Date(Date.now() - 5000) } }
+          ]
+        });
         if (richerAuditExists) return;
         await logAction(req, {
           eventType: `${entityType.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_${action}`,
           entityType,
           entityId,
           action,
-          reason: `${req.method} ${req.originalUrl} completed successfully`,
+          reason: mutationNote(action, entityType),
           newState: { statusCode: res.statusCode }
         });
       } catch (error) {

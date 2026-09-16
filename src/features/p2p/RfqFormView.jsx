@@ -23,31 +23,59 @@ function PoSelector({ value, onChange }) {
   const [open, setOpen] = useState(false);
   const [poList, setPoList] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const [inputVal, setInputVal] = useState(value || '');
   const ref = useRef(null);
 
-  useEffect(() => { setInputVal(value || ''); }, [value]);
+  // Keep edit/copy values in sync without erasing a new query when the user
+  // clears the previous selection by typing.
+  useEffect(() => {
+    if (value) setInputVal(String(value));
+  }, [value]);
 
   useEffect(() => {
-    async function loadPos() {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      async function loadPos() {
       try {
         setLoading(true);
-        const res = await apiFetch('/api/p2p/purchase-orders?size=100');
+        setLoadError('');
+        const params = new URLSearchParams({
+          size: '100',
+          sortBy: 'poNumber',
+          sortOrder: 'asc'
+        });
+        const query = inputVal.trim();
+        if (query) params.set('q', query);
+
+        const res = await apiFetch(`/api/p2p/purchase-orders?${params.toString()}`, {
+          signal: controller.signal
+        });
         const json = await res.json();
-        if (res.ok && json.data) {
+        if (!res.ok) throw new Error(json.error || 'Unable to load purchase orders.');
+        if (Array.isArray(json.data)) {
           setPoList(json.data.filter((po) => {
             const status = String(po.status || '').trim().toLowerCase();
             return Number(po.totalAmount) > 0 && !['closed', 'cancelled', 'canceled', 'blocked'].includes(status);
           }));
         }
       } catch (e) {
+        if (e.name === 'AbortError' || controller.signal.aborted) return;
         console.error('Fetch PO error:', e);
+        setPoList([]);
+        setLoadError(e.message || 'Unable to load purchase orders.');
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
-    }
-    loadPos();
-  }, []);
+      }
+      loadPos();
+    }, 250);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [inputVal, value]);
 
   useEffect(() => {
     const clickHandler = (e) => {
@@ -56,15 +84,6 @@ function PoSelector({ value, onChange }) {
     document.addEventListener('mousedown', clickHandler);
     return () => document.removeEventListener('mousedown', clickHandler);
   }, []);
-
-  const filtered = poList.filter(po => {
-    const q = inputVal.toLowerCase().trim();
-    if (!q) return true;
-    const num = (po.poNumber || po.sapPoNumber || po.poId || '').toLowerCase();
-    const vendor = (po.supplierName || po.vendorName || '').toLowerCase();
-    const desc = (po.description || '').toLowerCase();
-    return num.includes(q) || vendor.includes(q) || desc.includes(q);
-  });
 
   const selectedPoObj = poList.find(p => String(p.poNumber || p.sapPoNumber || p.poId) === String(value));
 
@@ -89,7 +108,7 @@ function PoSelector({ value, onChange }) {
           value={inputVal}
           onChange={(e) => {
             setInputVal(e.target.value);
-            onChange(e.target.value);
+            if (value) onChange('');
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
@@ -105,8 +124,15 @@ function PoSelector({ value, onChange }) {
 
       {open && (
         <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden max-h-64 overflow-y-auto divide-y divide-slate-100">
-          {filtered.length > 0 ? (
-            filtered.map((po) => {
+          {loading && poList.length === 0 ? (
+            <div className="p-4 text-center text-xs text-slate-500 font-medium">Searching purchase orders...</div>
+          ) : loadError ? (
+            <div className="p-4 text-center space-y-1">
+              <p className="text-xs text-rose-600 font-bold">Could not load purchase orders</p>
+              <p className="text-[10px] text-slate-500">{loadError}</p>
+            </div>
+          ) : poList.length > 0 ? (
+            poList.map((po) => {
               const num = po.poNumber || po.sapPoNumber || po.poId;
               const isSelected = String(value) === String(num);
               return (
@@ -141,7 +167,7 @@ function PoSelector({ value, onChange }) {
             })
           ) : (
             <div className="p-4 text-center space-y-2">
-              <p className="text-xs text-slate-500 font-medium">No existing PO found matching "{inputVal}"</p>
+              <p className="text-xs text-slate-500 font-medium">No eligible open PO found matching "{inputVal}"</p>
               <p className="text-[10px] font-semibold text-slate-400">Create or sync the purchase order from Purchase Order Management first.</p>
             </div>
           )}

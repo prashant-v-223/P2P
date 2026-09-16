@@ -3,7 +3,10 @@ import { apiFetch } from '../services/api';
 // downloadHelper.js - Universal Instant File Downloader (AWS S3 & Server Storage)
 export async function downloadDocumentFile(fileUrlOrName, customTitle) {
   const fileStr = String(fileUrlOrName || customTitle || 'Document.pdf').trim();
-  if (!fileStr) return;
+  if (!fileStr) {
+    window.alert('No file reference provided');
+    return;
+  }
 
   // Extract extension from file string if available
   let fileExt = '';
@@ -36,9 +39,20 @@ export async function downloadDocumentFile(fileUrlOrName, customTitle) {
     const response = await apiFetch(downloadUrl);
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.error || 'Document is not available for download.');
+      const errorMsg = payload.error || 'Document is not available for download.';
+      console.error('[Download Error]', errorMsg, payload.details);
+      window.alert(errorMsg + '\n\nThis may happen if:\n- The file was never uploaded\n- The file was deleted\n- Storage configuration is incorrect');
+      return;
     }
     const blob = await response.blob();
+    
+    // Check if blob is empty or very small (likely corrupted)
+    if (blob.size < 100) {
+      console.error('[Download Error] Downloaded file is too small (likely corrupted):', blob.size, 'bytes');
+      window.alert('Downloaded file appears to be empty or corrupted. Please contact support.');
+      return;
+    }
+    
     const objectUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = objectUrl;
@@ -47,7 +61,10 @@ export async function downloadDocumentFile(fileUrlOrName, customTitle) {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(objectUrl);
+    
+    console.log('[Download Success]', filename, `(${(blob.size / 1024).toFixed(2)} KB)`);
   } catch (error) {
-    window.alert(error.message);
+    console.error('[Download Error]', error);
+    window.alert('Failed to download document: ' + error.message);
   }
 }

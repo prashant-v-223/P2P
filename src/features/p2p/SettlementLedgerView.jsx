@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../../services/api';
-import { exportCsv } from '../../utils/exportCsv';
+import { exportSettlementLedgerCsv } from '../../utils/exportCsv';
 import { ServerPagination } from '../../components/ui/server-pagination';
 import { 
   CreditCard, 
@@ -54,18 +54,7 @@ export default function SettlementLedgerView() {
   const paginatedLedger = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const handleExportCsv = () => {
-    const formattedData = filtered.map(item => ({
-      'Payment Reference ID': item.paymentId || 'N/A',
-      'Entity Type': item.entityType || 'Payment',
-      'Beneficiary Vendor': item.vendorName || 'N/A',
-      'Disbursement Date': item.disbursedAt ? new Date(item.disbursedAt).toLocaleDateString('en-GB') : 'N/A',
-      'Payment Mode': item.paymentMode || 'NEFT',
-      'Bank UTR Number': `="${item.utrNumber || ''}"`,
-      'Gross Amount': item.grossAmount || item.netAmount || 0,
-      'Net Amount Disbursed': item.netAmount || 0,
-      'Treasury Remarks': item.paymentRemarks || item.remarks || ''
-    }));
-    exportCsv('settlement_ledger.csv', formattedData);
+    exportSettlementLedgerCsv(filtered.length > 0 ? filtered : ledger);
   };
 
   return (

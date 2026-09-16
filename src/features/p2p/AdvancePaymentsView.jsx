@@ -201,6 +201,49 @@ export default function AdvancePaymentsView() {
     }
   };
 
+  const [exporting, setExporting] = useState(false);
+
+  const handleExportCsv = async () => {
+    try {
+      setExporting(true);
+      const queryParams = new URLSearchParams({
+        export: 'true',
+        q: searchTerm,
+        status: statusFilter,
+        scope: scopeFilter,
+        sortBy,
+        sortOrder
+      });
+
+      const res = await apiFetch(`/api/p2p/advances?${queryParams.toString()}`);
+      if (res.ok) {
+        const json = await res.json();
+        const records = json.data || [];
+        if (records.length === 0) {
+          showToast({
+            title: 'No Records',
+            description: 'No advance payments found matching the current criteria.',
+            type: 'info'
+          });
+          return;
+        }
+        exportAdvancePaymentsCsv(records);
+        showToast({
+          title: 'Export Successful',
+          description: `Successfully exported all ${records.length} advance payment record${records.length === 1 ? '' : 's'} to CSV.`,
+          type: 'success'
+        });
+      } else {
+        showToast({ title: 'Export Failed', description: 'Could not export advance payments.', type: 'error' });
+      }
+    } catch (e) {
+      console.error('Export error:', e);
+      showToast({ title: 'Export Error', description: e.message, type: 'error' });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const handlePayout = (advItem) => {
     setPaidModalItem(advItem);
   };
@@ -218,8 +261,14 @@ export default function AdvancePaymentsView() {
             <Plus className="w-4 h-4" /> New Advance Payment
           </Link>
         )}
-        <button type="button" onClick={() => exportAdvancePaymentsCsv(advances)} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-2xs">
-          <Download className="h-4 w-4 text-slate-500" /> Export CSV
+        <button
+          type="button"
+          onClick={handleExportCsv}
+          disabled={exporting}
+          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-2xs transition active:scale-95 disabled:opacity-50"
+        >
+          {exporting ? <Loader2 className="h-4 w-4 animate-spin text-[#0d7676]" /> : <Download className="h-4 w-4 text-slate-500" />}
+          <span>{exporting ? 'Exporting...' : 'Export CSV'}</span>
         </button>
       </div>
 

@@ -71,13 +71,34 @@ export const CustomAgentProvider = ({ children }) => {
     localStorage.removeItem('rayzon_agent_bls');
   };
 
+  const storeDocument = async (file) => {
+    if (!file) return null;
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('folder', 'documents');
+    const res = await apiFetch('/api/p2p/upload-file', { method: 'POST', body: formData });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success || !json.fileUrl) {
+      throw new Error(json.error || 'The document could not be stored. Please try again.');
+    }
+    return {
+      fileUrl: json.fileUrl,
+      fileName: json.fileName || file.name,
+      originalFilename: json.originalName || file.name,
+      storage: json.storage
+    };
+  };
+
   const uploadBoe = async (blId, boeData) => {
     try {
+      const stored = boeData.file ? await storeDocument(boeData.file) : null;
       const res = await apiFetch('/api/p2p/customs-agent/upload-boe', {
         method: 'POST',
         body: JSON.stringify({
           blId,
-          ...boeData
+          ...boeData,
+          file: undefined,
+          ...(stored || {})
         })
       });
       const json = await res.json();
@@ -116,7 +137,8 @@ export const CustomAgentProvider = ({ children }) => {
   };
 
   const uploadCustomsDocument = async (blId, document) => {
-    const res = await apiFetch('/api/p2p/customs-agent/documents', { method: 'POST', body: JSON.stringify({ blId, ...document }) });
+    const stored = document.file ? await storeDocument(document.file) : null;
+    const res = await apiFetch('/api/p2p/customs-agent/documents', { method: 'POST', body: JSON.stringify({ blId, ...document, file: undefined, ...(stored || {}) }) });
     const json = await res.json();
     if (!res.ok || !json.success) throw new Error(json.error || 'Customs document upload failed.');
     await fetchAssignedBls(agentUser?.agentId);

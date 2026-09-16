@@ -29,6 +29,108 @@ function formatActorName(log) {
   return name;
 }
 
+function formatActionName(value) {
+  return String(value || 'Action')
+    .replace(/^(approval|invoice|advance|rfq)[_-]/i, '')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function formatAuditNote(log) {
+  const raw = String(log.remarks || log.reason || '').trim().replace(/^['"]|['"]$/g, '');
+  const action = formatActionName(log.action || log.eventType).toLowerCase();
+  if (!raw) return 'No additional note was provided.';
+  if (/^(GET|POST|PUT|PATCH|DELETE)\s+\/api\//i.test(raw)) {
+    const entity = String(log.entityType || 'record').replace(/[-_]+/g, ' ').toLowerCase();
+    if (action.includes('create')) return `${entity.replace(/^\w/, (c) => c.toUpperCase())} created successfully.`;
+    if (action.includes('update')) return `${entity.replace(/^\w/, (c) => c.toUpperCase())} updated successfully.`;
+    if (action.includes('delete')) return `${entity.replace(/^\w/, (c) => c.toUpperCase())} deleted successfully.`;
+    return 'Action completed successfully.';
+  }
+  if (/^(approve|approved)\s+by\s+/i.test(raw)) return 'Approved this request.';
+  if (/^(reject|rejected)\s+by\s+/i.test(raw)) return 'Rejected this request.';
+  if (/^(submit|submitted)\s+by\s+/i.test(raw)) return 'Submitted this request.';
+  return raw;
+}
+
+const logisticsStageNames = {
+  1: 'RFQ Published',
+  2: 'Vendor Quote',
+  3: 'Award Approval',
+  4: 'BL Submitted',
+  5: 'EXIM Review',
+  6: 'Agent Assignment',
+  7: 'Customs Clearance',
+  8: 'Invoice & Payment'
+};
+
+function getStageBadgeInfo(log) {
+  const evt = String(log.eventType || '').toUpperCase();
+  const act = String(log.action || '').toUpperCase();
+  const entityType = String(log.entityType || '').toLowerCase();
+  const entityId = String(log.entityId || '');
+  const stepNum = Number(log.step) || 0;
+
+  // Award Approval (Stage 3)
+  const isAwardApproval =
+    entityType.includes('rfq vendor award') ||
+    entityType.includes('award') ||
+    entityId.startsWith('RFQ-AWARD-') ||
+    entityId.startsWith('RFQ-REASSIGN-') ||
+    evt.includes('AWARD') ||
+    evt.includes('REASSIGN');
+
+  if (isAwardApproval) {
+    return `Stage 3 · Award Approval${stepNum > 0 ? ` (Step ${stepNum})` : ''}`;
+  }
+
+  // Stage 4: BL Submitted
+  if (evt.includes('BL_SUBMIT') || act.includes('SUBMIT BL') || evt === 'BL_SUBMITTED') {
+    return 'Stage 4 · BL Submitted';
+  }
+
+  // Stage 5: EXIM Review
+  if (evt.includes('EXIM') || act.includes('EXIM')) {
+    return 'Stage 5 · EXIM Review';
+  }
+
+  // Stage 6: Customs Agent Assignment
+  if (evt.includes('AGENT_ASSIGN') || act.includes('ASSIGN CUSTOMS') || evt === 'BL_AGENT_ASSIGNED') {
+    return 'Stage 6 · Agent Assignment';
+  }
+
+  // Stage 7: Customs Clearance / BOE
+  if (evt.includes('BOE') || evt.includes('CUSTOMS') || act.includes('BOE') || act.includes('CUSTOMS')) {
+    return 'Stage 7 · Customs Clearance';
+  }
+
+  // Stage 8: Invoice & Payment
+  if (evt.includes('INVOICE') || evt.includes('PAYMENT') || entityType.includes('invoice') || entityType.includes('payment')) {
+    return 'Stage 8 · Invoice & Payment';
+  }
+
+  // Stage 2: Vendor Quote
+  if (evt.includes('QUOTE') || act.includes('QUOTE') || entityType.includes('quote')) {
+    return 'Stage 2 · Vendor Quote';
+  }
+
+  // Stage 1: RFQ Published / Created
+  if (evt.includes('RFQ') && (evt.includes('CREATE') || evt.includes('PUBLISH') || act.includes('CREATE') || act.includes('PUBLISH'))) {
+    return 'Stage 1 · RFQ Published';
+  }
+
+  if (stepNum >= 1 && stepNum <= 8 && logisticsStageNames[stepNum]) {
+    return `Stage ${stepNum} · ${logisticsStageNames[stepNum]}`;
+  }
+
+  if (stepNum > 0) {
+    return `Step ${stepNum}`;
+  }
+
+  return null;
+}
+
 export default function RecordDbInfoDrawer({ entityId, entityType, recordData }) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('audit'); // 'audit' | 'db'
@@ -36,6 +138,7 @@ export default function RecordDbInfoDrawer({ entityId, entityType, recordData })
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [jsonFilter, setJsonFilter] = useState('');
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     if (isOpen && entityId) {
@@ -46,15 +149,46 @@ export default function RecordDbInfoDrawer({ entityId, entityType, recordData })
   const fetchAuditLogs = async () => {
     try {
       setLoading(true);
+      setLoadError('');
       const queryId = recordData?.invoiceNumber || recordData?.invoicePaymentId || recordData?.advanceId || recordData?.rfqId || recordData?.rfqNumber || recordData?.poNumber || entityId;
       const res = await apiFetch(`/api/p2p/audit/${queryId}`);
       if (res.ok) {
         const json = await res.json();
         const rawLogs = json.auditLogs || [];
 
-        // Preserve all distinct step approvals and deduplicate only exact identical calls (same step, actor, and action within 3s)
+        const isGenericMiddleware = (log) => {
+          const evt = String(log.eventType || '').toUpperCase();
+          const act = String(log.action || '').toUpperCase();
+          const rsn = String(log.remarks || log.reason || '').trim();
+          if (/^(RFQS|VENDOR_RFQS|SYSTEM|DOCUMENTS|UPLOAD_FILE|AUTH)_CREATE$/i.test(evt) || act === 'CREATE') {
+            if (
+              /created successfully\.?$/i.test(rsn) ||
+              /completed successfully\.?$/i.test(rsn) ||
+              /^(GET|POST|PUT|PATCH|DELETE)\s+\/api\//i.test(rsn) ||
+              (log.newState && log.newState.statusCode === 200 && !log.newState.status)
+            ) {
+              return true;
+            }
+          }
+          if (/^(GET|POST|PUT|PATCH|DELETE)\s+\/api\//i.test(rsn)) return true;
+          return false;
+        };
+
+        const cleanLogs = rawLogs.filter((log) => {
+          if (isGenericMiddleware(log)) return false;
+          if (log.eventType === 'APPROVAL_SUBMITTED' || (log.action || '').toLowerCase() === 'submit') {
+            const hasRichAward = rawLogs.some((other) =>
+              (other.eventType === 'RFQ_AWARD_APPROVAL_REQUESTED' || other.eventType === 'RFQ_REASSIGNMENT_APPROVAL_REQUESTED') &&
+              String(other.entityId) === String(log.entityId)
+            );
+            if (hasRichAward) return false;
+          }
+          return true;
+        });
+
+        // Preserve all distinct step approvals and deduplicate only exact identical calls (same step, actor, and action within 10s)
         const dedupped = [];
-        for (const log of rawLogs) {
+        for (const log of cleanLogs) {
           const logAction = String(log.action || log.eventType || '').toLowerCase().trim();
           const logTime = new Date(log.createdAt || log.occurredAt || log.timestamp || 0).getTime();
           const logStep = Number(log.step || 0);
@@ -69,9 +203,10 @@ export default function RecordDbInfoDrawer({ entityId, entityType, recordData })
             const sameAction = logAction === itemAction;
             const sameStep = logStep > 0 && itemStep > 0 ? logStep === itemStep : true;
             const sameActor = logActor && itemActor ? logActor === itemActor : true;
-            const closeInTime = Math.abs(logTime - itemTime) < 3000;
+            const sameEntity = !log.entityId || !item.entityId || String(log.entityId) === String(item.entityId);
+            const closeInTime = Math.abs(logTime - itemTime) < 10000;
 
-            return sameAction && sameStep && sameActor && closeInTime;
+            return sameAction && sameStep && sameActor && sameEntity && closeInTime;
           });
 
           if (!isDuplicate) {
@@ -83,6 +218,7 @@ export default function RecordDbInfoDrawer({ entityId, entityType, recordData })
       }
     } catch (e) {
       console.error('Error fetching audit trail:', e);
+      setLoadError(e.message || 'Audit history could not be loaded.');
     } finally {
       setLoading(false);
     }
@@ -144,7 +280,7 @@ export default function RecordDbInfoDrawer({ entityId, entityType, recordData })
                 }`}
               >
                 <History className="w-3.5 h-3.5" />
-                Audit History ({auditLogs.length})
+                Audit History <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px]">{auditLogs.length}</span>
               </button>
 
               <button
@@ -168,6 +304,12 @@ export default function RecordDbInfoDrawer({ entityId, entityType, recordData })
                     <div className="py-12 text-center text-slate-400 text-xs flex flex-col items-center justify-center gap-2">
                       <Clock className="w-5 h-5 animate-spin text-teal-600" />
                       Loading audit logs...
+                    </div>
+                  ) : loadError ? (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700">
+                      <p className="font-bold">Unable to load audit history</p>
+                      <p className="mt-1">{loadError}</p>
+                      <button type="button" onClick={fetchAuditLogs} className="mt-3 rounded-lg bg-rose-700 px-3 py-1.5 font-bold text-white">Try again</button>
                     </div>
                   ) : auditLogs.length === 0 ? (
                     <div className="py-12 text-center text-slate-400 text-xs space-y-1">
@@ -207,7 +349,7 @@ export default function RecordDbInfoDrawer({ entityId, entityType, recordData })
                             <span className="absolute -left-6 top-1 w-2.5 h-2.5 rounded-full bg-teal-600 ring-4 ring-white" />
                             <div className="flex items-center justify-between">
                               <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase border ${colorClass}`}>
-                                {log.action || log.eventType || 'ACTION'}
+                                {formatActionName(log.action || log.eventType)}
                               </span>
                               <span className="text-[10px] font-mono font-bold text-slate-500">
                                 {(() => {
@@ -227,11 +369,24 @@ export default function RecordDbInfoDrawer({ entityId, entityType, recordData })
                               <span className="text-slate-500 font-normal">({actorRoleFormatted})</span>
                             </p>
 
-                            {log.remarks || log.reason ? (
-                              <p className="text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100 italic">
-                                "{log.remarks || log.reason}"
-                              </p>
-                            ) : null}
+                            <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-semibold text-slate-500">
+                              <span className="rounded bg-slate-100 px-1.5 py-0.5">{log.entityType || entityType || 'Record'}</span>
+                              <span className="max-w-[280px] truncate font-mono" title={log.entityId || entityId}>{log.entityId || entityId}</span>
+                              {(() => {
+                                const badgeText = getStageBadgeInfo(log);
+                                if (!badgeText) return null;
+                                return (
+                                  <span className="rounded bg-teal-50 px-1.5 py-0.5 font-bold text-teal-700">
+                                    {badgeText}
+                                  </span>
+                                );
+                              })()}
+                            </div>
+
+                            <div className="rounded-lg border border-slate-100 bg-slate-50 p-2 text-slate-600">
+                              <span className="mb-0.5 block text-[9px] font-bold uppercase tracking-wide text-slate-400">Note</span>
+                              <p>{formatAuditNote(log)}</p>
+                            </div>
                           </div>
                         );
                       })}

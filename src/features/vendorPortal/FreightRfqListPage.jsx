@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ClipboardList, Search } from 'lucide-react';
+import { AlertCircle, ClipboardList, Loader2, RefreshCw, Search } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { CustomSelect } from '../../components/ui/custom-select';
 import { ServerPagination } from '../../components/ui/server-pagination';
@@ -17,6 +17,7 @@ export default function FreightRfqListPage() {
   const [error, setError] = useState('');
   const [page, setPage] = useState(urlPage);
   const [pageSize, setPageSize] = useState(10);
+  const [loading, setLoading] = useState(true);
 
   // Sync state changes to URL query parameters
   useEffect(() => {
@@ -27,15 +28,22 @@ export default function FreightRfqListPage() {
     setSearchParams(params, { replace: true });
   }, [status, search, page, setSearchParams]);
 
-  useEffect(() => {
-    apiFetch('/api/p2p/vendor-rfqs')
-      .then((r) => r.json())
-      .then((j) => {
-        if (j.success) setRfqs(j.data || []);
-        else setError(j.error || 'Unable to load assigned RFQs.');
-      })
-      .catch((err) => setError(err.message));
-  }, []);
+  const loadRfqs = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const response = await apiFetch('/api/p2p/vendor-rfqs');
+      const json = await response.json();
+      if (!response.ok || !json.success) throw new Error(json.error || 'Unable to load assigned RFQs.');
+      setRfqs(json.data || []);
+    } catch (err) {
+      setError(err.message || 'Unable to load assigned RFQs.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadRfqs(); }, []);
 
   const filtered = useMemo(() => rfqs.filter((rfq) => {
     const q = search.toLowerCase();
@@ -77,7 +85,14 @@ export default function FreightRfqListPage() {
         </p>
       </div>
 
-      {error && <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs font-semibold text-rose-700">{error}</div>}
+      {error && (
+        <div className="flex flex-col gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="flex items-center gap-2 text-xs font-semibold text-rose-700"><AlertCircle className="h-4 w-4 shrink-0" />{error}</p>
+          <button type="button" onClick={loadRfqs} className="inline-flex w-fit items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-bold text-white">
+            <RefreshCw className="h-3.5 w-3.5" /> Try again
+          </button>
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xs">
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-b border-slate-100 p-4 bg-slate-50/50">
@@ -199,14 +214,20 @@ export default function FreightRfqListPage() {
             </tbody>
           </table>
 
-          {filtered.length === 0 && (
+          {loading ? (
+            <div className="p-12 text-center" role="status" aria-live="polite">
+              <Loader2 className="mx-auto mb-3 h-7 w-7 animate-spin text-[#0d7676]" />
+              <p className="text-sm font-bold text-slate-700">Loading assigned RFQs</p>
+              <p className="mt-1 text-xs font-medium text-slate-400">Checking for the latest quotations and awards...</p>
+            </div>
+          ) : !error && filtered.length === 0 && (
             <div className="p-12 text-center text-xs text-slate-400 font-semibold">
-              No RFQs found.
+              {search || status !== 'All' ? 'No RFQs match your search or status filter.' : 'No RFQs are currently assigned to you.'}
             </div>
           )}
         </div>
 
-        <ServerPagination
+        {!loading && !error && <ServerPagination
           page={page}
           totalPages={Math.ceil(filtered.length / pageSize) || 1}
           total={filtered.length}
@@ -214,7 +235,7 @@ export default function FreightRfqListPage() {
           itemLabel="RFQs"
           onPageChange={(p) => setPage(p)}
           onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
-        />
+        />}
       </div>
     </div>
   );

@@ -801,7 +801,9 @@ export const processApprovalAction = async (req, res) => {
       ? { assignedApprover: null, assignedApproverName: null, assignedApproverRole: null }
       : await getStepAssignment(approval, newStep);
 
-    const actionRemarks = (req.body.remarks || '').trim() || `${rawAction.charAt(0).toUpperCase() + rawAction.slice(1)} by ${actingUser}`;
+    const actionVerb = rawAction === 'approve' ? 'approved' : rawAction === 'reject' ? 'rejected' : 'returned for correction';
+    const actionRemarks = (req.body.remarks || '').trim()
+      || `${approval.type || 'Request'} ${approval.id} was ${actionVerb} at step ${approval.currentStep || 1}.`;
 
     // ── Audit History Log ─────────────────────────────────────────────────
     const previousState = { status: approval.status, currentStep: approval.currentStep, version: approval.version || 0 };
@@ -850,7 +852,7 @@ export const processApprovalAction = async (req, res) => {
         actorRole: actingRole,
         entityType: approval.type,
         entityId: approval.id,
-        workflowId: approval.workflowId,
+        workflowId: approval.transactionSnapshot?.rfqId || approval.transactionSnapshot?.blId || approval.workflowId,
         workflowVersion: approval.workflowVersion || 1,
         step: actionRecord.step,
         action: rawAction,

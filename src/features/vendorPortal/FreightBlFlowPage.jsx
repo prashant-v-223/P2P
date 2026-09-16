@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, CheckCircle2, FileText, Loader2, Plus, Ship, Search, Filter, FileCheck, Download } from 'lucide-react';
+import { AlertCircle, ArrowLeft, CheckCircle2, FileText, Loader2, Plus, Ship, Search, Filter, FileCheck, Download, RefreshCw, UserRound, CalendarClock, BadgeCheck, MessageSquareText, Files, ReceiptText, LockKeyhole } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import { CustomSelect } from '../../components/ui/custom-select';
@@ -11,9 +11,28 @@ import { downloadDocumentFile } from '../../utils/downloadHelper';
 import { formatCurrencyINR } from '../../utils/currencyHelper';
 
 const inputClass = 'w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-medium outline-none focus:border-teal-400 focus:bg-white focus:ring-2 focus:ring-teal-100';
-const statusLabel = (value) => ({ submitted: 'Submitted', exim_review: 'EXIM Review', assigned_to_agent: 'With Customs Agent', custom_cleared: 'Customs Cleared', invoice_pending: 'Invoice Pending' }[value] || String(value || '').replaceAll('_', ' '));
+const statusLabel = (value) => ({ submitted: 'Submitted', exim_review: 'EXIM Review', assigned_to_agent: 'With Customs Agent', material_received: 'Material Received', custom_cleared: 'Customs Cleared', invoice_pending: 'Invoice Pending', payment_requested: 'Payment Requested', payment_approved: 'Payment Approved', payment_paid: 'Payment Paid', closed: 'Closed' }[value] || String(value || '').replaceAll('_', ' '));
+const clearedBlStatuses = ['custom_cleared', 'invoice_pending', 'payment_requested', 'payment_approved', 'payment_paid', 'closed'];
+const formatDateTime = (value) => value ? new Date(value).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Not yet';
+const blStatusTone = (value) => ({
+  submitted: 'bg-sky-50 border-sky-200 text-sky-700',
+  exim_review: 'bg-amber-50 border-amber-200 text-amber-800',
+  assigned_to_agent: 'bg-violet-50 border-violet-200 text-violet-700',
+  material_received: 'bg-indigo-50 border-indigo-200 text-indigo-700',
+  custom_cleared: 'bg-emerald-50 border-emerald-200 text-emerald-800'
+}[value] || 'bg-slate-50 border-slate-200 text-slate-700');
 
 function ErrorBox({ children }) { return children ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700"><AlertCircle className="mr-2 inline h-4 w-4" />{children}</div> : null; }
+
+function PageLoader({ label }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center shadow-2xs" role="status" aria-live="polite">
+      <Loader2 className="mx-auto mb-3 h-7 w-7 animate-spin text-[#0d7676]" />
+      <p className="text-sm font-bold text-slate-700">{label}</p>
+      <p className="mt-1 text-xs text-slate-400">Please wait while we retrieve the latest shipment data.</p>
+    </div>
+  );
+}
 
 export function FreightBlEntriesPage() {
   const { id } = useParams();
@@ -23,16 +42,24 @@ export function FreightBlEntriesPage() {
   const [statusFilter, setStatusFilter] = useState('All');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    apiFetch(`/api/p2p/vendor-rfqs/${id}/bl-entries`)
-      .then(async (r) => ({ ok: r.ok, ...(await r.json()) }))
-      .then((j) => {
-        if (!j.ok || !j.success) throw new Error(j.error);
-        setData(j.data);
-      })
-      .catch((e) => setError(e.message));
-  }, [id]);
+  const loadEntries = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const response = await apiFetch(`/api/p2p/vendor-rfqs/${id}/bl-entries`);
+      const json = await response.json();
+      if (!response.ok || !json.success) throw new Error(json.error || 'Unable to load BL entries.');
+      setData(json.data);
+    } catch (e) {
+      setError(e.message || 'Unable to load BL entries.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadEntries(); }, [id]);
 
   const filteredEntries = useMemo(() => {
     if (!data?.entries) return [];
@@ -48,8 +75,15 @@ export function FreightBlEntriesPage() {
     return filteredEntries.slice((page - 1) * pageSize, page * pageSize);
   }, [filteredEntries, page, pageSize]);
 
-  if (error) return <ErrorBox>{error}</ErrorBox>;
-  if (!data) return <div className="p-10 text-center text-xs text-slate-500"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-[#0d7676]" />Loading BL entries...</div>;
+  if (loading && !data) return <PageLoader label="Loading BL entries" />;
+  if (error && !data) return (
+    <div className="space-y-3">
+      <ErrorBox>{error}</ErrorBox>
+      <button type="button" onClick={loadEntries} className="inline-flex items-center gap-2 rounded-xl bg-[#0d7676] px-4 py-2 text-xs font-black text-white">
+        <RefreshCw className="h-3.5 w-3.5" /> Try again
+      </button>
+    </div>
+  );
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 pb-10 font-sans antialiased text-left">
@@ -104,9 +138,10 @@ export function FreightBlEntriesPage() {
             <input
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-              placeholder="Search reference, vendor..."
-              className="w-full rounded-xl border border-slate-200 bg-white py-2 px-3 text-xs font-medium outline-none focus:border-[#0d7676] focus:ring-2 focus:ring-teal-100 transition"
+              placeholder="Search BL or ASN number..."
+              className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs font-medium outline-none focus:border-[#0d7676] focus:ring-2 focus:ring-teal-100 transition"
             />
+            <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
           </div>
           <div className="w-full sm:w-44">
             <CustomSelect
@@ -149,8 +184,8 @@ export function FreightBlEntriesPage() {
                       {statusLabel(entry.status)}
                     </span>
                   </td>
-                  <td className="p-3.5 text-center font-semibold text-slate-600">{entry.documents?.length || 1} files</td>
-                  <td className="p-3.5 text-center font-semibold text-slate-600">{entry.invoices?.length || 1}</td>
+                  <td className="p-3.5 text-center font-semibold text-slate-600">{entry.documents?.length || 0} files</td>
+                  <td className="p-3.5 text-center font-semibold text-slate-600">{entry.invoices?.length || 0}</td>
                   <td className="p-3.5 font-semibold text-slate-500">{new Date(entry.createdAt).toLocaleDateString('en-CA')}</td>
                   <td className="p-3.5 text-center">
                     <Link
@@ -167,7 +202,7 @@ export function FreightBlEntriesPage() {
 
           {filteredEntries.length === 0 && (
             <div className="p-12 text-center text-xs text-slate-400 font-semibold">
-              No BL entries submitted yet.
+              {search || statusFilter !== 'All' ? 'No BL entries match your filters.' : 'No BL entries submitted yet.'}
             </div>
           )}
 
@@ -200,17 +235,20 @@ export function FreightBlCreatePage() {
   const [files, setFiles] = useState([]);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [summaryLoading, setSummaryLoading] = useState(true);
 
   useEffect(() => {
     apiFetch(`/api/p2p/vendor-rfqs/${id}/bl-entries`)
       .then((r) => r.json())
       .then((j) => (j.success ? setSummary(j.data) : setError(j.error)))
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(e.message))
+      .finally(() => setSummaryLoading(false));
   }, [id]);
 
   const [fieldErrors, setFieldErrors] = useState({});
   const [asnValidating, setAsnValidating] = useState(false);
   const [asnValidatedSuccess, setAsnValidatedSuccess] = useState(false);
+  const [asnValidationMessage, setAsnValidationMessage] = useState('');
   const requiresAsn = summary?.requiresAsn !== false;
 
   const handleAsnBlur = async () => {
@@ -237,19 +275,24 @@ export function FreightBlCreatePage() {
       const res = await apiFetch(`/api/p2p/validate-asn?asnNumber=${encodeURIComponent(cleanAsn)}&rfqId=${encodeURIComponent(id || '')}`);
       const j = await res.json();
       if (!j.valid) {
-        setFieldErrors((prev) => ({ ...prev, asnNumber: j.error || `ASN Number "${cleanAsn}" has already been used for a BL entry.` }));
+        setFieldErrors((prev) => ({ ...prev, asnNumber: j.error || `ASN Number "${cleanAsn}" could not be validated.` }));
         setAsnValidatedSuccess(false);
+        setAsnValidationMessage('');
       } else {
         setFieldErrors((prev) => ({ ...prev, asnNumber: '' }));
         setAsnValidatedSuccess(true);
+        setAsnValidationMessage(j.message || 'ASN matched to the linked purchase order.');
       }
     } catch (e) {
       setFieldErrors((prev) => ({ ...prev, asnNumber: e.message }));
       setAsnValidatedSuccess(false);
+      setAsnValidationMessage('');
     } finally {
       setAsnValidating(false);
     }
   };
+
+  if (summaryLoading) return <PageLoader label="Loading shipment allocation" />;
 
   const submit = async (event) => {
     event.preventDefault();
@@ -303,7 +346,12 @@ export function FreightBlCreatePage() {
           blNumber: cleanBl,
           asnNumber: cleanAsn,
           containerCount: count,
-          documents: files.map((file) => ({ docType: 'Bill of Lading', fileName: file.name }))
+          documents: files.map((file) => ({
+            docType: 'Bill of Lading',
+            fileName: file.name || file.fileName || 'BL_Document.pdf',
+            fileUrl: file.fileUrl || file.s3Key || file.name,
+            originalFilename: file.name || file.originalName
+          }))
         })
       });
       const json = await response.json();
@@ -404,6 +452,7 @@ export function FreightBlCreatePage() {
                   onChange={(e) => {
                     setForm({ ...form, asnNumber: e.target.value });
                     setAsnValidatedSuccess(false);
+                    setAsnValidationMessage('');
                     if (fieldErrors.asnNumber) setFieldErrors({ ...fieldErrors, asnNumber: '' });
                   }}
                   onBlur={handleAsnBlur}
@@ -421,13 +470,18 @@ export function FreightBlCreatePage() {
                 )}
                 {asnValidatedSuccess && !asnValidating && (
                   <div className="absolute right-3 top-2.5 flex items-center gap-1 text-[11px] font-extrabold text-emerald-600">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Available
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Valid
                   </div>
                 )}
               </div>
               {fieldErrors.asnNumber && (
                 <p className="text-[11px] font-semibold text-rose-600 mt-1 flex items-center gap-1">
                   <AlertCircle className="w-3 h-3 shrink-0" /> {fieldErrors.asnNumber}
+                </p>
+              )}
+              {asnValidatedSuccess && asnValidationMessage && (
+                <p className="mt-1 flex items-start gap-1 text-[11px] font-semibold text-emerald-700">
+                  <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" /> {asnValidationMessage}
                 </p>
               )}
             </div>
@@ -522,6 +576,7 @@ export function FreightBlCreatePage() {
 export function FreightBlDetailPage() {
   const { id, blId } = useParams();
   const { showToast } = useToast();
+  const [downloadingDocument, setDownloadingDocument] = useState('');
   const [entry, setEntry] = useState(null);
   const [error, setError] = useState('');
   const [showInvoiceForm, setShowInvoiceForm] = useState(false);
@@ -537,36 +592,74 @@ export function FreightBlDetailPage() {
   const [invoiceFile, setInvoiceFile] = useState(null);
   const [saving, setSaving] = useState(false);
 
+  const loadEntry = async () => {
+    setError('');
+    setEntry(null);
+    try {
+      const response = await apiFetch(`/api/p2p/vendor-rfqs/${id}/bl-entries/${blId}`);
+      const json = await response.json();
+      if (!response.ok || !json.success) throw new Error(json.error || 'Unable to load this BL entry.');
+      setEntry(json.data);
+    } catch (e) { setError(e.message || 'Unable to load this BL entry.'); }
+  };
+
+  useEffect(() => { loadEntry(); }, [id, blId]);
+
   useEffect(() => {
-    apiFetch(`/api/p2p/vendor-rfqs/${id}/bl-entries/${blId}`)
-      .then(async (r) => ({ ok: r.ok, ...(await r.json()) }))
-      .then((j) => {
-        if (!j.ok || !j.success) throw new Error(j.error);
-        setEntry(j.data);
-      })
-      .catch((e) => setError(e.message));
-  }, [id, blId]);
+    if (!showInvoiceForm) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape' && !saving) setShowInvoiceForm(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [showInvoiceForm, saving]);
 
   const steps = useMemo(() => [
     { key: 'submitted', title: 'Submitted', sub: 'BL entry created' },
     { key: 'exim_review', title: 'Exim Review', sub: 'Under Exim team review' },
     { key: 'assigned_to_agent', title: 'With Agent', sub: 'Customs agent assigned' },
+    { key: 'material_received', title: 'Material Received', sub: 'Shipment receipt confirmed' },
     { key: 'custom_cleared', title: 'Customs Cleared', sub: 'Ready for invoicing' }
   ], []);
 
   const submitInvoice = async (event) => {
     event.preventDefault();
     setError('');
+    if (!invoice.invoiceType) return setError('Select an invoice type.');
     if (!invoice.invoiceNumber.trim() || !(Number(invoice.amount) > 0)) {
       return setError('Enter a valid invoice number and positive amount.');
     }
     if (!invoiceFile) {
       return setError('Attach supporting logistics invoice document.');
     }
+    
     setSaving(true);
     try {
-      const fileNameTarget = invoiceFile?.s3Key || invoiceFile?.fileUrl || invoiceFile?.name || 'Invoice_Document.pdf';
-      const fileUrlTarget = invoiceFile?.fileUrl || invoiceFile?.s3Key || invoiceFile?.name || 'Invoice_Document.pdf';
+      // Handle both single file object and array of files
+      const fileObj = Array.isArray(invoiceFile) ? invoiceFile[0] : invoiceFile;
+      
+      console.log('[Invoice Submit] fileObj:', fileObj);
+      
+      if (!fileObj) {
+        throw new Error('No file selected. Please upload a file first.');
+      }
+      
+      // Extract file URL and name from the file object
+      const fileUrlTarget = fileObj.fileUrl || fileObj.s3Key || fileObj.fileName || fileObj.name;
+      const fileNameTarget = fileObj.name || fileObj.fileName || fileObj.originalName || 'Invoice_Document.pdf';
+      
+      console.log('[Invoice Submit] Extracted:', { fileUrlTarget, fileNameTarget });
+      
+      if (!fileUrlTarget) {
+        console.error('[Invoice Submit] File object missing URL:', fileObj);
+        throw new Error('File was not uploaded to storage. Please wait for upload to complete (look for "Attached" badge) and try again.');
+      }
+      
       const docTypeLabel = invoice.invoiceType === 'freight' ? 'Freight Invoice' : invoice.invoiceType === 'destination_charges' ? 'Destination Charges (Shipping Line)' : invoice.invoiceType === 'detention' ? 'Detention & Storage' : invoice.invoiceType === 'agency_fee' ? 'Agency Fee' : 'Logistics Document';
 
       const response = await apiFetch(`/api/p2p/vendor-rfqs/${id}/bl-entries/${blId}/invoices`, {
@@ -576,7 +669,14 @@ export function FreightBlDetailPage() {
           amount: Number(invoice.amount),
           fileName: fileNameTarget,
           fileUrl: fileUrlTarget,
-          documents: [{ docType: docTypeLabel, fileName: fileNameTarget, fileUrl: fileUrlTarget, uploadedBy: 'Vendor' }]
+          documents: [{ 
+            docType: docTypeLabel, 
+            fileName: fileNameTarget, 
+            fileUrl: fileUrlTarget,
+            filePath: fileUrlTarget,
+            originalFilename: fileNameTarget,
+            uploadedBy: 'Vendor' 
+          }]
         })
       });
       const json = await response.json();
@@ -599,6 +699,7 @@ export function FreightBlDetailPage() {
       setShowInvoiceForm(false);
       showToast({ type: 'success', title: 'Invoice Submitted', description: 'Logistics invoice submitted for approval.' });
     } catch (e) {
+      console.error('[Invoice Submit] Error:', e);
       setError(e.message);
     } finally {
       setSaving(false);
@@ -636,14 +737,14 @@ export function FreightBlDetailPage() {
     return filteredInvoices.slice((invoicePage - 1) * invoicePageSize, invoicePage * invoicePageSize);
   }, [filteredInvoices, invoicePage, invoicePageSize]);
 
-  if (error && !entry) return <ErrorBox>{error}</ErrorBox>;
-  if (!entry) return <div className="p-10 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-[#0d7676]" /></div>;
+  if (error && !entry) return <div className="space-y-3"><ErrorBox>{error}</ErrorBox><button type="button" onClick={loadEntry} className="inline-flex items-center gap-2 rounded-xl bg-[#0d7676] px-4 py-2 text-xs font-black text-white"><RefreshCw className="h-3.5 w-3.5" />Try again</button></div>;
+  if (!entry) return <PageLoader label="Loading BL details" />;
 
-  const activeIndex = ['custom_cleared', 'invoice_pending', 'payment_requested', 'payment_approved', 'payment_paid', 'closed'].includes(entry.status)
-    ? 3
+  const activeIndex = clearedBlStatuses.includes(entry.status)
+    ? steps.length - 1
     : Math.max(0, steps.findIndex((s) => s.key === entry.status));
 
-  const canInvoice = Boolean(entry.canInvoice ?? ['custom_cleared', 'invoice_pending', 'payment_requested', 'payment_approved', 'payment_paid', 'closed'].includes(entry.status));
+  const canInvoice = Boolean(entry.canInvoice ?? clearedBlStatuses.includes(entry.status));
 
   return (
     <div className="mx-auto max-w-6xl space-y-3.5 pb-8 font-sans antialiased text-left">
@@ -665,8 +766,8 @@ export function FreightBlDetailPage() {
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-black text-slate-900 tracking-tight">{entry.blNumber}</h1>
-              <span className="rounded-full bg-emerald-50 border border-emerald-200/80 px-2.5 py-0.5 text-[11px] font-black text-emerald-800 shadow-2xs">
+              <h1 className="text-2xl font-black text-slate-900 tracking-tight">{entry.blNumber}</h1>
+              <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-black shadow-2xs ${blStatusTone(entry.status)}`}>
                 {statusLabel(entry.status)}
               </span>
             </div>
@@ -702,8 +803,8 @@ export function FreightBlDetailPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-3.5 sm:p-4 shadow-2xs space-y-3">
         <div className="flex items-center justify-between border-b border-slate-100 pb-2">
           <div className="flex items-center gap-2">
-            <h2 className="text-[11px] font-black uppercase tracking-wider text-slate-900">BL ENTRY PROGRESS</h2>
-            <span className="text-[10px] font-mono font-bold text-slate-400">
+            <h2 className="text-xs font-black uppercase tracking-wider text-slate-900">BL Entry Progress</h2>
+            <span className="text-[11px] font-mono font-bold text-slate-400">
               Stage {activeIndex + 1} of {steps.length}
             </span>
           </div>
@@ -724,7 +825,7 @@ export function FreightBlDetailPage() {
         {/* 4-Stage Stepper Track */}
         <div className="overflow-x-auto scrollbar-thin">
           <div className="min-w-[540px] relative px-1 py-1">
-            <div className="grid grid-cols-4 relative text-center">
+            <div className="grid grid-cols-5 relative text-center">
               {steps.map((step, idx) => {
                 const isDone = idx <= activeIndex;
                 const isLineActive = idx < activeIndex;
@@ -771,87 +872,120 @@ export function FreightBlDetailPage() {
         {/* BL DETAILS CARD (lg:col-span-6) */}
         <section className="lg:col-span-6 rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs flex flex-col justify-between space-y-2.5">
           <div className="space-y-2.5">
-            <h2 className="text-[10px] font-black uppercase text-slate-400 tracking-wider">BL DETAILS</h2>
+            <h2 className="flex items-center gap-2 text-xs font-black uppercase text-slate-900 tracking-wider"><FileText className="h-4 w-4 text-[#0d7676]" />BL Details</h2>
 
-            <div className="grid grid-cols-2 gap-3 text-xs border-b border-slate-100 pb-2.5">
-              <div>
-                <span className="text-slate-400 font-bold block text-[10px]">Assigned To</span>
-                <span className="font-extrabold text-slate-800 mt-0.5 block text-xs">{entry.assignedDate || '03 Aug 2026'}</span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs border-b border-slate-100 pb-3">
+              <div className="flex items-start gap-2.5 rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-violet-600" />
+                <div><span className="text-slate-400 font-bold block text-[10px] uppercase tracking-wide">Customs Agent</span>
+                <span className="font-extrabold text-slate-800 mt-0.5 block text-xs">{entry.customAgentName || entry.customAgentAgencyName || 'Not assigned'}</span></div>
               </div>
-              <div>
-                <span className="text-slate-400 font-bold block text-[10px]">Customs Cleared</span>
-                <span className="font-extrabold text-slate-800 mt-0.5 block text-xs">{entry.customsClearedDate || '03 Aug 2026'}</span>
+              <div className="flex items-start gap-2.5 rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                <div><span className="text-slate-400 font-bold block text-[10px] uppercase tracking-wide">Customs Cleared</span>
+                <span className="font-extrabold text-slate-800 mt-0.5 block text-xs">{formatDateTime(entry.customsClearedAt || entry.customsClearedDate)}</span></div>
+              </div>
+              <div className="flex items-start gap-2.5 rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+                <div><span className="text-slate-400 font-bold block text-[10px] uppercase tracking-wide">Submitted</span>
+                <span className="font-extrabold text-slate-800 mt-0.5 block text-xs">{formatDateTime(entry.createdAt)}</span></div>
+              </div>
+              <div className="flex items-start gap-2.5 rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <div><span className="text-slate-400 font-bold block text-[10px] uppercase tracking-wide">Assigned On</span>
+                <span className="font-extrabold text-slate-800 mt-0.5 block text-xs">{formatDateTime(entry.assignedAt || entry.assignedDate)}</span></div>
               </div>
             </div>
 
             <div className="space-y-2">
               <div>
-                <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider block mb-0.5">Exim Notes</span>
+                <span className="flex items-center gap-1.5 text-[10px] font-extrabold text-slate-500 uppercase tracking-wider mb-1"><MessageSquareText className="h-3.5 w-3.5 text-sky-600" />EXIM Notes</span>
                 <div className="p-2 bg-sky-50/70 border border-sky-100 rounded-lg text-xs font-semibold text-sky-900">
                   {entry.eximNotes || 'No notes provided by EXIM team.'}
                 </div>
               </div>
 
               <div>
-                <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider block mb-0.5">Agent Notes</span>
-                <div className="p-2 bg-emerald-50/70 border border-emerald-100 rounded-lg text-xs font-semibold text-emerald-900">
-                  {entry.agentNotes || 'Customs clearance processed successfully.'}
+                <span className="flex items-center gap-1.5 text-[10px] font-extrabold text-slate-500 uppercase tracking-wider mb-1"><MessageSquareText className="h-3.5 w-3.5 text-violet-600" />Agent Notes</span>
+                <div className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-600">
+                  {entry.agentNotes || 'No notes provided by the customs agent.'}
                 </div>
               </div>
             </div>
           </div>
         </section>
 
-        {/* DOCUMENTS TABLE CARD (lg:col-span-6) */}
-        <section className="lg:col-span-6 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs flex flex-col justify-between">
-          <div>
-            <div className="px-3.5 py-2.5 border-b border-slate-100 flex items-center justify-between bg-white">
-              <h2 className="text-[11px] font-black text-slate-900 uppercase tracking-wider">
-                Documents ({entry.documents?.length || 1})
+        {/* DOCUMENTS CARD */}
+        <section className="lg:col-span-6 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs">
+          <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/50 px-4 py-3">
+            <div>
+              <h2 className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-slate-900">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-teal-50 text-[#0d7676]"><Files className="h-4 w-4" /></span>
+                Documents
+                <span className="rounded-full bg-slate-200/70 px-2 py-0.5 text-[10px] text-slate-600">{entry.documents?.length || 0}</span>
               </h2>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 border-b border-slate-100 text-[9px] font-black uppercase text-slate-400 tracking-wider">
-                  <tr>
-                    <th className="px-3.5 py-2">TYPE</th>
-                    <th className="px-3.5 py-2">UPLOADED BY</th>
-                    <th className="px-3.5 py-2">FILENAME</th>
-                    <th className="px-3.5 py-2">DATE</th>
-                    <th className="px-3.5 py-2 text-right">ACTION</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-800 font-medium">
-                  {(entry.documents && entry.documents.length > 0 ? entry.documents : [
-                    { docType: 'Bill of Lading', uploadedBy: 'You', fileName: 'BL_Shipping_Document.pdf', date: '03 Aug 2026, 11:58 am' }
-                  ]).map((doc, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/60 transition">
-                      <td className="px-3.5 py-2 font-bold text-slate-900">{doc.docType}</td>
-                      <td className="px-3.5 py-2 font-bold text-amber-600">{doc.uploadedBy || 'You'}</td>
-                      <td className="px-3.5 py-2 font-mono text-slate-500 max-w-[130px] truncate">{doc.fileUrl || doc.fileName}</td>
-                      <td className="px-3.5 py-2 text-slate-400 font-semibold text-[10px]">{doc.date || '03 Aug 2026, 11:58 am'}</td>
-                      <td className="px-3.5 py-2 text-right">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const fileName = doc.fileUrl || doc.fileName || 'Document.pdf';
-                            showToast({ title: 'Downloading Document', description: `Initiating download for ${fileName}...`, type: 'info' });
-                            downloadDocumentFile(fileName);
-                          }}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-[#0d7676] font-extrabold text-[11px] border border-teal-200 transition cursor-pointer"
-                          title="Download document"
-                        >
-                          <Download className="w-3 h-3" />
-                          <span>Download</span>
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <p className="ml-9 mt-0.5 text-[10px] font-medium text-slate-400">Shipment and customs-clearance files</p>
             </div>
           </div>
+
+          {(entry.documents || []).length > 0 ? (
+            <div className="divide-y divide-slate-100">
+              {(entry.documents || []).map((doc, idx) => {
+                const documentKey = doc._id || `${doc.fileUrl || doc.fileName}-${idx}`;
+                const downloadTarget = doc.fileUrl || doc.filePath || doc.fileName;
+                const displayName = doc.originalFilename || doc.fileName || String(doc.fileUrl || '').split('/').pop() || 'Document';
+                const isDownloading = downloadingDocument === documentKey;
+                return (
+                  <article key={documentKey} className="group grid gap-3 px-4 py-3.5 transition-colors hover:bg-slate-50/70 sm:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)_auto] sm:items-center">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-teal-100 bg-teal-50 text-[#0d7676]">
+                        <FileCheck className="h-4 w-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-extrabold text-slate-900" title={doc.docType || 'Supporting document'}>{doc.docType || 'Supporting document'}</p>
+                        <p className="mt-1 truncate font-mono text-[10px] font-medium text-slate-500" title={displayName}>{displayName}</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 border-l-0 text-[10px] sm:grid-cols-1 sm:border-l sm:border-slate-100 sm:pl-4">
+                      <div className="min-w-0">
+                        <span className="block font-bold uppercase tracking-wide text-slate-400">Uploaded by</span>
+                        <span className="mt-0.5 block truncate text-[11px] font-bold text-slate-700" title={doc.uploadedBy || 'Vendor'}>{doc.uploadedBy || 'Vendor'}</span>
+                      </div>
+                      <div>
+                        <span className="block font-bold uppercase tracking-wide text-slate-400">Uploaded on</span>
+                        <span className="mt-0.5 block text-[11px] font-semibold text-slate-600">{formatDateTime(doc.uploadedAt || doc.date)}</span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={!downloadTarget || isDownloading}
+                      onClick={async () => {
+                        setDownloadingDocument(documentKey);
+                        try {
+                          await downloadDocumentFile(downloadTarget, displayName);
+                        } finally {
+                          setDownloadingDocument('');
+                        }
+                      }}
+                      className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-teal-200 bg-white px-3 text-[11px] font-extrabold text-[#0d7676] shadow-2xs transition hover:border-teal-300 hover:bg-teal-50 focus:outline-none focus:ring-2 focus:ring-teal-200 disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label={`Download ${displayName}`}
+                    >
+                      {isDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                      {isDownloading ? 'Downloading' : 'Download'}
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center px-6 py-10 text-center">
+              <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-400"><Files className="h-5 w-5" /></span>
+              <p className="mt-3 text-xs font-bold text-slate-700">No documents attached</p>
+              <p className="mt-1 max-w-xs text-[11px] text-slate-400">Documents uploaded for this BL entry will appear here.</p>
+            </div>
+          )}
         </section>
       </div>
 
@@ -861,7 +995,7 @@ export function FreightBlDetailPage() {
         <div className="p-4 sm:p-5 border-b border-slate-100 bg-slate-50/40 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <h2 className="text-xs font-black uppercase tracking-wider text-slate-900">INVOICE REQUESTS</h2>
+              <h2 className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-slate-900"><ReceiptText className="h-4 w-4 text-[#0d7676]" />Invoice Requests</h2>
               <span className="w-5 h-5 rounded-full bg-amber-500 text-white text-[10px] font-black flex items-center justify-center">
                 {invoicesList.length}
               </span>
@@ -871,7 +1005,7 @@ export function FreightBlDetailPage() {
               <button
                 type="button"
                 disabled={!canInvoice}
-                onClick={() => setShowInvoiceForm(true)}
+                onClick={() => { setError(''); setShowInvoiceForm(true); }}
                 className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black shadow-2xs transition active:scale-95 ${
                   canInvoice
                     ? 'bg-[#0d7676] hover:bg-[#0f766e] text-white cursor-pointer'
@@ -944,8 +1078,12 @@ export function FreightBlDetailPage() {
             <tbody className="divide-y divide-slate-100 text-slate-800 font-medium">
               {paginatedInvoices.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-5 py-10 text-center text-xs font-semibold text-slate-400 bg-slate-50/30">
-                    No invoice requests matching current search or filter criteria.
+                  <td colSpan={6} className="px-5 py-10 text-center bg-slate-50/30">
+                    <div className="mx-auto flex max-w-md flex-col items-center gap-2">
+                      {canInvoice ? <ReceiptText className="h-7 w-7 text-slate-300" /> : <LockKeyhole className="h-7 w-7 text-amber-400" />}
+                      <p className="text-xs font-bold text-slate-600">{invoiceSearch || invoiceFilter !== 'All' ? 'No invoice requests match the current search or filter.' : canInvoice ? 'No invoice requests yet' : 'Invoice creation is locked'}</p>
+                      <p className="text-[11px] font-medium text-slate-400">{invoiceSearch || invoiceFilter !== 'All' ? 'Change or clear the filters to see other requests.' : canInvoice ? 'Use “Raise New Invoice” to create the first request.' : 'Invoicing becomes available after customs clearance.'}</p>
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -1017,7 +1155,7 @@ export function FreightBlDetailPage() {
                       <td className="px-5 py-3.5 text-right whitespace-nowrap">
                         <button
                           type="button"
-                          onClick={() => downloadDocumentFile(item.fileUrl || item.fileName || item.invoiceNumber, categoryName)}
+                          onClick={() => downloadDocumentFile(item.documents?.[0]?.fileUrl || item.fileUrl || item.invoiceFile || item.fileName || item.invoiceNumber, categoryName)}
                           className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-teal-50 hover:bg-teal-100 text-[#0d7676] font-extrabold text-[11px] border border-teal-200 transition cursor-pointer shadow-2xs"
                           title="Download Invoice Document"
                         >
@@ -1034,7 +1172,7 @@ export function FreightBlDetailPage() {
         </div>
 
         {/* Server Pagination Footer */}
-        <div className="p-3 bg-slate-50/50 border-t border-slate-100">
+        {invoicesList.length > 0 && <div className="p-3 bg-slate-50/50 border-t border-slate-100">
           <ServerPagination
             page={invoicePage}
             totalPages={Math.ceil(filteredInvoices.length / invoicePageSize) || 1}
@@ -1044,35 +1182,44 @@ export function FreightBlDetailPage() {
             onPageChange={(p) => setInvoicePage(p)}
             onPageSizeChange={(s) => { setInvoicePageSize(s); setInvoicePage(1); }}
           />
-        </div>
+        </div>}
       </section>
 
       {/* NEW INVOICE REQUEST MODAL OVERLAY */}
       {showInvoiceForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-lg rounded-3xl bg-white p-6 sm:p-7 shadow-2xl space-y-5 relative max-h-[90vh] overflow-y-auto font-sans antialiased text-left border border-slate-100">
+        <div
+          className="fixed inset-0 z-[100] flex min-h-dvh items-center justify-center bg-slate-900/40 p-3 backdrop-blur-xs sm:p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !saving) setShowInvoiceForm(false);
+          }}
+          role="presentation"
+        >
+          <div className="relative w-full max-w-md max-h-[calc(100dvh-1.5rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 text-left font-sans shadow-2xl sm:max-h-[calc(100dvh-2rem)]" role="dialog" aria-modal="true" aria-labelledby="new-invoice-title">
             {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center text-[#0d7676] shrink-0">
-                  <Plus className="w-5 h-5" />
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-teal-200 bg-teal-50 text-[#0d7676]">
+                  <Plus className="h-4 w-4" />
                 </div>
                 <div>
-                  <h2 className="text-base font-black text-slate-900">New Invoice Request</h2>
+                  <h2 id="new-invoice-title" className="text-sm font-black text-slate-900">New Invoice Request</h2>
                   <p className="text-xs text-slate-500 font-medium">{entry.blNumber} · {entry.rfqNumber || `RFQ-${id}`}</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setShowInvoiceForm(false)}
-                className="w-8 h-8 rounded-full bg-slate-100 text-slate-400 hover:text-slate-700 flex items-center justify-center text-sm font-bold transition"
+                disabled={saving}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-50 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-200 disabled:opacity-40"
+                aria-label="Close invoice request"
               >
                 ✕
               </button>
             </div>
 
             {/* Modal Form Content */}
-            <form onSubmit={submitInvoice} className="space-y-4">
+            <form onSubmit={submitInvoice} className="mt-4 space-y-4">
+              <ErrorBox>{error}</ErrorBox>
               <CustomSelect
                 label="Invoice Type"
                 required
@@ -1106,6 +1253,7 @@ export function FreightBlDetailPage() {
                   label="Invoice Date"
                   required
                   value={invoice.invoiceDate}
+                  max={new Date().toISOString().split('T')[0]}
                   onChange={(val) => setInvoice({ ...invoice, invoiceDate: val })}
                 />
               </div>
@@ -1117,8 +1265,8 @@ export function FreightBlDetailPage() {
                   </label>
                   <input
                     type="number"
-                    min="1"
-                    step="any"
+                    min="0.01"
+                    step="0.01"
                     placeholder="0.00"
                     value={invoice.amount}
                     onChange={(e) => setInvoice({ ...invoice, amount: e.target.value })}
@@ -1159,19 +1307,21 @@ export function FreightBlDetailPage() {
               />
 
               {/* Modal Footer Actions */}
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+              <div className="sticky -bottom-5 -mx-5 flex items-center justify-end gap-2 border-t border-slate-100 bg-white px-5 pb-0 pt-3.5">
                 <button
                   type="button"
                   onClick={() => setShowInvoiceForm(false)}
-                  className="px-5 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 transition"
+                  disabled={saving}
+                  className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={saving}
-                  className="px-6 py-2.5 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] text-white text-xs font-black shadow-md transition active:scale-95 disabled:opacity-50"
+                  className="inline-flex min-w-40 items-center justify-center gap-2 rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-black text-white shadow-sm transition hover:bg-[#0f6f6f] focus:outline-none focus:ring-2 focus:ring-teal-300 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
                 >
+                  {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   {saving ? 'Submitting...' : 'Submit Invoice Request'}
                 </button>
               </div>

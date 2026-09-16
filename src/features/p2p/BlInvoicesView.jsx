@@ -702,7 +702,7 @@ export default function BlInvoicesView() {
                       <td className="px-4 py-3.5 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <TableActionButton
-                            onClick={() => downloadDocumentFile(inv.fileName || inv.fileUrl || inv.referenceNumber, inv.typeDisplay || 'BL Invoice')}
+                            onClick={() => downloadDocumentFile(inv.documents?.[0]?.fileUrl || inv.fileUrl || inv.invoiceFile || inv.fileName || inv.referenceNumber, inv.typeDisplay || 'BL Invoice')}
                             title="Download Document"
                             icon={Download}
                             variant="copy"

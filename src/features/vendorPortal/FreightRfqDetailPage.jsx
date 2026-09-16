@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, CalendarDays, CheckCircle2, Loader2, Ship, Clock, DollarSign, Navigation, ArrowRight } from 'lucide-react';
+import { AlertCircle, ArrowLeft, CheckCircle2, Loader2, Ship, Clock, RefreshCw } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
 import { CustomDatePicker } from '../../components/ui/custom-date-picker';
@@ -19,24 +19,22 @@ export default function FreightRfqDetailPage() {
   const [formError, setFormError] = useState('');
   const [attempted, setAttempted] = useState(false);
 
-  useEffect(() => {
-    apiFetch(`/api/p2p/vendor-rfqs/${id}`)
-      .then((response) => response.json().then((json) => ({ ok: response.ok, ...json })))
-      .then((json) => {
-        if (!json.ok || !json.success) throw new Error(json.error || 'Unable to load this assigned RFQ.');
-        setRfq(json.data);
-        if (json.data.myQuote) {
-          setForm((current) => ({
-            ...current,
-            ...json.data.myQuote,
-            cutoffDate: dateValue(json.data.myQuote.cutoffDate),
-            vesselEtd: dateValue(json.data.myQuote.vesselEtd),
-            vesselEta: dateValue(json.data.myQuote.vesselEta)
-          }));
-        }
-      })
-      .catch((error) => setLoadError(error.message));
-  }, [id]);
+  const loadRfq = async () => {
+    setLoadError('');
+    setRfq(null);
+    try {
+      const response = await apiFetch(`/api/p2p/vendor-rfqs/${id}`);
+      const json = await response.json();
+      if (!response.ok || !json.success) throw new Error(json.error || 'Unable to load this assigned RFQ.');
+      setRfq(json.data);
+      if (json.data.myQuote) {
+        setForm((current) => ({ ...current, ...json.data.myQuote,
+          cutoffDate: dateValue(json.data.myQuote.cutoffDate), vesselEtd: dateValue(json.data.myQuote.vesselEtd), vesselEta: dateValue(json.data.myQuote.vesselEta) }));
+      }
+    } catch (error) { setLoadError(error.message || 'Unable to load this assigned RFQ.'); }
+  };
+
+  useEffect(() => { loadRfq(); }, [id]);
 
   const change = (key) => (event) => {
     setFormError('');
@@ -68,8 +66,8 @@ export default function FreightRfqDetailPage() {
     }
   };
 
-  if (loadError) return <div className="mx-auto max-w-3xl rounded-2xl border border-rose-200 bg-rose-50 p-6 text-sm font-bold text-rose-700"><AlertCircle className="mr-2 inline h-5 w-5" />{loadError}</div>;
-  if (!rfq) return <div className="p-16 text-center text-xs font-semibold text-slate-500"><Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin text-[#0d7676]" />Loading RFQ details...</div>;
+  if (loadError) return <div className="mx-auto max-w-3xl space-y-3"><div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-sm font-bold text-rose-700"><AlertCircle className="mr-2 inline h-5 w-5" />{loadError}</div><button type="button" onClick={loadRfq} className="inline-flex items-center gap-2 rounded-xl bg-[#0d7676] px-4 py-2 text-xs font-black text-white"><RefreshCw className="h-4 w-4" />Try again</button></div>;
+  if (!rfq) return <div className="rounded-2xl border border-slate-200 bg-white p-16 text-center shadow-2xs" role="status"><Loader2 className="mx-auto mb-3 h-7 w-7 animate-spin text-[#0d7676]" /><p className="text-sm font-bold text-slate-700">Loading RFQ details</p><p className="mt-1 text-xs text-slate-400">Retrieving quotation and award status...</p></div>;
 
   const cargo = rfq.cargoDetails || {};
   const deadline = rfq.closingDate ? new Date(rfq.closingDate) : null;
@@ -80,6 +78,7 @@ export default function FreightRfqDetailPage() {
     else if (utcMidnight) deadline.setUTCHours(23, 59, 59, 999);
   }
   const status = String(rfq.status || '').toLowerCase();
+  const isPendingApproval = status === 'pending_approval' || Boolean(rfq.awardPending);
   const isAwardedRfq = ['awarded', 'fully_awarded', 'partially_awarded'].includes(status) || Number(rfq.allocatedQuantity || 0) > 0;
   const awardedToMe = Boolean(rfq.myAllocation);
   const awardedToOther = isAwardedRfq && !awardedToMe;
@@ -162,7 +161,11 @@ export default function FreightRfqDetailPage() {
                 {rfq.rfqNumber}
               </span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight uppercase">{rfq.title}</h1>
+            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">{rfq.title}</h1>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-semibold text-slate-500">
+              <span>Linked PO: <strong className="font-mono text-slate-700">{rfq.poId || rfq.sapPoNumber || '—'}</strong></span>
+              {cargo.estimatedReadinessDate && <span>Ready by: <strong className="text-slate-700">{new Date(cargo.estimatedReadinessDate).toLocaleDateString('en-GB')}</strong></span>}
+            </div>
           </div>
 
           <div className="flex flex-col sm:items-end gap-2 shrink-0">
@@ -241,12 +244,12 @@ export default function FreightRfqDetailPage() {
       {rfq.awardPending && (
         <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs font-bold text-amber-900 shadow-2xs">
           <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
-          <span>Your proposed allocation is awaiting internal approval. Current status: {rfq.awardApprovalStatus || 'Pending approval'}.</span>
+          <div><span className="block text-[11px] font-black uppercase">Allocation approval in progress</span><span>Your submitted quote is locked while procurement reviews the proposed allocation. Current step: {rfq.awardApprovalStatus || 'Pending approval'}.</span></div>
         </div>
       )}
 
       {/* Prominent RFQ Closed Banner */}
-      {closed && !awardedToMe && !awardedToOther && (
+      {closed && !isPendingApproval && !awardedToMe && !awardedToOther && (
         <div className="flex items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs font-bold text-rose-800 shadow-2xs">
           <AlertCircle className="h-5 w-5 text-rose-600 shrink-0" />
           <div>
@@ -257,19 +260,19 @@ export default function FreightRfqDetailPage() {
       )}
 
       {/* When RFQ Allocation Granted: Render Clean Awarded Quote Summary (Hides quote form) */}
-      {Boolean(rfq.myAllocation) ? (
+      {Boolean(rfq.myAllocation) || Boolean(rfq.myQuote && closed) ? (
         <section className="rounded-3xl border border-slate-200 bg-white shadow-2xs overflow-hidden space-y-6 p-6 sm:p-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div>
               <h2 className="flex items-center gap-2 text-base font-black text-slate-900">
-                <Ship className="h-5 w-5 text-[#0d7676]" /> AWARDED FREIGHT QUOTATION SUMMARY
+                <Ship className="h-5 w-5 text-[#0d7676]" /> {awardedToMe ? 'AWARDED FREIGHT QUOTATION' : 'SUBMITTED FREIGHT QUOTATION'}
               </h2>
               <p className="text-xs text-slate-500 font-semibold mt-0.5">
-                Your submitted quote has been approved for this RFQ.
+                {awardedToMe ? 'Your quotation and container allocation have been approved.' : isPendingApproval ? 'Your quotation is submitted and awaiting allocation approval.' : 'This quotation is read-only because bidding has closed.'}
               </p>
             </div>
-            <span className="px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-extrabold w-fit">
-              ✓ Awarded Quote
+            <span className={`px-3 py-1 rounded-full border text-xs font-extrabold w-fit ${awardedToMe ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+              {awardedToMe ? '✓ Awarded' : isPendingApproval ? 'Approval pending' : 'Bidding closed'}
             </span>
           </div>
 
@@ -310,14 +313,14 @@ export default function FreightRfqDetailPage() {
             </div>
           </div>
 
-          <div className="pt-2 flex justify-end">
+          {awardedToMe && <div className="pt-2 flex justify-end">
             <Link
               to={`/vendor/rfqs/${id}/bl-entries`}
               className="inline-flex items-center gap-2 rounded-xl bg-[#0d7676] hover:bg-[#0f766e] px-6 py-3 text-xs font-black text-white shadow-md transition"
             >
               <Ship className="h-4 w-4" /> Go to Bill of Lading Entries →
             </Link>
-          </div>
+          </div>}
         </section>
       ) : (
         /* Main Interactive Quotation Form (Only shown when RFQ is open for quoting) */

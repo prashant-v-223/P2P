@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ClipboardList, Ship, User, ArrowUpRight, Info } from 'lucide-react';
+import { AlertCircle, ClipboardList, Ship, User, ArrowUpRight, Info, Loader2, RefreshCw } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useVendor } from './vendorContext';
 
@@ -8,12 +8,25 @@ export default function FreightForwarderDashboard() {
   const { vendorProfile } = useVendor();
   const [rfqs, setRfqs] = useState([]);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  const loadRfqs = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const response = await apiFetch('/api/p2p/vendor-rfqs');
+      const json = await response.json();
+      if (!response.ok || !json.success) throw new Error(json.error || 'Unable to load dashboard data.');
+      setRfqs(json.data || []);
+    } catch (err) {
+      setError(err.message || 'Unable to load dashboard data.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    apiFetch('/api/p2p/vendor-rfqs').then((res) => res.json()).then((json) => {
-      if (json.success) setRfqs(json.data || []);
-      else setError(json.error || 'Unable to load assigned RFQs.');
-    }).catch((err) => setError(err.message || 'Unable to load assigned RFQs.'));
+    loadRfqs();
     const updateFromLayout = (event) => setRfqs(event.detail || []);
     window.addEventListener('vendor-rfqs-updated', updateFromLayout);
     return () => window.removeEventListener('vendor-rfqs-updated', updateFromLayout);
@@ -31,7 +44,7 @@ export default function FreightForwarderDashboard() {
   };
   const open = rfqs.filter(isOpen).length;
   const quoted = rfqs.filter((rfq) => rfq.myQuote).length;
-  const awarded = rfqs.filter((rfq) => rfq.status === 'awarded' && rfq.awardedVendorName === vendorProfile.companyName).length;
+  const awarded = rfqs.filter((rfq) => Boolean(rfq.myAllocation)).length;
 
   return <div className="space-y-5 pb-10">
     <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#0d7676] to-[#159a91] p-6 text-white shadow-lg shadow-teal-900/10">
@@ -47,7 +60,7 @@ export default function FreightForwarderDashboard() {
       </div>
     </section>
 
-    {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700">{error}</div>}
+    {error && <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700"><span className="flex items-center gap-2"><AlertCircle className="h-4 w-4" />{error}</span><button type="button" onClick={loadRfqs} className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-3 py-1.5 text-white"><RefreshCw className="h-3.5 w-3.5" /> Retry</button></div>}
     <section className="grid gap-4 sm:grid-cols-3">
       {[
         ["Open RFQs", open, ClipboardList, 'text-[#0d7676] bg-teal-50', '/vendor/rfqs?status=published'],
@@ -57,7 +70,7 @@ export default function FreightForwarderDashboard() {
         <Link key={label} to={linkUrl} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-teal-300 hover:shadow-md">
           <div className={`inline-flex rounded-xl p-2.5 ${tone}`}><Icon className="h-5 w-5" /></div>
           <p className="mt-3 text-xs font-bold uppercase text-slate-500">{label}</p>
-          <p className="text-3xl font-black text-slate-900">{value}</p>
+          <p className="text-3xl font-black text-slate-900">{loading ? <Loader2 className="my-1 h-7 w-7 animate-spin text-[#0d7676]" aria-label={`Loading ${label}`} /> : value}</p>
           <span className="mt-3 flex items-center gap-1 text-xs font-bold text-[#0d7676]">View RFQs <ArrowUpRight className="h-3.5 w-3.5" /></span>
         </Link>
       ))}

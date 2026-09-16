@@ -79,14 +79,24 @@ const sanitizePoStatus = (statusStr) => {
 const mapPurchaseOrder = (row) => {
   const poNumber = cleanString(valueOf(row, ['PurchaseOrder', 'PurchaseOrderNumber', 'PONumber', 'EBELN']));
   const amt = parseSapNumber(valueOf(row, ['NetAmount', 'PurchaseOrderNetAmount', 'TotalNetAmount', 'GrossAmount', 'Amount']));
+  const docType = cleanString(valueOf(row, ['PurchaseOrderType', 'BSART', 'DocumentType'])).toUpperCase();
+  const currency = cleanString(valueOf(row, ['DocumentCurrency', 'Currency', 'WAERS']), 'INR').toUpperCase();
+  const isSto = docType === 'ZST' || docType === 'UB' || (poNumber.startsWith('45') && amt === 0);
+  const isImport = docType === 'ZIM' || docType === 'ZTRD' || poNumber.startsWith('43') || poNumber.startsWith('60') ||
+    ['USD', 'EUR', 'GBP', 'CNY', 'AED', 'SGD', 'CAD', 'CHF', 'JPY'].includes(currency);
+  const poType = isImport ? 'IMPORT' : 'DOMESTIC';
+
   return {
     poId: poNumber,
     poNumber: poNumber,
     sapPoNumber: poNumber,
+    poType,
+    documentType: docType,
+    isSto,
     supplierId: cleanString(valueOf(row, ['Supplier', 'SupplierNumber', 'LIFNR'])),
     supplierName: cleanString(valueOf(row, ['BPSupplierName', 'SupplierName', 'VendorName', 'Name1'])),
     companyCode: cleanString(valueOf(row, ['CompanyCode', 'BUKRS']), '1000'),
-    currency: cleanString(valueOf(row, ['DocumentCurrency', 'Currency', 'WAERS']), 'INR'),
+    currency,
     totalAmount: amt,
     documentDate: parseSapDate(valueOf(row, ['PurchaseOrderDate', 'DocumentDate', 'BEDAT'])) || new Date(),
     status: sanitizePoStatus(valueOf(row, ['PurchasingProcessingStatus', 'Status'])),

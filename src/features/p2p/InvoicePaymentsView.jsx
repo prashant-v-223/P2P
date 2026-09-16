@@ -70,6 +70,7 @@ export default function InvoicePaymentsView() {
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [utrInput, setUtrInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // Pagination state
   const [pageSize, setPageSize] = useState(10);
@@ -246,6 +247,39 @@ export default function InvoicePaymentsView() {
     }
   };
 
+  const handleExportCsv = async () => {
+    try {
+      setExporting(true);
+      const params = new URLSearchParams({
+        export: 'true',
+        q: searchTerm,
+        status: statusFilter,
+        threeWayMatch: matchFilter,
+        scope: scopeFilter,
+        sortBy,
+        sortOrder
+      });
+      const res = await apiFetch(`/api/p2p/invoices?${params.toString()}`);
+      if (res.ok) {
+        const json = await res.json();
+        const exportData = json.data || [];
+        if (exportData.length === 0) {
+          showToast({ title: 'Export Empty', description: 'No invoice payment records match the current filters.', type: 'warning' });
+        } else {
+          exportInvoicePaymentsCsv(exportData);
+          showToast({ title: 'Export Successful', description: `Exported ${exportData.length} records to CSV.`, type: 'success' });
+        }
+      } else {
+        exportInvoicePaymentsCsv(invoices);
+      }
+    } catch (e) {
+      console.error('Failed to export invoices CSV:', e);
+      exportInvoicePaymentsCsv(invoices);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const netPayableCalc = Math.max(0, (Number(formGross) || 0) + (Number(formGst) || 0) - Math.abs(Number(formTds) || 0) - Math.abs(Number(formAdvAdj) || 0));
 
 const formatRoleName = (str) => {
@@ -279,8 +313,18 @@ const getInitials = (name) => {
             <Plus className="w-4 h-4" /> New Invoice Payment
           </button>
         )}
-        <button type="button" onClick={() => exportInvoicePaymentsCsv(invoices)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-2xs">
-          <Download className="h-4 w-4 text-slate-500" /> Export CSV
+        <button
+          type="button"
+          onClick={handleExportCsv}
+          disabled={exporting}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 shadow-2xs disabled:opacity-50"
+        >
+          {exporting ? (
+            <Loader2 className="h-4 w-4 text-[#0d7676] animate-spin" />
+          ) : (
+            <Download className="h-4 w-4 text-slate-500" />
+          )}
+          {exporting ? 'Exporting...' : 'Export CSV'}
         </button>
       </div>
 

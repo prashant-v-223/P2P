@@ -18,13 +18,20 @@ const statusLabel = (value) => ({
   assigned_to_agent: 'With Customs Agent',
   material_received: 'Material Received',
   custom_cleared: 'Customs Cleared',
+  invoice_pending: 'Invoice Pending',
+  payment_requested: 'Payment Requested',
+  payment_approved: 'Payment Approved',
+  payment_paid: 'Payment Paid',
+  closed: 'Closed',
   returned_for_correction: 'Returned for Correction',
   rejected: 'Rejected'
 }[value] || String(value || '').replaceAll('_', ' '));
+const clearedBlStatuses = ['custom_cleared', 'invoice_pending', 'payment_requested', 'payment_approved', 'payment_paid', 'closed'];
+const isCustomsCleared = (status) => clearedBlStatuses.includes(String(status || '').toLowerCase());
 
 const statusClass = (value) => {
   const v = String(value || '').toLowerCase();
-  if (v === 'custom_cleared') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  if (isCustomsCleared(v)) return 'bg-emerald-50 text-emerald-700 border-emerald-200';
   if (v === 'assigned_to_agent') return 'bg-cyan-50 text-cyan-700 border-cyan-200';
   if (v === 'rejected') return 'bg-rose-50 text-rose-700 border-rose-200';
   if (v.includes('returned')) return 'bg-amber-50 text-amber-700 border-amber-200';
@@ -223,7 +230,7 @@ function EximList() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {paginated.map((entry) => (
-                    <tr key={entry.blId} onClick={() => navigate(`/admin/exim/${entry.blId}`)} className="cursor-pointer hover:bg-slate-50 transition">
+                    <tr key={entry.blId} onClick={() => navigate(`/p2p/exim-review/${entry.blId}`)} className="cursor-pointer hover:bg-slate-50 transition">
                       <td className="p-4 font-mono font-bold text-slate-900">{entry.blNumber}</td>
                       <td>{entry.rfqNumber || entry.rfqId}</td>
                       <td className="font-semibold text-slate-700">{entry.vendorName}</td>
@@ -234,8 +241,8 @@ function EximList() {
                       <td><span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold border ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</span></td>
                       <td className="p-4 text-right">
                         <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                          <button onClick={() => navigate(`/admin/exim/${entry.blId}`)} className="inline-flex items-center gap-1 rounded border px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50"><Eye className="h-3.5 w-3.5" />Review</button>
-                          {entry.status !== 'custom_cleared' && canAssignAgent && (() => {
+                          <button onClick={() => navigate(`/p2p/exim-review/${entry.blId}`)} className="inline-flex items-center gap-1 rounded border px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50"><Eye className="h-3.5 w-3.5" />Review</button>
+                          {!isCustomsCleared(entry.status) && canAssignAgent && (() => {
                             const isAssigned = Boolean(entry.customAgentId || entry.customAgentName || entry.status === 'assigned_to_agent');
                             return (
                               <button
@@ -354,13 +361,13 @@ function EximDetail({ blId }) {
   if (loading) return <div className="p-12 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-[#0d7676]" /></div>;
   if (!entry) return <div className="rounded-xl bg-rose-50 p-4 text-xs font-bold text-rose-700">{error}</div>;
 
-  const currentStepIndex = entry.status === 'custom_cleared' ? 3 : entry.customAgentId ? 2 : entry.eximReviewedAt ? 1 : 0;
+  const currentStepIndex = isCustomsCleared(entry.status) ? 3 : entry.customAgentId ? 2 : entry.eximReviewedAt ? 1 : 0;
 
   return (
     <div className="space-y-5 pb-12">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <Link to="/admin/exim" className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-[#0d7676]"><ArrowLeft className="h-4 w-4" />EXIM Review</Link>
+          <Link to="/p2p/exim-review" className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-[#0d7676]"><ArrowLeft className="h-4 w-4" />EXIM Review</Link>
           <div className="mt-2 flex items-center gap-2">
             <h1 className="text-xl font-extrabold">BL: {entry.blNumber}</h1>
             <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold border ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</span>
@@ -369,7 +376,7 @@ function EximDetail({ blId }) {
         </div>
         <div className="flex gap-2">
           <Link to={`/admin/rfqs/${entry.rfq?.rfqNumber || entry.rfqId}`} className="rounded-lg px-3 py-2 text-xs font-bold text-[#0d5bd7]">View RFQ →</Link>
-          {entry.status !== 'custom_cleared' && canAssignAgent && (
+          {!isCustomsCleared(entry.status) && canAssignAgent && (
             <button onClick={() => setAssigning(true)} className="inline-flex items-center gap-1 rounded-lg bg-[#0d7676] px-4 py-2 text-xs font-bold text-white hover:bg-teal-700 transition cursor-pointer">
               <UserPlus className="h-4 w-4" />
               {entry.customAgentId ? 'Reassign Agent' : 'Assign to Agent'}
@@ -480,7 +487,7 @@ function EximDetail({ blId }) {
       </section>
 
       {/* Upload EXIM Document Section */}
-      {entry.status !== 'custom_cleared' && <section className="rounded-2xl border bg-white p-5 shadow-sm">
+      {!isCustomsCleared(entry.status) && <section className="rounded-2xl border bg-white p-5 shadow-sm">
         <h2 className="flex items-center gap-2 text-sm font-extrabold"><Upload className="h-4 w-4" />Upload EXIM Documents</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
           <SearchableSelect

@@ -109,6 +109,8 @@ const rfqBlEntrySchema = new mongoose.Schema({
     docType: String,
     fileUrl: String,
     fileName: String,
+    originalFilename: String,
+    storage: String,
     stage: String,
     uploadedBy: String,
     uploadedAt: { type: Date, default: Date.now }

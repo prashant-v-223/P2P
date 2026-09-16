@@ -81,21 +81,40 @@ export default function PurchaseOrdersView() {
       if (res.ok) {
         const json = await res.json();
         if (json.data) {
-          const mapped = json.data.map((item, idx) => ({
-            id: (currentPage - 1) * pageSize + idx + 1,
-            poNumber: item.sapPoNumber || item.poNumber,
-            vendorName: item.supplierName || 'Vendor',
-            vendorCode: item.supplierId || '100001',
-            poDate: item.documentDate || item.createdAt ? new Date(item.documentDate || item.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—',
-            dueDate: item.dueDate || item.deliveryDate || item.paymentDueDate
-              ? new Date(item.dueDate || item.deliveryDate || item.paymentDueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-              : '—',
-            type: (item.poNumber || '').startsWith('PO-43') || (item.poNumber || '').startsWith('60') ? 'Import' : 'Domestic',
-            poValue: item.totalAmount || 0,
-            paidAmount: Number(item.paidAdvanceAmount) || 0,
-            inApprovalAmount: Number(item.inApprovalAdvanceAmount || item.advanceCommitted || item.approvedAdvanceAmount) || 0,
-            status: item.status === 'open' ? 'Open' : item.status || 'Open'
-          }));
+          const mapped = json.data.map((item, idx) => {
+            const rawType = item.poType || item.type || item.vendorType || '';
+            const isImportType = String(rawType).toUpperCase() === 'IMPORT' ||
+              (item.poNumber || '').startsWith('43') ||
+              (item.poNumber || '').startsWith('60') ||
+              ['USD', 'EUR', 'GBP', 'CNY', 'AED', 'SGD', 'CAD', 'CHF', 'JPY'].includes(String(item.currency || '').toUpperCase());
+            const displayType = isImportType ? 'IMPORT' : 'DOMESTIC';
+            const curr = item.currency || (isImportType ? 'USD' : 'INR');
+            
+            let dueDateFormatted = '—';
+            const rawDueDate = item.dueDate || item.deliveryDate || item.paymentDueDate;
+            if (rawDueDate) {
+              dueDateFormatted = new Date(rawDueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+            } else if (item.documentDate || item.createdAt) {
+              const termsDays = parseInt(String(item.paymentTerms || '').match(/\d+/)?.[0] || '30', 10);
+              const calculatedDue = new Date(new Date(item.documentDate || item.createdAt).getTime() + termsDays * 24 * 60 * 60 * 1000);
+              dueDateFormatted = calculatedDue.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+            }
+
+            return {
+              id: (currentPage - 1) * pageSize + idx + 1,
+              poNumber: item.sapPoNumber || item.poNumber,
+              vendorName: item.supplierName || 'Vendor',
+              vendorCode: item.supplierId || '100001',
+              poDate: item.documentDate || item.createdAt ? new Date(item.documentDate || item.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—',
+              dueDate: dueDateFormatted,
+              type: displayType,
+              currency: curr,
+              poValue: item.totalAmount || 0,
+              paidAmount: Number(item.paidAdvanceAmount) || 0,
+              inApprovalAmount: Number(item.inApprovalAdvanceAmount || item.advanceCommitted || item.approvedAdvanceAmount) || 0,
+              status: item.status === 'open' ? 'Open' : item.status || 'Open'
+            };
+          });
           setPos(mapped);
           setTotalCount(json.total || mapped.length);
           setTotalPages(json.totalPages || 1);
@@ -298,7 +317,7 @@ export default function PurchaseOrdersView() {
               ) : (
                 pos.map((po) => {
                   const avatarInitials = getInitials(po.vendorName);
-                  const isImport = po.type === 'Import';
+                  const isImport = String(po.type || '').toUpperCase() === 'IMPORT';
 
                   return (
                     <tr key={po.poNumber} className="hover:bg-slate-50/70 transition-colors text-xs">

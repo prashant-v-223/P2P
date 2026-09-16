@@ -87,13 +87,34 @@ export function toWebPath(absPath) {
  */
 export function toLocalPath(fileUrl) {
   if (!fileUrl) return null;
-  if (String(fileUrl).startsWith('/uploads/')) {
-    const rel = String(fileUrl).replace(/^\/uploads\//, '');
+  
+  const fileStr = String(fileUrl).trim();
+  
+  // Handle /uploads/ paths
+  if (fileStr.startsWith('/uploads/')) {
+    const rel = fileStr.replace(/^\/uploads\//, '');
     return path.join(UPLOAD_DIR, ...rel.split('/'));
   }
-  if (String(fileUrl).startsWith('file://')) {
-    return fileURLToPath(fileUrl);
+  
+  // Handle file:// URLs
+  if (fileStr.startsWith('file://')) {
+    return fileURLToPath(fileStr);
   }
+  
+  // Handle s3:// URLs - these are NOT local, return null
+  if (fileStr.startsWith('s3://')) {
+    return null;
+  }
+  
+  // Handle direct paths that might be keys (e.g., "documents/123-file.pdf")
+  if (fileStr.includes('/') && !fileStr.startsWith('http')) {
+    // This might be a relative key, try to find it in uploads
+    const possiblePath = path.join(UPLOAD_DIR, ...fileStr.split('/'));
+    if (fs.existsSync(possiblePath)) {
+      return possiblePath;
+    }
+  }
+  
   return null;
 }
 
@@ -133,8 +154,16 @@ export async function uploadToS3(fileBuffer, originalFilename, mimeType, folder 
         storage: 's3'
       };
     } catch (error) {
-      console.warn('[Storage Service] S3 upload failed, falling back to local storage:', error.message);
-      // Fall through to local storage
+      console.error('[Storage Service] S3 upload failed:', error.message);
+      // Production must not report a successful S3 upload while quietly writing
+      // to an ephemeral application disk. Local fallback remains useful in dev
+      // and can be explicitly enabled for an on-prem deployment.
+      const allowLocalFallback = process.env.STORAGE_ALLOW_LOCAL_FALLBACK === 'true'
+        || process.env.NODE_ENV !== 'production';
+      if (!allowLocalFallback) {
+        throw new Error(`S3 upload failed: ${error.message}`);
+      }
+      console.warn('[Storage Service] Using configured development fallback: local storage.');
     }
   } else {
     console.warn('[Storage Service] AWS S3 not configured — using local filesystem storage.');
