@@ -56,6 +56,17 @@ export default function SapIntegrationView() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Auto-refresh sync history while any run is in 'running' state
+  useEffect(() => {
+    const hasRunning = history.some((r) => r.status === 'running') || Boolean(syncing);
+    if (!hasRunning) return;
+    const interval = setInterval(() => {
+      loadHistory();
+      loadOverview();
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [history, syncing]);
+
   const addPoNumbers = (rawValue) => {
     const values = rawValue.split(/[\s,\n]+/).map((item) => item.trim()).filter(Boolean);
     if (!values.length) return;

@@ -55,7 +55,7 @@ export const connectDB = async ({ seed = process.env.AUTO_SEED === 'true', ensur
       dbName: databaseName,
       serverSelectionTimeoutMS: 30000,
       connectTimeoutMS: 30000,
-      socketTimeoutMS: 45000,
+      socketTimeoutMS: 120000,
       maxPoolSize: 20,
       minPoolSize: 2
     });

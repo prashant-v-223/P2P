@@ -4,7 +4,7 @@ import { useSelector } from 'react-redux';
 import {
   FileText, Search, Eye, Plus, CheckCircle2, XCircle, Clock,
   ArrowLeftRight, AlertCircle, Loader2, X, ShieldCheck, DollarSign,
-  Building2, Layers, Filter, Check, CornerUpLeft, Download, Paperclip
+  Building2, Layers, Filter, Check, CornerUpLeft, Download, Paperclip, Trash2
 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { useToast } from '../../components/ui/toast';
@@ -534,6 +534,50 @@ export default function BlInvoicesView() {
   const [sourceFilter, setSourceFilter] = useState('All');
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [isSubmitOpen, setIsSubmitOpen] = useState(false);
+  const { showToast } = useToast();
+  const currentUser = useSelector((state) => state.auth?.user);
+  const canDelete = ['admin', 'System Admin', 'Finance Lead', 'Finance User'].some(
+    (role) => (currentUser?.role || '').toLowerCase() === role.toLowerCase()
+  );
+
+  const handleDelete = async (inv) => {
+    const id = inv.referenceNumber || inv.logisticsPaymentId || inv.id || inv._id;
+    if (!window.confirm(`Are you sure you want to delete BL Invoice "${id}" (${inv.invoiceNumber})?`)) {
+      return;
+    }
+
+    try {
+      const res = await apiFetch(`/api/p2p/bl-invoices/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        showToast({ type: 'success', title: 'Deleted', description: data.message || `BL Invoice ${id} deleted.` });
+        fetchInvoices();
+      } else {
+        showToast({ type: 'error', title: 'Delete Failed', description: data.error || 'Failed to delete invoice.' });
+      }
+    } catch (err) {
+      showToast({ type: 'error', title: 'Error', description: err.message });
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (!window.confirm(`Are you sure you want to delete ALL (${invoices.length}) BL Invoices and their approval records? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      const res = await apiFetch('/api/p2p/bl-invoices/clear-all', { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        showToast({ type: 'success', title: 'Cleared', description: data.message || 'All BL Invoices deleted.' });
+        fetchInvoices();
+      } else {
+        showToast({ type: 'error', title: 'Action Failed', description: data.error || 'Failed to clear invoices.' });
+      }
+    } catch (err) {
+      showToast({ type: 'error', title: 'Error', description: err.message });
+    }
+  };
 
   const fetchInvoices = async () => {
     try {
@@ -620,13 +664,26 @@ export default function BlInvoicesView() {
           </div>
         </div>
 
-        <button
-          onClick={() => setIsSubmitOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-[#0d7676] rounded-lg hover:bg-[#0a5c5c] transition shadow-xs flex-shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          Submit BL Invoice
-        </button>
+        <div className="flex items-center gap-2">
+          {canDelete && invoices.length > 0 && (
+            <button
+              onClick={handleClearAll}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100 transition shadow-2xs flex-shrink-0"
+              title="Delete all test BL invoices from database"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Clear All ({invoices.length})
+            </button>
+          )}
+
+          <button
+            onClick={() => setIsSubmitOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-[#0d7676] rounded-lg hover:bg-[#0a5c5c] transition shadow-xs flex-shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            Submit BL Invoice
+          </button>
+        </div>
       </div>
 
       {/* Main Table Card (Matching Exact Reference Screenshot Columns) */}
@@ -713,6 +770,14 @@ export default function BlInvoicesView() {
                             icon={Eye}
                             variant="view"
                           />
+                          {canDelete && (
+                            <TableActionButton
+                              onClick={() => handleDelete(inv)}
+                              title="Delete BL Invoice"
+                              icon={Trash2}
+                              variant="delete"
+                            />
+                          )}
                         </div>
                       </td>
                     </tr>

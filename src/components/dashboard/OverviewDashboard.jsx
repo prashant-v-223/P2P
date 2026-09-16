@@ -26,11 +26,16 @@ export default function OverviewDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const fetchedRef = React.useRef(false);
+  const inFlightRef = React.useRef(false);
 
   const loadData = useCallback(async (isRefresh = false) => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     isRefresh ? setRefreshing(true) : setLoading(true);
     try {
-      const res = await apiFetch('/api/p2p/dashboard/analytics');
+      const endpoint = isRefresh ? '/api/p2p/dashboard/analytics?refresh=true' : '/api/p2p/dashboard/analytics';
+      const res = await apiFetch(endpoint);
       const json = await res.json();
       if (json.success) {
         setData(json);
@@ -38,15 +43,17 @@ export default function OverviewDashboard() {
     } catch (error) {
       console.error('Error loading dashboard analytics:', error);
     } finally {
+      inFlightRef.current = false;
       setLoading(false);
       setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
+    if (fetchedRef.current) return;
+    fetchedRef.current = true;
     loadData();
-    dispatch(fetchPendingApprovals(user?.role));
-  }, [loadData, dispatch, user?.role]);
+  }, [loadData]);
 
   // Real Database Metrics & Dynamic Datasets
   const stats = data?.stats || {

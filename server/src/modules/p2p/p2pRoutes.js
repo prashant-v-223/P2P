@@ -789,7 +789,7 @@ router.get('/purchase-orders', authenticateToken, async (req, res) => {
     const sortDirection = req.query.sortOrder === 'asc' ? 1 : -1;
 
     const isExport = req.query.export === 'true';
-    const filter = { isDeleted: { $ne: true }, isSto: { $ne: true } };
+    const filter = { isDeleted: { $ne: true } };
 
     // Filter by poType (DOMESTIC or IMPORT only)
     if (typeFilter.toLowerCase() === 'import') {
@@ -4695,15 +4695,13 @@ router.get('/validate-asn', authenticateToken, async (req, res) => {
       }).lean();
     }
 
-    if (!matchingInvoice) {
-      return res.json({
-        success: true,
-        valid: false,
-        error: `ASN Number "${asnNumber}" does not match any invoice record for the linked Purchase Order (PO).`
-      });
-    }
-
-    return res.json({ success: true, valid: true, message: `ASN Number "${asnNumber}" is valid and matched with Purchase Order (PO) invoice records.` });
+    return res.json({ 
+      success: true, 
+      valid: true, 
+      message: matchingInvoice 
+        ? `ASN Number "${asnNumber}" is valid and matched with Purchase Order (PO) invoice records.` 
+        : `ASN Number "${asnNumber}" accepted.` 
+    });
   } catch (err) {
     return res.status(500).json({ success: false, valid: false, error: err.message });
   }
@@ -5883,6 +5881,86 @@ router.post('/bl-invoices/:id/action', authenticateToken, async (req, res) => {
   }
 });
 
+router.delete('/bl-invoices/clear-all', authenticateToken, authorizeRole(['admin', 'System Admin', 'Finance Lead', 'Finance User']), async (req, res) => {
+  try {
+    const bliQuery = {
+      $or: [
+        { referenceNumber: /^BLI-/ },
+        { logisticsPaymentId: /^BLI-/ },
+        { category: 'bl_invoice' }
+      ]
+    };
+
+    const blRecords = await BlInvoice.find({}, { referenceNumber: 1, logisticsPaymentId: 1 }).lean();
+    const legacyRecords = await LogisticsPayment.find(bliQuery, { referenceNumber: 1, logisticsPaymentId: 1 }).lean();
+    const allRefs = [...blRecords, ...legacyRecords].map(r => r.referenceNumber || r.logisticsPaymentId).filter(Boolean);
+
+    const countBlColl = await BlInvoice.countDocuments({});
+    const countLegacy = await LogisticsPayment.countDocuments(bliQuery);
+    const totalCount = countBlColl + countLegacy;
+
+    await BlInvoice.deleteMany({});
+    await LogisticsPayment.deleteMany(bliQuery);
+
+    if (allRefs.length > 0) {
+      await Approval.deleteMany({
+        $or: [
+          { id: { $in: allRefs } },
+          { referenceNumber: { $in: allRefs } },
+          { 'transactionSnapshot.referenceNumber': { $in: allRefs } }
+        ]
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: `Successfully deleted all ${totalCount} BL invoice records and associated approvals.`,
+      deletedCount: totalCount
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.delete('/bl-invoices/:id', authenticateToken, authorizeRole(['admin', 'System Admin', 'Finance Lead', 'Finance User']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const isMongoId = /^[0-9a-fA-F]{24}$/.test(id);
+
+    const query = {
+      $or: [
+        { referenceNumber: id },
+        { logisticsPaymentId: id },
+        ...(isMongoId ? [{ _id: id }] : [])
+      ]
+    };
+
+    const blItem = await BlInvoice.findOne(query);
+    const legacyItem = await LogisticsPayment.findOne(query);
+
+    if (!blItem && !legacyItem) {
+      return res.status(404).json({ success: false, error: 'BL Invoice record not found.' });
+    }
+
+    const ref = blItem?.referenceNumber || blItem?.logisticsPaymentId || legacyItem?.referenceNumber || legacyItem?.logisticsPaymentId || id;
+
+    if (blItem) await BlInvoice.deleteOne({ _id: blItem._id });
+    if (legacyItem) await LogisticsPayment.deleteOne({ _id: legacyItem._id });
+
+    await Approval.deleteMany({
+      $or: [
+        { id: ref },
+        { referenceNumber: ref },
+        { 'transactionSnapshot.referenceNumber': ref }
+      ]
+    });
+
+    return res.json({ success: true, message: `BL Invoice ${ref} deleted successfully.` });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ─── CUSTOM DUTIES CRUD ROUTES ─────────────────────────────────────────────
 
 router.get('/custom-duties', authenticateToken, async (req, res) => {
@@ -6617,12 +6695,24 @@ router.get('/audit/:entityId', authenticateToken, async (req, res) => {
 
 // ─── DASHBOARD ANALYTICS ─────────────────────────────────────────────────────
 
+const analyticsCache = new Map();
+export const invalidateAnalyticsCache = () => analyticsCache.clear();
+const ANALYTICS_CACHE_TTL_MS = 30000;
+
 router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
   try {
+    const range = (req.query.range || '7d').toLowerCase();
+    const isForceRefresh = req.query.refresh === 'true' || req.query.fresh === 'true';
+    const cacheKey = `${req.user?.role || 'all'}_${req.user?.id || req.user?.userId || 'all'}_${range}`;
+    const cached = analyticsCache.get(cacheKey);
+
+    if (!isForceRefresh && cached && (Date.now() - cached.timestamp < ANALYTICS_CACHE_TTL_MS)) {
+      return res.json(cached.data);
+    }
+
     const approvedReg = /approved|dispatched|paid/i;
     const paidReg = /(^|\s)paid($|\s)|payment[_\s-]?paid/i;
     const terminalApprovalStatuses = ['Approved & Dispatched', 'Approved', 'Rejected', 'Cancelled'];
-    const range = (req.query.range || '7d').toLowerCase();
 
     let daysCount = 7;
     if (range === '30d') daysCount = 30;
@@ -6632,11 +6722,11 @@ router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
     const now = new Date();
     const rangeStartDate = new Date(now.getTime() - daysCount * 24 * 60 * 60 * 1000);
     const prevPeriodStartDate = new Date(now.getTime() - (daysCount * 2) * 24 * 60 * 60 * 1000);
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 
     const [
       poCount,
       prevPoCount,
-      rawPendingCount,
       rfqCount,
       prevRfqCount,
       rfqAwardedCount,
@@ -6651,14 +6741,14 @@ router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
       dutiesList,
       blInvoicesList,
       blEntriesList,
-      pendingList,
       allApprovals,
       recentPos,
-      recentRfqs
+      recentRfqs,
+      rangePos,
+      rangeRfqs
     ] = await Promise.all([
-      PurchaseOrder.countDocuments().catch(() => 0),
-      PurchaseOrder.countDocuments({ createdAt: { $gte: prevPeriodStartDate, $lt: rangeStartDate } }).catch(() => 0),
-      Approval.countDocuments({ status: { $nin: terminalApprovalStatuses } }).catch(() => 0),
+      PurchaseOrder.countDocuments({ isDeleted: { $ne: true } }).catch(() => 0),
+      PurchaseOrder.countDocuments({ isDeleted: { $ne: true }, createdAt: { $gte: prevPeriodStartDate, $lt: rangeStartDate } }).catch(() => 0),
       RfqHeader.countDocuments().catch(() => 0),
       RfqHeader.countDocuments({ createdAt: { $gte: prevPeriodStartDate, $lt: rangeStartDate } }).catch(() => 0),
       RfqHeader.countDocuments({ status: 'awarded' }).catch(() => 0),
@@ -6668,15 +6758,16 @@ router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
       RfqBlEntry.countDocuments({ status: { $in: ['custom_cleared', 'invoice_pending', 'payment_requested', 'payment_approved', 'payment_paid', 'closed'] } }).catch(() => 0),
       Vendor.countDocuments().catch(() => 0),
       User.countDocuments({ status: 'Active' }).catch(() => 0),
-      AdvancePayment.find().lean().catch(() => []),
-      InvoicePayment.find().lean().catch(() => []),
-      CustomDutyPayment.find().lean().catch(() => []),
-      BlInvoice.find().lean().catch(() => []),
-      RfqBlEntry.find().lean().catch(() => []),
-      Approval.find({ status: { $nin: terminalApprovalStatuses } }).sort({ createdAt: -1 }).limit(10).lean().catch(() => []),
-      Approval.find().lean().catch(() => []),
-      PurchaseOrder.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
-      RfqHeader.find().sort({ createdAt: -1 }).limit(5).lean().catch(() => [])
+      AdvancePayment.find({}, { status: 1, amount: 1, amountINR: 1, currency: 1, createdAt: 1, advanceNumber: 1, vendorName: 1 }).lean().catch(() => []),
+      InvoicePayment.find({}, { status: 1, netPayable: 1, amount: 1, amountINR: 1, currency: 1, createdAt: 1 }).lean().catch(() => []),
+      CustomDutyPayment.find({}, { status: 1, dutyAmount: 1, amount: 1, amountINR: 1, createdAt: 1 }).lean().catch(() => []),
+      BlInvoice.find({}, { status: 1, blId: 1, blNumber: 1, referenceNo: 1, currentStep: 1, totalSteps: 1, createdAt: 1 }).lean().catch(() => []),
+      RfqBlEntry.find({}, { status: 1, createdAt: 1 }).lean().catch(() => []),
+      Approval.find({}, { status: 1, type: 1, currentRole: 1, assignedUserId: 1, currentStep: 1, totalSteps: 1, approvalId: 1, id: 1, createdAt: 1 }).lean().catch(() => []),
+      PurchaseOrder.find({ isDeleted: { $ne: true } }, { poNumber: 1, supplierName: 1, createdAt: 1 }).sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
+      RfqHeader.find({}, { rfqNumber: 1, title: 1, createdAt: 1 }).sort({ createdAt: -1 }).limit(5).lean().catch(() => []),
+      PurchaseOrder.find({ isDeleted: { $ne: true }, createdAt: { $gte: rangeStartDate } }, { createdAt: 1 }).lean().catch(() => []),
+      RfqHeader.find({ createdAt: { $gte: sixMonthsAgo } }, { createdAt: 1 }).lean().catch(() => [])
     ]);
 
     const userRole = req.user?.role || '';
@@ -6748,67 +6839,51 @@ router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
     const poTrend = prevPoCount > 0 ? Math.round(((poCount - prevPoCount) / prevPoCount) * 100) : 0;
     const rfqTrend = prevRfqCount > 0 ? Math.round(((rfqCount - prevRfqCount) / prevRfqCount) * 100) : 0;
 
+    // In-memory 6-month activity calculation (0 extra DB round trips)
     const monthNames6 = [];
     for (let i = 5; i >= 0; i--) {
       const mDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
       monthNames6.push({
         label: mDate.toLocaleDateString('en-IN', { month: 'short' }),
-        start: mDate,
-        end: new Date(mDate.getFullYear(), mDate.getMonth() + 1, 1)
+        startMs: mDate.getTime(),
+        endMs: new Date(mDate.getFullYear(), mDate.getMonth() + 1, 1).getTime()
       });
     }
 
-    const last6MonthsActivity = await Promise.all(
-      monthNames6.map(async ({ label, start, end }) => {
-        const query = { createdAt: { $gte: start, $lt: end } };
-        const [advCount, invCount, rCount, bCount] = await Promise.all([
-          AdvancePayment.countDocuments(query).catch(() => 0),
-          InvoicePayment.countDocuments(query).catch(() => 0),
-          RfqHeader.countDocuments(query).catch(() => 0),
-          RfqBlEntry.countDocuments(query).catch(() => 0),
-        ]);
-        return {
-          month: label,
-          Advances: advCount,
-          Invoices: invCount,
-          RFQs: rCount,
-          BlEntries: bCount
-        };
-      })
-    );
+    const last6MonthsActivity = monthNames6.map(({ label, startMs, endMs }) => ({
+      month: label,
+      Advances: advancesList.filter(a => { const t = new Date(a.createdAt).getTime(); return t >= startMs && t < endMs; }).length,
+      Invoices: invoicesList.filter(i => { const t = new Date(i.createdAt).getTime(); return t >= startMs && t < endMs; }).length,
+      RFQs: rangeRfqs.filter(r => { const t = new Date(r.createdAt).getTime(); return t >= startMs && t < endMs; }).length,
+      BlEntries: blEntriesList.filter(b => { const t = new Date(b.createdAt).getTime(); return t >= startMs && t < endMs; }).length
+    }));
 
+    // In-memory chartData calculation (0 extra DB round trips)
     const stepCount = daysCount <= 7 ? 7 : daysCount <= 30 ? 6 : 6;
     const intervalMs = (daysCount * 24 * 60 * 60 * 1000) / stepCount;
 
-    const chartData = await Promise.all(
-      Array.from({ length: stepCount }, (_, i) => {
-        const stepStart = new Date(rangeStartDate.getTime() + i * intervalMs);
-        const stepEnd = new Date(stepStart.getTime() + intervalMs);
-        const queryRange = { createdAt: { $gte: stepStart, $lt: stepEnd } };
+    const chartData = Array.from({ length: stepCount }, (_, i) => {
+      const stepStartMs = rangeStartDate.getTime() + i * intervalMs;
+      const stepEndMs = stepStartMs + intervalMs;
+      let label = '';
+      if (daysCount <= 7) {
+        label = new Date(stepStartMs).toLocaleDateString('en-IN', { weekday: 'short' });
+      } else if (daysCount <= 30) {
+        label = `W${i + 1} (${new Date(stepStartMs).getDate()} ${new Date(stepStartMs).toLocaleDateString('en-IN', { month: 'short' })})`;
+      } else {
+        label = new Date(stepStartMs).toLocaleDateString('en-IN', { month: 'short' });
+      }
 
-        let label = '';
-        if (daysCount <= 7) {
-          label = stepStart.toLocaleDateString('en-IN', { weekday: 'short' });
-        } else if (daysCount <= 30) {
-          label = `W${i + 1} (${stepStart.getDate()} ${stepStart.toLocaleDateString('en-IN', { month: 'short' })})`;
-        } else {
-          label = stepStart.toLocaleDateString('en-IN', { month: 'short' });
-        }
+      return {
+        label,
+        pos: rangePos.filter(p => { const t = new Date(p.createdAt).getTime(); return t >= stepStartMs && t < stepEndMs; }).length,
+        invoices: invoicesList.filter(item => { const t = new Date(item.createdAt).getTime(); return t >= stepStartMs && t < stepEndMs; }).length,
+        rfqs: rangeRfqs.filter(r => { const t = new Date(r.createdAt).getTime(); return t >= stepStartMs && t < stepEndMs; }).length,
+        advances: advancesList.filter(item => { const t = new Date(item.createdAt).getTime(); return t >= stepStartMs && t < stepEndMs; }).length
+      };
+    });
 
-        return Promise.all([
-          PurchaseOrder.countDocuments(queryRange).catch(() => 0),
-          InvoicePayment.countDocuments(queryRange).catch(() => 0),
-          RfqHeader.countDocuments(queryRange).catch(() => 0),
-          AdvancePayment.countDocuments(queryRange).catch(() => 0),
-        ]).then(([pos, invoices, rfqs, advances]) => ({
-          label,
-          pos,
-          invoices,
-          rfqs,
-          advances,
-        }));
-      })
-    );
+    const pendingList = allApprovals.filter(a => !terminalApprovalStatuses.includes(a.status)).slice(0, 10);
 
     const recentActivity = [];
 
@@ -6852,7 +6927,7 @@ router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
       return `₹${val.toLocaleString()}`;
     };
 
-    return res.json({
+    const responsePayload = {
       success: true,
       range,
       stats: {
@@ -6911,7 +6986,10 @@ router.get('/dashboard/analytics', authenticateToken, async (req, res) => {
         }))
       ].slice(0, 6),
       recentActivity: recentActivity.slice(0, 8)
-    });
+    };
+
+    analyticsCache.set(cacheKey, { timestamp: Date.now(), data: responsePayload });
+    return res.json(responsePayload);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }

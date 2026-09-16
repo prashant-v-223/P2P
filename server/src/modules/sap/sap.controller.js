@@ -3,6 +3,7 @@ import { Supplier } from '../../models/Supplier.js';
 import { SapSyncRun } from '../../models/SapSyncRun.js';
 import { publicSapConfig } from './sap.config.js';
 import { syncPurchaseOrders, syncSuppliers, testSapConnection } from './sap.service.js';
+import { invalidateAnalyticsCache } from '../p2p/p2pRoutes.js';
 
 export const getSapOverview = async (_req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -32,6 +33,7 @@ const executeSync = async ({ entity, mode, requestedBy, task }) => {
     const result = await task();
     Object.assign(run, result, { status: 'completed', completedAt: new Date(), durationMs: Date.now() - started });
     await run.save();
+    try { invalidateAnalyticsCache(); } catch (_) {}
     return run;
   } catch (error) {
     Object.assign(run, { status: 'failed', error: error.message, completedAt: new Date(), durationMs: Date.now() - started });

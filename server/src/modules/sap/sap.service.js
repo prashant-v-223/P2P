@@ -140,11 +140,32 @@ const persistRows = async (Model, rows, mapRow, key) => {
   const operations = uniqueMapped.map((item) => ({
     updateOne: { filter: { [key]: item[key] }, update: { $set: item }, upsert: true }
   }));
-  const result = await Model.bulkWrite(operations, { ordered: false });
+
+  const BATCH_SIZE = 500;
+  const CONCURRENCY = 4;
+  let totalCreated = 0;
+  let totalUpdated = 0;
+
+  const chunks = [];
+  for (let i = 0; i < operations.length; i += BATCH_SIZE) {
+    chunks.push(operations.slice(i, i + BATCH_SIZE));
+  }
+
+  for (let i = 0; i < chunks.length; i += CONCURRENCY) {
+    const batchGroup = chunks.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      batchGroup.map((chunk) => Model.bulkWrite(chunk, { ordered: false }))
+    );
+    for (const result of results) {
+      totalCreated += (result.upsertedCount || 0);
+      totalUpdated += (result.matchedCount || result.modifiedCount || 0);
+    }
+  }
+
   return {
     fetched: rows.length,
-    created: result.upsertedCount || 0,
-    updated: result.matchedCount || result.modifiedCount || 0,
+    created: totalCreated,
+    updated: totalUpdated,
     failed
   };
 };
