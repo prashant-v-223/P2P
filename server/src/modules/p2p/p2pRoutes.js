@@ -4724,12 +4724,9 @@ router.post('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) =
     const asnNumber = String(req.body.asnNumber || '').trim().toUpperCase();
     const poRef = context.rfq.sapPoNumber || context.rfq.poId || context.rfq.poNumber;
     const linkedPo = poRef ? await PurchaseOrder.findOne({ $or: [{ poNumber: poRef }, { sapPoNumber: poRef }] }).lean() : null;
-    const requiresAsn = /^(43|60|PO-43)/i.test(String(linkedPo?.sapPoNumber || linkedPo?.poNumber || poRef || ''));
-    if (requiresAsn && !asnNumber) {
-      return res.status(400).json({ success: false, error: 'ASN Number (Advance Shipping Notice) is required to link with RFQ & PO records.' });
-    }
-    if (asnNumber && !/^[A-Z0-9\-_/]{3,30}$/i.test(asnNumber)) {
-      return res.status(400).json({ success: false, error: 'ASN Number must be between 3 and 30 characters (letters, numbers, hyphens, slashes).' });
+    const requiresAsn = false;
+    if (asnNumber && !/^[A-Z0-9\-_/]{1,40}$/i.test(asnNumber)) {
+      return res.status(400).json({ success: false, error: 'ASN Number must be alphanumeric (letters, numbers, hyphens, slashes).' });
     }
 
     const containerCount = Number(req.body.containerCount);
@@ -4745,13 +4742,6 @@ router.post('/vendor-rfqs/:id/bl-entries', authenticateToken, async (req, res) =
         { $or: [{ poId: { $in: poKeys } }, { sapPoNumber: { $in: poKeys } }, { poNumber: { $in: poKeys } }] }
       ]
     }).lean() : null;
-
-    if (requiresAsn && !matchingInvoice) {
-      return res.status(400).json({
-        success: false,
-        error: `ASN Number "${asnNumber}" does not match any invoice record for the linked Purchase Order (PO).`
-      });
-    }
     const vendorKeys = freightVendorKeys(context.vendor);
     const existing = await RfqBlEntry.find({ rfqId: context.rfq.rfqId }).lean();
     const used = existing.filter((entry) => vendorKeys.includes(normaliseInviteValue(entry.vendorId)) || vendorKeys.includes(normaliseInviteValue(entry.vendorName))).reduce((sum, entry) => sum + (Number(entry.containerCount) || 0), 0);
