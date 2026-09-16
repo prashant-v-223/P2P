@@ -249,46 +249,19 @@ export function FreightBlCreatePage() {
   const [asnValidating, setAsnValidating] = useState(false);
   const [asnValidatedSuccess, setAsnValidatedSuccess] = useState(false);
   const [asnValidationMessage, setAsnValidationMessage] = useState('');
-  const requiresAsn = summary?.requiresAsn !== false;
+  const requiresAsn = false;
 
-  const handleAsnBlur = async () => {
-    if (!requiresAsn) return;
+  const handleAsnBlur = () => {
     const cleanAsn = form.asnNumber.trim().toUpperCase();
-    if (requiresAsn && !cleanAsn) {
-      setFieldErrors((prev) => ({ ...prev, asnNumber: 'ASN Number is required.' }));
-      setAsnValidatedSuccess(false);
-      return;
-    }
-    if (cleanAsn.length < 3 || cleanAsn.length > 30) {
-      setFieldErrors((prev) => ({ ...prev, asnNumber: 'ASN Number must be between 3 and 30 characters.' }));
-      setAsnValidatedSuccess(false);
-      return;
-    }
-    if (!/^[A-Z0-9\-_/]+$/i.test(cleanAsn)) {
-      setFieldErrors((prev) => ({ ...prev, asnNumber: 'ASN Number can only contain letters, numbers, hyphens, and slashes.' }));
-      setAsnValidatedSuccess(false);
-      return;
-    }
-
-    setAsnValidating(true);
-    try {
-      const res = await apiFetch(`/api/p2p/validate-asn?asnNumber=${encodeURIComponent(cleanAsn)}&rfqId=${encodeURIComponent(id || '')}`);
-      const j = await res.json();
-      if (!j.valid) {
-        setFieldErrors((prev) => ({ ...prev, asnNumber: j.error || `ASN Number "${cleanAsn}" could not be validated.` }));
-        setAsnValidatedSuccess(false);
-        setAsnValidationMessage('');
-      } else {
-        setFieldErrors((prev) => ({ ...prev, asnNumber: '' }));
-        setAsnValidatedSuccess(true);
-        setAsnValidationMessage(j.message || 'ASN matched to the linked purchase order.');
-      }
-    } catch (e) {
-      setFieldErrors((prev) => ({ ...prev, asnNumber: e.message }));
+    if (cleanAsn) {
+      setForm((prev) => ({ ...prev, asnNumber: cleanAsn }));
+      setFieldErrors((prev) => ({ ...prev, asnNumber: '' }));
+      setAsnValidatedSuccess(true);
+      setAsnValidationMessage('ASN Number accepted.');
+    } else {
+      setFieldErrors((prev) => ({ ...prev, asnNumber: '' }));
       setAsnValidatedSuccess(false);
       setAsnValidationMessage('');
-    } finally {
-      setAsnValidating(false);
     }
   };
 
@@ -312,12 +285,8 @@ export function FreightBlCreatePage() {
       errors.blNumber = 'BL Number can only contain letters, numbers, hyphens, and slashes.';
     }
 
-    if (requiresAsn && !cleanAsn) {
-      errors.asnNumber = 'ASN Number is required to link with RFQ & PO records.';
-    } else if (cleanAsn && cleanAsn.length < 3) {
-      errors.asnNumber = 'ASN Number must be at least 3 characters.';
-    } else if (cleanAsn && !/^[A-Z0-9\-_/]+$/i.test(cleanAsn)) {
-      errors.asnNumber = 'ASN Number can only contain letters, numbers, hyphens, and slashes.';
+    if (cleanAsn && cleanAsn.length > 30) {
+      errors.asnNumber = 'ASN Number cannot exceed 30 characters.';
     }
 
     if (!form.containerCount || !Number.isInteger(count) || count <= 0) {
@@ -440,10 +409,10 @@ export function FreightBlCreatePage() {
               )}
             </div>
 
-            {/* ASN Number Field - import BL only */}
+            {/* ASN Number Field - import BL only (Optional) */}
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                ASN Number (Advance Shipping Notice) {requiresAsn ? <span className="text-rose-500">*</span> : <span className="text-slate-400 font-normal">(Optional)</span>}
+                ASN Number (Advance Shipping Notice) <span className="text-slate-400 font-normal text-[11px]">(Optional)</span>
               </label>
               <div className="relative">
                 <input
@@ -461,7 +430,6 @@ export function FreightBlCreatePage() {
                     fieldErrors.asnNumber ? 'border-rose-400 bg-rose-50/30 focus:border-rose-500 focus:ring-rose-100' : 
                     asnValidatedSuccess ? 'border-emerald-400 bg-emerald-50/20 focus:border-emerald-500' : ''
                   }`}
-                  required={requiresAsn}
                 />
                 {asnValidating && (
                   <div className="absolute right-3 top-2.5 flex items-center gap-1 text-[11px] font-bold text-teal-600">
