@@ -15,7 +15,8 @@ export default function DocumentUploader({
   onDocumentsChange,
   multiple = false,
   existingDocuments = [],
-  readOnly = false
+  readOnly = false,
+  showUpload = true
 }) {
   const { showToast } = useToast();
   const { user } = useSelector((s) => s.auth || {});
@@ -207,7 +208,7 @@ export default function DocumentUploader({
   return (
     <div className="space-y-4">
       {/* Upload Section (Hidden in readOnly view mode) */}
-      {!readOnly && (
+      {!readOnly && showUpload && (
         <div className="rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 p-6">
           <div className="flex flex-col items-center gap-4">
             <Upload className="h-10 w-10 text-slate-400" />

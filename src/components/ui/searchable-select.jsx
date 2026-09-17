@@ -29,6 +29,7 @@ export function SearchableSelect({
   className = '',
   size = 'md', // 'sm' | 'md'
   searchable = true,
+  menuMode = 'portal', // 'portal' | 'inline'
   name
 }) {
   const [open, setOpen] = useState(false);
@@ -116,7 +117,7 @@ export function SearchableSelect({
   }, []);
 
   useLayoutEffect(() => {
-    if (!open) return undefined;
+    if (!open || menuMode === 'inline') return undefined;
     const positionMenu = () => {
       const rect = triggerRef.current?.getBoundingClientRect();
       if (!rect) return;
@@ -136,7 +137,7 @@ export function SearchableSelect({
       window.removeEventListener('resize', positionMenu);
       window.removeEventListener('scroll', positionMenu, true);
     };
-  }, [open]);
+  }, [open, menuMode]);
 
   const isSmall = size === 'sm';
 
@@ -165,12 +166,12 @@ export function SearchableSelect({
         <ChevronDown className={`shrink-0 transition-transform ${isSmall ? 'h-3.5 w-3.5' : 'h-4 w-4'} text-slate-400 ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      {open &&
-        createPortal(
+      {open && (() => {
+        const menu = (
           <div
             ref={menuRef}
-            style={menuStyle}
-            className="fixed z-[999] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl shadow-slate-900/10"
+            style={menuMode === 'inline' ? undefined : menuStyle}
+            className={`${menuMode === 'inline' ? 'relative mt-1 w-full' : 'fixed z-[999]'} overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl shadow-slate-900/10`}
           >
             {searchable && normalized.length > 5 && (
               <div className="border-b border-slate-100 p-1.5">
@@ -221,11 +222,11 @@ export function SearchableSelect({
                 <p className="px-3 py-4 text-center text-xs text-slate-400">No matching options</p>
               )}
             </div>
-          </div>,
-          document.body
-        )}
+          </div>
+        );
+        return menuMode === 'inline' ? menu : createPortal(menu, document.body);
+      })()}
       {error && <p className="mt-1 text-xs font-medium text-rose-600">{error}</p>}
     </div>
   );
 }
-

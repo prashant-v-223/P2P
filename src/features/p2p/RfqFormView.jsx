@@ -56,7 +56,7 @@ function PoSelector({ value, onChange }) {
         if (Array.isArray(json.data)) {
           setPoList(json.data.filter((po) => {
             const status = String(po.status || '').trim().toLowerCase();
-            return Number(po.totalAmount) > 0 && !['closed', 'cancelled', 'canceled', 'blocked'].includes(status);
+            return !['closed', 'cancelled', 'canceled', 'blocked'].includes(status);
           }));
         }
       } catch (e) {

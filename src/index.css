@@ -242,22 +242,26 @@ table thead th[data-sortable="true"]:focus-visible {
 
 /* Explicit Horizontal Table Scrollbar */
 .table-scrollbar {
-  scrollbar-width: auto;
-  scrollbar-color: #0d7676 #e2e8f0;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 #f1f5f9;
 }
 .table-scrollbar::-webkit-scrollbar {
-  height: 9px;
+  height: 8px;
 }
 .table-scrollbar::-webkit-scrollbar-track {
   background: #f1f5f9;
-  border-radius: 6px;
+  border-radius: 9999px;
 }
 .table-scrollbar::-webkit-scrollbar-thumb {
-  background: #0d7676;
-  border-radius: 6px;
+  background: #cbd5e1;
+  border: 2px solid #f1f5f9;
+  border-radius: 9999px;
 }
 .table-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #085a5a;
+  background: #94a3b8;
+}
+.table-scrollbar::-webkit-scrollbar-button {
+  display: none;
 }
 
 @media (max-width: 640px) {

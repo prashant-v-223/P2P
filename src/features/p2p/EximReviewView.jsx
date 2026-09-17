@@ -94,7 +94,7 @@ function AssignModal({ entry, agents, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-      <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-xl">
+      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl bg-white shadow-xl">
         <div className="flex items-start justify-between border-b p-5">
           <div>
             <h2 className="text-base font-extrabold">{isAssigned ? 'Reassign Customs Agent' : 'Assign to Customs Agent'}</h2>
@@ -114,6 +114,7 @@ function AssignModal({ entry, agents, onClose, onSaved }) {
                 onChange={(val) => setAgentId(val)}
                 placeholder="Search and select agent..."
                 size="md"
+                menuMode="inline"
               />
             </div>
           </label>

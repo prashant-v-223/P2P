@@ -126,6 +126,23 @@ export default function RfqDetailView() {
   }, [id]);
 
   useEffect(() => {
+    const rfqDocumentId = rfq?.rfqId;
+    if (!rfqDocumentId) return;
+
+    let isCurrent = true;
+    apiFetch(`/api/documents?documentableType=RfqHeader&documentableId=${encodeURIComponent(rfqDocumentId)}`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (isCurrent) setDocumentCount(json.success && Array.isArray(json.data) ? json.data.length : 0);
+      })
+      .catch(() => {
+        if (isCurrent) setDocumentCount(0);
+      });
+
+    return () => { isCurrent = false; };
+  }, [rfq?.rfqId]);
+
+  useEffect(() => {
     if (!showAwardModal || !rfq) return;
     const amount = awardRows.reduce((sum, row) => {
       const quote = (rfq.quotes || []).find((item) => item.quoteId === row.quoteId);
@@ -418,7 +435,6 @@ export default function RfqDetailView() {
 
   const cycleHistory = rfq.reassignmentHistory || [];
   const currentCycleNumber = cycleHistory.length + 1;
-  const isRfqEditable = !['pending_approval', 'awarded', 'closed', 'cancelled'].includes(String(rfq.status || '').toLowerCase());
 
   // Workflow pipeline stages from rfq.workflow
   const wf = rfq.workflow || {};
@@ -684,7 +700,7 @@ export default function RfqDetailView() {
         { id: 'quotes', icon: FileText, label: 'Quotes', count: quotesList.length, color: 'amber' },
         { id: 'vendors', icon: Users, label: 'Vendors', count: (rfq.invitedVendors || []).length, color: 'slate' },
         { id: 'bl', icon: Ship, label: 'BL Entries', count: (rfq.blEntries || []).length, color: 'slate' },
-        { id: 'documents', icon: FileText, label: 'Documents', color: 'slate' }
+        { id: 'documents', icon: FileText, label: 'Documents', count: documentCount, color: 'slate' }
       ].map((tab) => (
         <button
           key={tab.id}
@@ -1113,7 +1129,7 @@ export default function RfqDetailView() {
         documentableId={rfq.rfqId}
         documentType="rfq_document"
         multiple={true}
-        readOnly={!canEdit || !isRfqEditable}
+        showUpload={false}
         onDocumentsChange={(docs) => setDocumentCount(docs.length)}
       />
     </div>

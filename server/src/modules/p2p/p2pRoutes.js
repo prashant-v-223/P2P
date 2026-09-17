@@ -3494,7 +3494,7 @@ function validateRfqPayload(body, { partial = false } = {}) {
 
 function validateOpenPo(po) {
   const status = String(po?.status || '').trim().toLowerCase();
-  return Boolean(po && Number(po.totalAmount) > 0 && !['closed', 'cancelled', 'canceled', 'blocked'].includes(status));
+  return Boolean(po && !['closed', 'cancelled', 'canceled', 'blocked'].includes(status));
 }
 
 function requireInternalRfqUser(req, res, next) {
